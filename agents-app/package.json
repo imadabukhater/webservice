@@ -1,0 +1,12 @@
+{
+  "name": "agents-app",
+  "version": "1.0.0",
+  "private": true,
+  "description": "تطبيق الوكلاء: أرصدة، تفعيل خطوط، عروض، ولوحة تحكم للمدير",
+  "main": "server.js",
+  "engines": { "node": ">=22.13" },
+  "scripts": {
+    "start": "node --disable-warning=ExperimentalWarning server.js",
+    "test": "node --disable-warning=ExperimentalWarning --test test/*.test.js"
+  }
+}
