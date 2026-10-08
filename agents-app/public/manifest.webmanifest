@@ -1,16 +1,24 @@
 {
-  "name": "تطبيق الوكلاء",
+  "name": "بوابة الوكلاء",
   "short_name": "الوكلاء",
+  "description": "تفعيل الخطوط، الأرصدة، العروض والتقارير للوكلاء",
   "lang": "ar",
   "dir": "rtl",
-  "start_url": "/",
+  "start_url": "/#/home",
   "scope": "/",
   "display": "standalone",
-  "background_color": "#f2f4f6",
-  "theme_color": "#0d6e78",
+  "orientation": "portrait",
+  "background_color": "#0b1730",
+  "theme_color": "#0b1730",
   "icons": [
     { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png" },
     { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
     { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml" }
+  ],
+  "shortcuts": [
+    { "name": "مشترك جديد", "url": "/#/new", "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }] },
+    { "name": "زبون قائم", "url": "/#/renew", "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }] },
+    { "name": "المشتركون", "url": "/#/subscribers", "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }] }
   ]
 }
