@@ -1,0 +1,849 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+</head>
+<body>
+<title>لوحة الوكلاء</title>
+<meta name="description" content="إدارة الوكلاء والأرصدة وتفعيل الخطوط">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600&family=Readex+Pro:wght@500;700&family=IBM+Plex+Mono:wght@500&display=swap">
+<style>
+/* Layout: sticky top bar with summary strip, tabbed work area, tables in scroll containers, one modal for every form */
+:root {
+  --bg: #f2f4f6;
+  --surface: #ffffff;
+  --sunken: #e8ecef;
+  --line: #d6dde2;
+  --ink: #14212b;
+  --muted: #5b6b77;
+  --accent: #0d6e78;
+  --accent-ink: #ffffff;
+  --accent-soft: #dcefef;
+  --good: #1f7a3f;
+  --good-soft: #e1f2e6;
+  --bad: #b3261e;
+  --bad-soft: #f9e3e1;
+  --warn: #8a5a00;
+  --warn-soft: #fbefd6;
+  --shadow: 0 1px 2px rgba(20,33,43,.06), 0 8px 24px rgba(20,33,43,.06);
+  --f-display: "Readex Pro", "IBM Plex Sans Arabic", Tahoma, sans-serif;
+  --f-body: "IBM Plex Sans Arabic", Tahoma, "Segoe UI", sans-serif;
+  --f-num: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+  --r: 10px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f171c; --surface: #172229; --sunken: #1e2b33; --line: #2b3a44;
+    --ink: #e6edf1; --muted: #93a4af; --accent: #3fb6bf; --accent-ink: #062226; --accent-soft: #163a3e;
+    --good: #5fcf86; --good-soft: #17301f; --bad: #ff8a80; --bad-soft: #3a1b19; --warn: #f0bf5a; --warn-soft: #3a2e14;
+    --shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 24px rgba(0,0,0,.25);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f171c; --surface: #172229; --sunken: #1e2b33; --line: #2b3a44;
+  --ink: #e6edf1; --muted: #93a4af; --accent: #3fb6bf; --accent-ink: #062226; --accent-soft: #163a3e;
+  --good: #5fcf86; --good-soft: #17301f; --bad: #ff8a80; --bad-soft: #3a1b19; --warn: #f0bf5a; --warn-soft: #3a2e14;
+  --shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 24px rgba(0,0,0,.25);
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body { background: var(--bg); color: var(--ink); font-family: var(--f-body); font-size: 15px; line-height: 1.55; }
+.app { max-width: 1180px; margin: 0 auto; padding-inline: 16px; padding-block: 0 48px; }
+h1, h2, h3 { font-family: var(--f-display); text-wrap: balance; margin: 0; }
+h1 { font-size: 1.35rem; }
+h2 { font-size: 1.1rem; }
+.num { font-family: var(--f-num); font-variant-numeric: tabular-nums; direction: ltr; unicode-bidi: isolate; }
+
+header.top { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5; background: var(--bg); padding-block: 14px 0; }
+.brand { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.brand small { color: var(--muted); font-size: .85rem; }
+.mode { font-size: .78rem; padding: 3px 10px; border-radius: 999px; background: var(--sunken); color: var(--muted); }
+.mode.live { background: var(--good-soft); color: var(--good); }
+nav.tabs { display: flex; gap: 4px; overflow-x: auto; margin-top: 12px; border-bottom: 1px solid var(--line); scrollbar-width: none; }
+nav.tabs button { background: none; border: 0; border-bottom: 3px solid transparent; color: var(--muted); font: 500 .95rem var(--f-body); padding: 10px 14px; cursor: pointer; white-space: nowrap; }
+nav.tabs button[aria-selected="true"] { color: var(--accent); border-bottom-color: var(--accent); }
+nav.tabs button:focus-visible, .btn:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-block: 18px; }
+.kpi { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); padding: 14px 16px; }
+.kpi span { display: block; color: var(--muted); font-size: .82rem; }
+.kpi b { font-family: var(--f-num); font-size: 1.35rem; font-weight: 500; direction: ltr; unicode-bidi: isolate; }
+@media (max-width: 720px) { .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+section.view { display: grid; gap: 18px; padding-top: 18px; }
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); box-shadow: var(--shadow); min-width: 0; }
+.panel-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; padding: 14px 16px; border-bottom: 1px solid var(--line); }
+.panel-body { padding: 16px; }
+.two { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 18px; }
+@media (max-width: 860px) { .two { grid-template-columns: minmax(0, 1fr); } }
+
+.scroll { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-size: .9rem; }
+th, td { text-align: start; padding: 10px 12px; border-bottom: 1px solid var(--line); white-space: nowrap; vertical-align: middle; }
+th { color: var(--muted); font-weight: 500; font-size: .8rem; letter-spacing: .02em; background: var(--sunken); }
+tr:last-child td { border-bottom: 0; }
+td.wrap { white-space: normal; min-width: 160px; }
+.empty { padding: 28px 16px; text-align: center; color: var(--muted); }
+
+.btn { font: 500 .88rem var(--f-body); border-radius: 8px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); padding: 7px 12px; cursor: pointer; white-space: nowrap; }
+.btn:hover { border-color: var(--accent); }
+.btn.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+.btn.danger { color: var(--bad); }
+.btn.danger.solid { background: var(--bad); color: var(--surface); border-color: var(--bad); }
+.btn.sm { padding: 4px 9px; font-size: .8rem; }
+.btn[disabled] { opacity: .5; cursor: not-allowed; }
+.actions { display: flex; gap: 6px; flex-wrap: wrap; }
+
+.pill { display: inline-block; font-size: .76rem; padding: 2px 9px; border-radius: 999px; background: var(--sunken); color: var(--muted); }
+.pill.activate { background: var(--accent-soft); color: var(--accent); }
+.pill.topup, .pill.transfer_in { background: var(--good-soft); color: var(--good); }
+.pill.deduct, .pill.transfer_out, .pill.line_cancel { background: var(--bad-soft); color: var(--bad); }
+.pill.line_move { background: var(--warn-soft); color: var(--warn); }
+.plus { color: var(--good); } .minus { color: var(--bad); }
+.low { color: var(--bad); font-weight: 600; }
+
+form.grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+form.grid .full { grid-column: 1 / -1; }
+@media (max-width: 560px) { form.grid { grid-template-columns: minmax(0, 1fr); } }
+label { display: grid; gap: 5px; font-size: .85rem; color: var(--muted); }
+input, select, textarea { font: 1rem var(--f-body); color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 9px 11px; width: 100%; min-width: 0; }
+input.num { text-align: left; }
+.search { max-width: 260px; }
+
+.preview { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; background: var(--sunken); border-radius: 8px; padding: 12px; }
+.preview div span { display: block; color: var(--muted); font-size: .76rem; }
+.preview div b { font-family: var(--f-num); font-weight: 500; direction: ltr; unicode-bidi: isolate; }
+@media (max-width: 560px) { .preview { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.msg { font-size: .85rem; padding: 8px 12px; border-radius: 8px; background: var(--bad-soft); color: var(--bad); }
+.note { font-size: .85rem; color: var(--muted); }
+
+.company-list { display: grid; gap: 14px; }
+.company h3 { font-size: 1rem; display: flex; justify-content: space-between; align-items: center; gap: 8px; padding-bottom: 8px; border-bottom: 1px solid var(--line); }
+
+.overlay { position: fixed; inset: 0; background: rgba(10,18,24,.5); display: grid; place-items: center; padding: 16px; z-index: 20; }
+.modal { background: var(--surface); border-radius: 14px; width: min(520px, 100%); max-height: 90vh; overflow: auto; box-shadow: var(--shadow); }
+.modal .panel-head { position: sticky; top: 0; background: var(--surface); }
+.modal-foot { display: flex; gap: 8px; justify-content: flex-start; padding: 0 16px 16px; flex-wrap: wrap; }
+
+.toast { position: fixed; bottom: calc(18px + env(safe-area-inset-bottom, 0px)); inset-inline: 16px; margin: 0 auto; max-width: 420px; background: var(--ink); color: var(--bg); padding: 11px 16px; border-radius: 10px; z-index: 30; text-align: center; }
+@media (prefers-reduced-motion: no-preference) { .toast { animation: rise .2s ease-out; } @keyframes rise { from { transform: translateY(8px); opacity: .4; } } }
+</style>
+
+<div class="app" dir="rtl" lang="ar">
+  <header class="top">
+    <div class="brand">
+      <div>
+        <h1>لوحة الوكلاء</h1>
+        <small>الأرصدة، تفعيل الخطوط، والباقات</small>
+      </div>
+      <span id="mode" class="mode">جارٍ التحميل…</span>
+    </div>
+    <nav class="tabs" role="tablist" id="tabs">
+      <button role="tab" data-tab="home" aria-selected="true">الرئيسية</button>
+      <button role="tab" data-tab="agents" aria-selected="false">الوكلاء</button>
+      <button role="tab" data-tab="activate" aria-selected="false">تفعيل خط</button>
+      <button role="tab" data-tab="lines" aria-selected="false">الأرقام</button>
+      <button role="tab" data-tab="catalog" aria-selected="false">الباقات والشركات</button>
+      <button role="tab" data-tab="log" aria-selected="false">سجل العمليات</button>
+    </nav>
+  </header>
+
+  <div class="kpis" id="kpis"></div>
+
+  <!-- الرئيسية -->
+  <section class="view" data-view="home">
+    <div class="panel">
+      <div class="panel-head"><h2>أرصدة الوكلاء</h2><button class="btn primary" data-act="add-agent">إضافة وكيل</button></div>
+      <div class="scroll" id="home-agents"></div>
+    </div>
+    <div class="panel">
+      <div class="panel-head"><h2>آخر العمليات</h2><button class="btn" data-goto="log">كل السجل</button></div>
+      <div class="scroll" id="home-ops"></div>
+    </div>
+  </section>
+
+  <!-- الوكلاء -->
+  <section class="view" data-view="agents" hidden>
+    <div class="panel">
+      <div class="panel-head">
+        <h2>الوكلاء</h2>
+        <div class="actions">
+          <input class="search" id="agent-search" type="search" placeholder="بحث بالاسم أو الهاتف">
+          <button class="btn" data-act="transfer-balance">نقل رصيد بين وكلاء</button>
+          <button class="btn primary" data-act="add-agent">إضافة وكيل</button>
+        </div>
+      </div>
+      <div class="scroll" id="agents-table"></div>
+    </div>
+  </section>
+
+  <!-- تفعيل خط -->
+  <section class="view" data-view="activate" hidden>
+    <div class="panel">
+      <div class="panel-head"><h2>تفعيل خط جديد</h2></div>
+      <div class="panel-body">
+        <form class="grid" id="activate-form" autocomplete="off">
+          <label>الوكيل<select id="act-agent" required></select></label>
+          <label>الشركة<select id="act-company" required></select></label>
+          <label>الباقة<select id="act-package" required></select></label>
+          <label>رقم الخط<input id="act-number" class="num" inputmode="tel" placeholder="05XXXXXXXX" required></label>
+          <label>سعر البيع للوكيل (₪)<input id="act-price" class="num" type="number" step="0.01" min="0" required></label>
+          <label>التكلفة عليّ (₪)<input id="act-cost" class="num" type="number" step="0.01" min="0" required></label>
+          <label class="full">ملاحظة<input id="act-note" placeholder="اختياري: رقم الشريحة، اسم الزبون…"></label>
+          <div class="full preview" id="act-preview"></div>
+          <div class="full" id="act-msg"></div>
+          <div class="full"><button class="btn primary" type="submit" id="act-submit">تفعيل الخط وخصم الرصيد</button></div>
+        </form>
+      </div>
+    </div>
+  </section>
+
+  <!-- الأرقام -->
+  <section class="view" data-view="lines" hidden>
+    <div class="panel">
+      <div class="panel-head">
+        <h2>الأرقام المفعّلة</h2>
+        <div class="actions">
+          <input class="search" id="line-search" type="search" placeholder="بحث بالرقم أو الوكيل">
+          <select id="line-filter" class="search"></select>
+        </div>
+      </div>
+      <div class="scroll" id="lines-table"></div>
+    </div>
+  </section>
+
+  <!-- الباقات والشركات -->
+  <section class="view" data-view="catalog" hidden>
+    <div class="two">
+      <div class="panel">
+        <div class="panel-head"><h2>الباقات</h2><button class="btn primary" data-act="add-package">إضافة باقة</button></div>
+        <div class="panel-body company-list" id="packages-list"></div>
+      </div>
+      <div class="panel">
+        <div class="panel-head"><h2>الشركات</h2><button class="btn primary" data-act="add-company">إضافة شركة</button></div>
+        <div class="scroll" id="companies-table"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- السجل -->
+  <section class="view" data-view="log" hidden>
+    <div class="panel">
+      <div class="panel-head">
+        <h2>سجل العمليات</h2>
+        <div class="actions">
+          <select id="log-agent" class="search"></select>
+          <select id="log-type" class="search">
+            <option value="">كل العمليات</option>
+            <option value="activate">تفعيل خط</option>
+            <option value="topup">شحن رصيد</option>
+            <option value="deduct">خصم رصيد</option>
+            <option value="transfer">نقل رصيد</option>
+            <option value="line_move">نقل رقم</option>
+            <option value="line_cancel">إلغاء خط</option>
+          </select>
+        </div>
+      </div>
+      <div class="scroll" id="log-table"></div>
+    </div>
+  </section>
+</div>
+
+<div id="modal-root"></div>
+
+<script>
+(() => {
+  "use strict";
+
+  // ---------- helpers ----------
+  const $ = (s, el = document) => el.querySelector(s);
+  const $$ = (s, el = document) => [...el.querySelectorAll(s)];
+  const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const round = (n) => Math.round((Number(n) || 0) * 100) / 100;
+  const money = (n) => "₪" + round(n).toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+  const signed = (n) => (n > 0 ? "+" : n < 0 ? "−" : "") + money(Math.abs(n));
+  const uid = () => Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8);
+  const fmtDate = (ts) => {
+    const d = new Date(ts);
+    const p = (x) => String(x).padStart(2, "0");
+    return `${p(d.getDate())}/${p(d.getMonth() + 1)}/${d.getFullYear()} ${p(d.getHours())}:${p(d.getMinutes())}`;
+  };
+  const isToday = (ts) => new Date(ts).toDateString() === new Date().toDateString();
+  const cleanNumber = (s) => String(s || "").replace(/[^\d+]/g, "");
+
+  const OP_LABEL = {
+    activate: "تفعيل خط", topup: "شحن رصيد", deduct: "خصم رصيد",
+    transfer_in: "نقل رصيد (وارد)", transfer_out: "نقل رصيد (صادر)",
+    line_move: "نقل رقم", line_cancel: "إلغاء خط",
+  };
+
+  // ---------- state & storage ----------
+  const COLS = ["agents", "companies", "packages", "lines", "ops"];
+  const state = { agents: {}, companies: {}, packages: {}, lines: {}, ops: {} };
+  let db = null;
+  const LS_KEY = "agents-panel-v1";
+  const writeQueue = {};
+
+  function loadLocal() {
+    try {
+      const raw = localStorage.getItem(LS_KEY);
+      if (raw) Object.assign(state, JSON.parse(raw));
+    } catch (e) { /* storage unavailable */ }
+    if (!Object.keys(state.companies).length) seedLocal();
+  }
+  function saveLocal() {
+    try { localStorage.setItem(LS_KEY, JSON.stringify(state)); } catch (e) { /* storage unavailable */ }
+  }
+  // Starter catalog for the browser-only copy; prices are left at 0 to be filled in.
+  function seedLocal() {
+    const now = Date.now();
+    const cos = [["cellcom", "سلكوم", 1], ["partner", "بارتنر", 2], ["pelephone", "بيلفون", 3], ["hotmobile", "هوت موبايل", 4]];
+    cos.forEach(([id, name, order]) => (state.companies[id] = { name, order, createdAt: now }));
+    [["cellcom-500", "cellcom", "500 جيجا", 1], ["cellcom-300", "cellcom", "300 جيجا", 2], ["cellcom-100", "cellcom", "100 جيجا", 3],
+     ["partner-std", "partner", "باقة بارتنر", 1], ["pelephone-std", "pelephone", "باقة بيلفون", 1], ["hotmobile-std", "hotmobile", "باقة هوت موبايل", 1]]
+      .forEach(([id, companyId, name, order]) => (state.packages[id] = { companyId, name, cost: 0, price: 0, order, createdAt: now }));
+  }
+
+  function put(col, id, data) {
+    state[col][id] = data;
+    persist(col, id, () => db.collection(col).doc(id).set(data));
+  }
+  function remove(col, id) {
+    delete state[col][id];
+    persist(col, id, () => db.collection(col).doc(id).delete());
+  }
+  function persist(col, id, write) {
+    scheduleRender();
+    if (!db) { saveLocal(); return; }
+    const key = col + "/" + id;
+    // One write at a time per document.
+    writeQueue[key] = (writeQueue[key] || Promise.resolve()).then(write).catch((e) => {
+      toast(e && e.code === "permission_denied" ? "ليس لديك صلاحية التعديل على هذه البيانات" : "تعذّر الحفظ، حاول مرة أخرى");
+      console.error(e);
+    });
+  }
+
+  async function start() {
+    renderAll();
+    let ns = null;
+    if (window.claude && typeof window.claude.use === "function") {
+      try { ns = await window.claude.use("db"); } catch (e) { ns = null; }
+    }
+    if (ns) {
+      db = ns;
+      setMode(true);
+      COLS.forEach((col) => {
+        db.collection(col).onSnapshot((snap) => {
+          const next = {};
+          snap.docs.forEach((d) => { next[d.id] = d.data(); });
+          state[col] = next;
+          scheduleRender();
+        }, (e) => { console.error(e); toast("انقطع الاتصال بالبيانات، أعد تحميل الصفحة"); });
+      });
+    } else {
+      loadLocal();
+      setMode(false);
+      renderAll();
+    }
+  }
+  function setMode(live) {
+    const m = $("#mode");
+    m.textContent = live ? "متصل · البيانات محفوظة على الخادم" : "البيانات محفوظة في هذا المتصفح";
+    m.classList.toggle("live", live);
+  }
+  let renderPending = false;
+  function scheduleRender() {
+    if (renderPending) return;
+    renderPending = true;
+    requestAnimationFrame(() => { renderPending = false; renderAll(); });
+  }
+
+  // ---------- selectors ----------
+  const byName = (a, b) => String(a.name).localeCompare(String(b.name), "ar");
+  const agents = () => Object.entries(state.agents).map(([id, a]) => ({ id, ...a })).sort(byName);
+  const companies = () => Object.entries(state.companies).map(([id, c]) => ({ id, ...c })).sort((a, b) => (a.order || 99) - (b.order || 99) || byName(a, b));
+  const packagesOf = (cid) => Object.entries(state.packages).map(([id, p]) => ({ id, ...p })).filter((p) => p.companyId === cid).sort((a, b) => (a.order || 99) - (b.order || 99) || byName(a, b));
+  const lines = () => Object.entries(state.lines).map(([id, l]) => ({ id, ...l })).sort((a, b) => b.activatedAt - a.activatedAt);
+  const ops = () => Object.entries(state.ops).map(([id, o]) => ({ id, ...o })).sort((a, b) => b.ts - a.ts);
+  const linesCount = (agentId) => Object.values(state.lines).filter((l) => l.agentId === agentId).length;
+  const agentName = (id) => state.agents[id]?.name || "وكيل محذوف";
+  const pkgLabel = (pid) => {
+    const p = state.packages[pid];
+    if (!p) return "باقة محذوفة";
+    return (state.companies[p.companyId]?.name || "") + " " + p.name;
+  };
+
+  // ---------- operations ----------
+  function logOp(op) { put("ops", uid(), { ts: Date.now(), cost: 0, profit: 0, ...op }); }
+
+  function changeBalance(agentId, delta, type, detail, extra = {}) {
+    const a = state.agents[agentId];
+    const before = round(a.balance);
+    const after = round(before + delta);
+    put("agents", agentId, { ...a, balance: after, updatedAt: Date.now() });
+    logOp({ type, agentId, agentName: a.name, amount: round(delta), before, after, detail, ...extra });
+  }
+
+  // ---------- rendering ----------
+  function renderAll() {
+    renderKpis();
+    renderHome();
+    renderAgents();
+    renderActivateOptions();
+    renderLines();
+    renderCatalog();
+    renderLog();
+  }
+
+  function renderKpis() {
+    const total = Object.values(state.agents).reduce((s, a) => s + (Number(a.balance) || 0), 0);
+    const today = Object.values(state.ops).filter((o) => o.type === "activate" && isToday(o.ts));
+    const profit = today.reduce((s, o) => s + (Number(o.profit) || 0), 0);
+    $("#kpis").innerHTML = [
+      ["مجموع أرصدة الوكلاء", money(total)],
+      ["تفعيلات اليوم", today.length],
+      ["ربح اليوم", money(profit)],
+      ["الأرقام المفعّلة", Object.keys(state.lines).length],
+    ].map(([l, v]) => `<div class="kpi"><span>${l}</span><b>${esc(v)}</b></div>`).join("");
+  }
+
+  function agentRows(list, full) {
+    if (!list.length) {
+      return `<div class="empty">لا يوجد وكلاء بعد. اضغط «إضافة وكيل» لإضافة أول وكيل.</div>`;
+    }
+    return `<table><thead><tr>
+      <th>الوكيل</th><th>الهاتف</th><th>الرصيد</th><th>الأرقام</th>${full ? "<th>ملاحظات</th>" : ""}<th>إجراءات</th>
+    </tr></thead><tbody>${list.map((a) => `<tr>
+      <td><b>${esc(a.name)}</b></td>
+      <td class="num">${esc(a.phone || "—")}</td>
+      <td class="num ${a.balance < 0 ? "low" : ""}">${money(a.balance)}</td>
+      <td class="num">${linesCount(a.id)}</td>
+      ${full ? `<td class="wrap">${esc(a.notes || "")}</td>` : ""}
+      <td><div class="actions">
+        <button class="btn sm" data-act="balance" data-id="${a.id}">الرصيد</button>
+        <button class="btn sm" data-act="activate-for" data-id="${a.id}">تفعيل خط</button>
+        ${full ? `<button class="btn sm" data-act="edit-agent" data-id="${a.id}">تعديل</button>
+        <button class="btn sm" data-act="agent-log" data-id="${a.id}">السجل</button>
+        <button class="btn sm danger" data-act="delete-agent" data-id="${a.id}">حذف</button>` : ""}
+      </div></td></tr>`).join("")}</tbody></table>`;
+  }
+
+  function renderHome() {
+    $("#home-agents").innerHTML = agentRows(agents(), false);
+    $("#home-ops").innerHTML = opsTable(ops().slice(0, 12));
+  }
+
+  function renderAgents() {
+    const q = $("#agent-search").value.trim().toLowerCase();
+    const list = agents().filter((a) => !q || String(a.name).toLowerCase().includes(q) || String(a.phone || "").includes(q));
+    $("#agents-table").innerHTML = agentRows(list, true);
+  }
+
+  function opsTable(list) {
+    if (!list.length) return `<div class="empty">لا توجد عمليات بعد. ستظهر هنا عمليات الشحن والتفعيل والنقل.</div>`;
+    return `<table><thead><tr>
+      <th>التاريخ</th><th>الوكيل</th><th>العملية</th><th>التفاصيل</th>
+      <th>الرصيد قبل العملية</th><th>المبلغ</th><th>الرصيد بعد العملية</th><th>التكلفة</th><th>الربح</th>
+    </tr></thead><tbody>${list.map((o) => `<tr>
+      <td class="num">${fmtDate(o.ts)}</td>
+      <td>${esc(state.agents[o.agentId]?.name || o.agentName || "—")}</td>
+      <td><span class="pill ${esc(o.type)}">${esc(OP_LABEL[o.type] || o.type)}</span></td>
+      <td class="wrap">${esc(o.detail || "")}</td>
+      <td class="num">${money(o.before)}</td>
+      <td class="num ${o.amount > 0 ? "plus" : o.amount < 0 ? "minus" : ""}">${o.amount ? signed(o.amount) : "—"}</td>
+      <td class="num">${money(o.after)}</td>
+      <td class="num">${o.cost ? money(o.cost) : "—"}</td>
+      <td class="num ${o.profit < 0 ? "minus" : ""}">${o.type === "activate" ? money(o.profit) : "—"}</td>
+    </tr>`).join("")}</tbody></table>`;
+  }
+
+  function fillSelect(sel, items, placeholder, keep = true) {
+    const prev = sel.value;
+    sel.innerHTML = (placeholder ? `<option value="">${esc(placeholder)}</option>` : "") +
+      items.map((i) => `<option value="${esc(i.id)}">${esc(i.label)}</option>`).join("");
+    if (keep && items.some((i) => i.id === prev)) sel.value = prev;
+  }
+
+  function renderActivateOptions() {
+    fillSelect($("#act-agent"), agents().map((a) => ({ id: a.id, label: `${a.name} — ${money(a.balance)}` })), "اختر الوكيل");
+    fillSelect($("#act-company"), companies().map((c) => ({ id: c.id, label: c.name })), "اختر الشركة");
+    renderPackageOptions(false);
+    renderPreview();
+  }
+  function renderPackageOptions(resetPrice) {
+    const cid = $("#act-company").value;
+    const sel = $("#act-package");
+    const before = sel.value;
+    fillSelect(sel, cid ? packagesOf(cid).map((p) => ({ id: p.id, label: `${p.name} — ${money(p.price)}` })) : [], cid ? "اختر الباقة" : "اختر الشركة أولاً");
+    if (resetPrice || sel.value !== before) applyPackagePrice();
+  }
+  function applyPackagePrice() {
+    const p = state.packages[$("#act-package").value];
+    $("#act-price").value = p ? round(p.price) : "";
+    $("#act-cost").value = p ? round(p.cost) : "";
+    renderPreview();
+  }
+  function renderPreview() {
+    const a = state.agents[$("#act-agent").value];
+    const price = round($("#act-price").value);
+    const cost = round($("#act-cost").value);
+    const before = a ? round(a.balance) : null;
+    const after = a ? round(before - price) : null;
+    $("#act-preview").innerHTML = [
+      ["الرصيد قبل العملية", before === null ? "—" : money(before)],
+      ["سعر البيع", money(price)],
+      ["الرصيد بعد العملية", after === null ? "—" : money(after)],
+      ["التكلفة", money(cost)],
+      ["الربح", money(price - cost)],
+    ].map(([l, v]) => `<div><span>${l}</span><b>${v}</b></div>`).join("");
+    const msg = a && after < 0 ? `رصيد الوكيل لا يكفي. ينقصه ${money(-after)}. اشحن رصيده أولاً من زر «الرصيد».` : "";
+    $("#act-msg").innerHTML = msg ? `<div class="msg">${msg}</div>` : "";
+    $("#act-submit").disabled = !!msg;
+  }
+
+  function renderLines() {
+    fillSelect($("#line-filter"), agents().map((a) => ({ id: a.id, label: a.name })), "كل الوكلاء");
+    const q = $("#line-search").value.trim().toLowerCase();
+    const f = $("#line-filter").value;
+    const list = lines().filter((l) => (!f || l.agentId === f) &&
+      (!q || String(l.number).includes(q) || agentName(l.agentId).toLowerCase().includes(q)));
+    $("#lines-table").innerHTML = !list.length
+      ? `<div class="empty">لا توجد أرقام. فعّل خطاً من تبويب «تفعيل خط».</div>`
+      : `<table><thead><tr><th>الرقم</th><th>الباقة</th><th>الوكيل</th><th>تاريخ التفعيل</th><th>السعر</th><th>ملاحظة</th><th>إجراءات</th></tr></thead><tbody>${
+        list.map((l) => `<tr>
+          <td class="num"><b>${esc(l.number)}</b></td>
+          <td>${esc(l.packageLabel || pkgLabel(l.packageId))}</td>
+          <td>${esc(agentName(l.agentId))}</td>
+          <td class="num">${fmtDate(l.activatedAt)}</td>
+          <td class="num">${money(l.price)}</td>
+          <td class="wrap">${esc(l.note || "")}</td>
+          <td><div class="actions">
+            <button class="btn sm" data-act="move-line" data-id="${l.id}">نقل لوكيل آخر</button>
+            <button class="btn sm danger" data-act="cancel-line" data-id="${l.id}">إلغاء</button>
+          </div></td></tr>`).join("")}</tbody></table>`;
+  }
+
+  function renderCatalog() {
+    const cos = companies();
+    $("#packages-list").innerHTML = !cos.length
+      ? `<div class="empty">أضف شركة أولاً، ثم أضف باقاتها.</div>`
+      : cos.map((c) => {
+        const pk = packagesOf(c.id);
+        return `<div class="company"><h3>${esc(c.name)} <button class="btn sm" data-act="add-package" data-company="${c.id}">باقة جديدة</button></h3>${
+          !pk.length ? `<div class="note" style="padding-top:8px">لا توجد باقات لهذه الشركة.</div>` :
+          `<div class="scroll"><table><thead><tr><th>الباقة</th><th>التكلفة</th><th>سعر البيع</th><th>الربح</th><th></th></tr></thead><tbody>${
+            pk.map((p) => `<tr>
+              <td>${esc(p.name)}${!p.price ? ` <span class="pill line_move">حدد السعر</span>` : ""}</td>
+              <td class="num">${money(p.cost)}</td><td class="num">${money(p.price)}</td>
+              <td class="num ${p.price - p.cost < 0 ? "minus" : ""}">${money(p.price - p.cost)}</td>
+              <td><div class="actions"><button class="btn sm" data-act="edit-package" data-id="${p.id}">تعديل</button>
+              <button class="btn sm danger" data-act="delete-package" data-id="${p.id}">حذف</button></div></td></tr>`).join("")
+          }</tbody></table></div>`}</div>`;
+      }).join("");
+    $("#companies-table").innerHTML = !cos.length
+      ? `<div class="empty">لا توجد شركات. اضغط «إضافة شركة».</div>`
+      : `<table><thead><tr><th>الشركة</th><th>عدد الباقات</th><th>الأرقام</th><th></th></tr></thead><tbody>${
+        cos.map((c) => {
+          const pids = new Set(packagesOf(c.id).map((p) => p.id));
+          const n = Object.values(state.lines).filter((l) => pids.has(l.packageId)).length;
+          return `<tr><td><b>${esc(c.name)}</b></td><td class="num">${pids.size}</td><td class="num">${n}</td>
+          <td><div class="actions"><button class="btn sm" data-act="edit-company" data-id="${c.id}">تعديل</button>
+          <button class="btn sm danger" data-act="delete-company" data-id="${c.id}">حذف</button></div></td></tr>`;
+        }).join("")}</tbody></table>`;
+  }
+
+  function renderLog() {
+    fillSelect($("#log-agent"), agents().map((a) => ({ id: a.id, label: a.name })), "كل الوكلاء");
+    const ag = $("#log-agent").value;
+    const t = $("#log-type").value;
+    const list = ops().filter((o) => (!ag || o.agentId === ag) &&
+      (!t || o.type === t || (t === "transfer" && o.type.startsWith("transfer"))));
+    $("#log-table").innerHTML = opsTable(list);
+  }
+
+  // ---------- tabs ----------
+  function showTab(name) {
+    $$("#tabs button").forEach((b) => b.setAttribute("aria-selected", String(b.dataset.tab === name)));
+    $$("section.view").forEach((s) => (s.hidden = s.dataset.view !== name));
+    try { sessionStorage.setItem("agents-tab", name); } catch (e) { /* ignore */ }
+  }
+  $("#tabs").addEventListener("click", (e) => { const b = e.target.closest("button[data-tab]"); if (b) showTab(b.dataset.tab); });
+
+  // ---------- modal ----------
+  function openModal(title, bodyHtml, { submitLabel = "حفظ", danger = false, onSubmit, onInput } = {}) {
+    const root = $("#modal-root");
+    root.innerHTML = `<div class="overlay"><div class="modal" role="dialog" aria-modal="true" aria-label="${esc(title)}">
+      <div class="panel-head"><h2>${esc(title)}</h2><button class="btn sm" data-close>إغلاق</button></div>
+      <form class="panel-body grid" id="modal-form" autocomplete="off">${bodyHtml}<div class="full" id="modal-msg"></div></form>
+      <div class="modal-foot">
+        <button class="btn ${danger ? "danger solid" : "primary"}" form="modal-form" type="submit">${esc(submitLabel)}</button>
+        <button class="btn" data-close>إلغاء</button>
+      </div></div></div>`;
+    const form = $("#modal-form");
+    const close = () => (root.innerHTML = "");
+    $$("[data-close]", root).forEach((b) => b.addEventListener("click", close));
+    $(".overlay", root).addEventListener("click", (e) => { if (e.target.classList.contains("overlay")) close(); });
+    if (onInput) { form.addEventListener("input", () => onInput(form)); onInput(form); }
+    form.addEventListener("submit", (e) => {
+      e.preventDefault();
+      const err = onSubmit(form);
+      if (err) $("#modal-msg").innerHTML = `<div class="msg">${esc(err)}</div>`;
+      else close();
+    });
+    const first = $("input, select", form);
+    if (first) first.focus();
+  }
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape") $("#modal-root").innerHTML = ""; });
+  const val = (form, name) => form.elements[name].value.trim();
+
+  let toastTimer;
+  function toast(text) {
+    let t = $(".toast");
+    if (!t) { t = document.createElement("div"); t.className = "toast"; t.setAttribute("role", "status"); document.body.appendChild(t); }
+    t.textContent = text;
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => t.remove(), 2800);
+  }
+
+  const agentOptions = (exclude) => agents().filter((a) => a.id !== exclude)
+    .map((a) => `<option value="${esc(a.id)}">${esc(a.name)} — ${money(a.balance)}</option>`).join("");
+
+  // ---------- actions ----------
+  const actions = {
+    "add-agent"() { agentForm(null); },
+    "edit-agent"(id) { agentForm(id); },
+    "delete-agent"(id) {
+      const a = state.agents[id];
+      const n = linesCount(id);
+      openModal("حذف وكيل", `<p class="full">هل تريد حذف الوكيل <b>${esc(a.name)}</b>؟ رصيده الحالي ${money(a.balance)}.</p>
+        ${n ? `<p class="full msg">لدى هذا الوكيل ${n} أرقام. انقلها إلى وكيل آخر من تبويب «الأرقام» قبل الحذف.</p>` : ""}`, {
+        submitLabel: "حذف الوكيل", danger: true,
+        onSubmit() {
+          if (linesCount(id)) return "انقل أرقام الوكيل أولاً.";
+          remove("agents", id); toast("تم حذف الوكيل");
+        },
+      });
+    },
+    balance(id) {
+      const a = state.agents[id];
+      openModal(`رصيد ${a.name}`, `
+        <label>نوع العملية<select name="kind"><option value="topup">شحن (إضافة)</option><option value="deduct">خصم</option><option value="set">تعيين رصيد جديد</option></select></label>
+        <label>المبلغ (₪)<input name="amount" class="num" type="number" step="0.01" min="0" required></label>
+        <label class="full">ملاحظة<input name="note" placeholder="مثال: دفعة نقدية"></label>
+        <div class="full preview" id="bal-prev"></div>`, {
+        submitLabel: "تنفيذ",
+        onInput(form) {
+          const amt = round(val(form, "amount"));
+          const k = val(form, "kind");
+          const after = k === "set" ? amt : k === "topup" ? a.balance + amt : a.balance - amt;
+          $("#bal-prev").innerHTML = `<div><span>الرصيد قبل</span><b>${money(a.balance)}</b></div><div><span>الرصيد بعد</span><b>${money(after)}</b></div>`;
+        },
+        onSubmit(form) {
+          const amt = round(val(form, "amount"));
+          const k = val(form, "kind");
+          if (!(amt > 0) && k !== "set") return "أدخل مبلغاً أكبر من صفر.";
+          const delta = k === "set" ? round(amt - a.balance) : k === "topup" ? amt : -amt;
+          if (!delta) return "الرصيد لم يتغير.";
+          const note = val(form, "note");
+          const detail = (k === "set" ? "تعيين رصيد" : "") + (note ? (k === "set" ? " — " : "") + note : "");
+          changeBalance(id, delta, delta > 0 ? "topup" : "deduct", detail);
+          toast(delta > 0 ? `تم شحن ${money(delta)}` : `تم خصم ${money(-delta)}`);
+        },
+      });
+    },
+    "transfer-balance"() {
+      if (agents().length < 2) return toast("تحتاج وكيلين على الأقل لنقل الرصيد");
+      openModal("نقل رصيد بين وكيلين", `
+        <label>من الوكيل<select name="from" required><option value="">اختر</option>${agentOptions()}</select></label>
+        <label>إلى الوكيل<select name="to" required><option value="">اختر</option>${agentOptions()}</select></label>
+        <label class="full">المبلغ (₪)<input name="amount" class="num" type="number" step="0.01" min="0" required></label>`, {
+        submitLabel: "نقل الرصيد",
+        onSubmit(form) {
+          const from = val(form, "from"), to = val(form, "to"), amt = round(val(form, "amount"));
+          if (!from || !to) return "اختر الوكيلين.";
+          if (from === to) return "اختر وكيلين مختلفين.";
+          if (!(amt > 0)) return "أدخل مبلغاً أكبر من صفر.";
+          if (state.agents[from].balance < amt) return `رصيد ${state.agents[from].name} لا يكفي (${money(state.agents[from].balance)}).`;
+          changeBalance(from, -amt, "transfer_out", `إلى ${state.agents[to].name}`);
+          changeBalance(to, amt, "transfer_in", `من ${state.agents[from].name}`);
+          toast(`تم نقل ${money(amt)}`);
+        },
+      });
+    },
+    "activate-for"(id) { showTab("activate"); $("#act-agent").value = id; renderPreview(); $("#act-company").focus(); },
+    "agent-log"(id) { showTab("log"); $("#log-agent").value = id; renderLog(); },
+    "move-line"(id) {
+      const l = state.lines[id];
+      if (agents().length < 2) return toast("لا يوجد وكيل آخر لنقل الرقم إليه");
+      openModal(`نقل الرقم ${l.number}`, `
+        <p class="full note">الوكيل الحالي: <b>${esc(agentName(l.agentId))}</b></p>
+        <label class="full">إلى الوكيل<select name="to" required><option value="">اختر</option>${agentOptions(l.agentId)}</select></label>
+        <label class="full"><span><input type="checkbox" name="money" style="width:auto"> نقل قيمة الخط أيضاً (${money(l.price)}): تُرجع للوكيل الحالي وتُخصم من الجديد</span></label>`, {
+        submitLabel: "نقل الرقم",
+        onSubmit(form) {
+          const to = val(form, "to");
+          if (!to) return "اختر الوكيل الجديد.";
+          const withMoney = form.elements.money.checked;
+          const from = l.agentId;
+          if (withMoney && state.agents[to].balance < l.price) return `رصيد ${state.agents[to].name} لا يكفي (${money(state.agents[to].balance)}).`;
+          put("lines", id, { ...l, agentId: to, movedAt: Date.now() });
+          const detail = `${l.number}: من ${agentName(from)} إلى ${state.agents[to].name}`;
+          if (withMoney && state.agents[from]) {
+            changeBalance(from, l.price, "line_move", detail);
+            changeBalance(to, -l.price, "line_move", detail);
+          } else {
+            const b = state.agents[to].balance;
+            logOp({ type: "line_move", agentId: to, agentName: state.agents[to].name, amount: 0, before: b, after: b, detail });
+          }
+          toast("تم نقل الرقم");
+        },
+      });
+    },
+    "cancel-line"(id) {
+      const l = state.lines[id];
+      openModal(`إلغاء الخط ${l.number}`, `
+        <p class="full">سيُحذف الرقم من قائمة <b>${esc(agentName(l.agentId))}</b>.</p>
+        ${state.agents[l.agentId] ? `<label class="full"><span><input type="checkbox" name="refund" style="width:auto"> إرجاع ${money(l.price)} إلى رصيد الوكيل</span></label>` : ""}`, {
+        submitLabel: "إلغاء الخط", danger: true,
+        onSubmit(form) {
+          const refund = form.elements.refund?.checked;
+          remove("lines", id);
+          if (refund) changeBalance(l.agentId, l.price, "line_cancel", `إلغاء ${l.number} مع إرجاع المبلغ`, { cost: -round(l.cost), profit: 0 });
+          else if (state.agents[l.agentId]) {
+            const b = state.agents[l.agentId].balance;
+            logOp({ type: "line_cancel", agentId: l.agentId, agentName: agentName(l.agentId), amount: 0, before: b, after: b, detail: `إلغاء ${l.number}` });
+          }
+          toast("تم إلغاء الخط");
+        },
+      });
+    },
+    "add-company"() { companyForm(null); },
+    "edit-company"(id) { companyForm(id); },
+    "delete-company"(id) {
+      const c = state.companies[id];
+      const n = packagesOf(id).length;
+      openModal("حذف شركة", `<p class="full">حذف الشركة <b>${esc(c.name)}</b>؟</p>
+        ${n ? `<p class="full msg">لهذه الشركة ${n} باقات. احذف باقاتها أولاً.</p>` : ""}`, {
+        submitLabel: "حذف الشركة", danger: true,
+        onSubmit() { if (packagesOf(id).length) return "احذف باقات الشركة أولاً."; remove("companies", id); toast("تم حذف الشركة"); },
+      });
+    },
+    "add-package"(_, btn) { packageForm(null, btn?.dataset.company); },
+    "edit-package"(id) { packageForm(id); },
+    "delete-package"(id) {
+      const p = state.packages[id];
+      const n = Object.values(state.lines).filter((l) => l.packageId === id).length;
+      openModal("حذف باقة", `<p class="full">حذف الباقة <b>${esc(pkgLabel(id))}</b>؟</p>
+        ${n ? `<p class="full note">هناك ${n} أرقام على هذه الباقة؛ ستبقى في القائمة باسم الباقة.</p>` : ""}`, {
+        submitLabel: "حذف الباقة", danger: true,
+        onSubmit() { remove("packages", id); toast(`تم حذف ${p.name}`); },
+      });
+    },
+  };
+
+  function agentForm(id) {
+    const a = id ? state.agents[id] : { name: "", phone: "", notes: "", balance: 0 };
+    openModal(id ? "تعديل وكيل" : "إضافة وكيل", `
+      <label>اسم الوكيل<input name="name" value="${esc(a.name)}" required></label>
+      <label>الهاتف<input name="phone" class="num" inputmode="tel" value="${esc(a.phone)}"></label>
+      ${id ? "" : `<label>الرصيد الافتتاحي (₪)<input name="balance" class="num" type="number" step="0.01" value="0"></label>`}
+      <label class="${id ? "" : ""} full">ملاحظات<input name="notes" value="${esc(a.notes)}"></label>`, {
+      submitLabel: id ? "حفظ التعديل" : "إضافة الوكيل",
+      onSubmit(form) {
+        const name = val(form, "name");
+        if (!name) return "اكتب اسم الوكيل.";
+        if (agents().some((x) => x.id !== id && x.name === name)) return "يوجد وكيل بهذا الاسم.";
+        const data = { ...a, name, phone: val(form, "phone"), notes: val(form, "notes"), updatedAt: Date.now() };
+        if (id) { put("agents", id, data); toast("تم حفظ التعديل"); return; }
+        const nid = uid();
+        const opening = round(val(form, "balance"));
+        put("agents", nid, { ...data, balance: opening, createdAt: Date.now() });
+        if (opening) logOp({ type: "topup", agentId: nid, agentName: name, amount: opening, before: 0, after: opening, detail: "رصيد افتتاحي" });
+        toast("تمت إضافة الوكيل");
+      },
+    });
+  }
+
+  function companyForm(id) {
+    const c = id ? state.companies[id] : { name: "", order: companies().length + 1 };
+    openModal(id ? "تعديل شركة" : "إضافة شركة", `
+      <label class="full">اسم الشركة<input name="name" value="${esc(c.name)}" placeholder="مثال: سلكوم" required></label>`, {
+      submitLabel: id ? "حفظ" : "إضافة الشركة",
+      onSubmit(form) {
+        const name = val(form, "name");
+        if (!name) return "اكتب اسم الشركة.";
+        if (companies().some((x) => x.id !== id && x.name === name)) return "هذه الشركة موجودة.";
+        put("companies", id || uid(), { ...c, name, createdAt: c.createdAt || Date.now() });
+        toast(id ? "تم الحفظ" : "تمت إضافة الشركة");
+      },
+    });
+  }
+
+  function packageForm(id, companyId) {
+    if (!companies().length) return toast("أضف شركة أولاً");
+    const p = id ? state.packages[id] : { companyId: companyId || "", name: "", cost: 0, price: 0 };
+    openModal(id ? "تعديل باقة" : "إضافة باقة", `
+      <label class="full">الشركة<select name="company" required>${companies().map((c) => `<option value="${esc(c.id)}" ${c.id === p.companyId ? "selected" : ""}>${esc(c.name)}</option>`).join("")}</select></label>
+      <label class="full">اسم الباقة<input name="name" value="${esc(p.name)}" placeholder="مثال: 500 جيجا" required></label>
+      <label>التكلفة عليّ (₪)<input name="cost" class="num" type="number" step="0.01" min="0" value="${round(p.cost)}" required></label>
+      <label>سعر البيع للوكيل (₪)<input name="price" class="num" type="number" step="0.01" min="0" value="${round(p.price)}" required></label>`, {
+      submitLabel: id ? "حفظ" : "إضافة الباقة",
+      onSubmit(form) {
+        const name = val(form, "name");
+        if (!name) return "اكتب اسم الباقة.";
+        const cid = val(form, "company");
+        put("packages", id || uid(), { ...p, companyId: cid, name, cost: round(val(form, "cost")), price: round(val(form, "price")),
+          order: p.order || packagesOf(cid).length + 1, createdAt: p.createdAt || Date.now() });
+        toast(id ? "تم حفظ الباقة" : "تمت إضافة الباقة");
+      },
+    });
+  }
+
+  document.addEventListener("click", (e) => {
+    const go = e.target.closest("[data-goto]");
+    if (go) return showTab(go.dataset.goto);
+    const b = e.target.closest("[data-act]");
+    if (b && actions[b.dataset.act]) actions[b.dataset.act](b.dataset.id, b);
+  });
+
+  // ---------- activation form ----------
+  $("#act-company").addEventListener("change", () => renderPackageOptions(true));
+  $("#act-package").addEventListener("change", applyPackagePrice);
+  ["#act-agent", "#act-price", "#act-cost"].forEach((s) => $(s).addEventListener("input", renderPreview));
+  $("#activate-form").addEventListener("submit", (e) => {
+    e.preventDefault();
+    const agentId = $("#act-agent").value, pkgId = $("#act-package").value;
+    const number = cleanNumber($("#act-number").value);
+    const price = round($("#act-price").value), cost = round($("#act-cost").value);
+    const err = (m) => ($("#act-msg").innerHTML = `<div class="msg">${esc(m)}</div>`);
+    if (!agentId || !pkgId) return err("اختر الوكيل والباقة.");
+    if (number.length < 7) return err("أدخل رقم خط صحيح.");
+    if (Object.values(state.lines).some((l) => l.number === number)) return err(`الرقم ${number} مفعّل مسبقاً.`);
+    const a = state.agents[agentId];
+    if (a.balance < price) return err(`رصيد الوكيل لا يكفي (${money(a.balance)}).`);
+    const label = pkgLabel(pkgId);
+    const note = $("#act-note").value.trim();
+    put("lines", uid(), { number, packageId: pkgId, packageLabel: label, agentId, price, cost, note, activatedAt: Date.now() });
+    changeBalance(agentId, -price, "activate", `${label} — ${number}${note ? " — " + note : ""}`, { cost, profit: round(price - cost) });
+    $("#act-number").value = ""; $("#act-note").value = "";
+    toast(`تم تفعيل ${number} لـ ${a.name}`);
+    renderPreview();
+  });
+
+  $("#agent-search").addEventListener("input", renderAgents);
+  $("#line-search").addEventListener("input", renderLines);
+  $("#line-filter").addEventListener("change", renderLines);
+  $("#log-agent").addEventListener("change", renderLog);
+  $("#log-type").addEventListener("change", renderLog);
+
+  try { const t = sessionStorage.getItem("agents-tab"); if (t) showTab(t); } catch (e) { /* ignore */ }
+  start();
+})();
+</script>
+
+</body>
+</html>
