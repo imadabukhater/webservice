@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: agents-app
+    runtime: docker
+    plan: free
+    rootDir: agents-app
+    dockerfilePath: Dockerfile
+    envVars:
+      - key: ADMIN_PASSWORD
+        sync: false
+    disk:
+      - name: data
+        mountPath: /data
+        sizeGB: 1
