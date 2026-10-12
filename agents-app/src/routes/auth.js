@@ -75,6 +75,14 @@ route('PUT', '/api/settings', ADMIN, ({ body }) => {
     if (fee < 0) fail(400, 'رسوم eSIM لا تكون سالبة');
     setSetting('esim_fee', fee);
   }
+  if (body.artUser !== undefined) setSetting('art_user', str(body.artUser, 80));
+  // Write-only: an empty password keeps the saved one.
+  if (body.artPass) setSetting('art_pass', String(body.artPass).slice(0, 200));
+  if (body.artMarkup !== undefined) {
+    const m = num(body.artMarkup, 'نسبة الزيادة');
+    if (m < 0 || m > 200) fail(400, 'نسبة الزيادة بين 0 و200%');
+    setSetting('art_markup', m);
+  }
   if (body.supportWhatsapp !== undefined) {
     // International format without + or leading zeros, as wa.me expects: 972567725080.
     const wa = String(body.supportWhatsapp).replace(/\D/g, '').replace(/^00/, '');

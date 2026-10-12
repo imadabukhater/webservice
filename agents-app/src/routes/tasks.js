@@ -18,10 +18,11 @@ const taskView = (t) => ({
   lineId: t.line_id, lineNumber: t.line_number || '', linePackage: t.line_package || '',
   amount: t.amount === null ? null : round(t.amount), note: t.note, response: t.response,
   hasAttachment: !!t.has_attachment, createdAt: t.created_at, resolvedAt: t.resolved_at, resolvedBy: t.resolved_by,
+  autoStatus: t.auto_status || '', autoNote: t.auto_note || '',
 });
 
 const TASK_SELECT = `SELECT t.id, t.type, t.status, t.agent_id, t.line_id, t.amount, t.note, t.response, (t.attachment != '') AS has_attachment,
-  t.created_at, t.resolved_at, t.resolved_by, u.name AS agent_name, l.number AS line_number, l.package_label AS line_package
+  t.created_at, t.resolved_at, t.resolved_by, t.auto_status, t.auto_note, u.name AS agent_name, l.number AS line_number, l.package_label AS line_package
   FROM tasks t LEFT JOIN users u ON u.id = t.agent_id LEFT JOIN lines l ON l.id = t.line_id`;
 
 function getTask(id, user) {
@@ -78,9 +79,12 @@ route('POST', '/api/tasks/:id/cancel', ANY, ({ user, params }) => {
   return { ok: true };
 });
 
-// The manager completes or rejects a request. Rejected activations are refunded in full.
-route('POST', '/api/tasks/:id/resolve', ADMIN, ({ user, params, body }) => tx(() => {
-  const t = getTask(params.id, user);
+// The manager completes or rejects a request (the art-topup executor does the same). Rejected sales are refunded in full.
+route('POST', '/api/tasks/:id/resolve', ADMIN, ({ user, params, body }) => tx(() => resolveTask(getTask(params.id, user), user, body)),
+  { maxBody: 1100 * 1024 });
+
+// Runs inside the caller's transaction.
+function resolveTask(t, user, body) {
   if (t.status !== 'open') fail(400, 'تمت معالجة هذا الطلب من قبل');
   const status = body.status === 'rejected' ? 'rejected' : 'done';
   const response = str(body.response, 500);
@@ -142,6 +146,6 @@ route('POST', '/api/tasks/:id/resolve', ADMIN, ({ user, params, body }) => tx(()
     });
   }
   return { ok: true };
-}), { maxBody: 1100 * 1024 });
+}
 
-module.exports = { TYPE_LABEL };
+module.exports = { TYPE_LABEL, resolveTask };

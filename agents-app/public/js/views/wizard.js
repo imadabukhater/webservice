@@ -38,7 +38,10 @@ const STEPS = () => (external() ? ['الشركة', 'الشحن', 'رقم الز�
 // An agent's sale for a "manual" company becomes a request the manager carries out on the company's site.
 const manualSale = () => !isAdmin() && !W.esim && !W.port && company()?.activation !== 'direct';
 const directSale = () => !isAdmin() && !W.esim && !W.port && company()?.activation === 'direct';
+// Card recharges of art-topup cards for an "auto" company are carried out automatically within a minute.
+const autoSale = () => manualSale() && external() && company()?.activation === 'auto' && !!pkg()?.art;
 function modeNote() {
+  if (autoSale()) return `<div class="msg info">${icon('refresh')}<span>يُشحن الكرت تلقائياً خلال دقيقة تقريباً. إن تعذّر، يُكمله المدير أو يُسترد المبلغ.</span></div>`;
   if (directSale()) return `<div class="msg warn">${icon('bolt')}<span>تفعيل مباشر: بعد التأكيد يصبح الخط فعّالاً فوراً، ولا يمكن فصله أو استرداد المبلغ.</span></div>`;
   if (manualSale()) return `<div class="msg info">${icon('tasks')}<span>يُرسَل الطلب إلى المدير لتنفيذه على موقع الشركة. يُسترد المبلغ كاملاً إن رُفض.</span></div>`;
   return '';
@@ -190,8 +193,8 @@ function resultView() {
   const pending = l.status === 'pending' || W.result.pending;
   return `<section class="card card-pad"><div class="success">
     <div class="success-mark ${pending ? 'pending' : ''}">${icon(pending ? 'clock' : 'check')}</div>
-    <h2>${pending ? 'أُرسل الطلب إلى المدير' : external() ? 'تم شحن الرقم' : 'تم تفعيل الخط'}</h2>
-    ${pending ? '<p class="small muted">ستصلك رسالة عند التنفيذ. يُسترد المبلغ كاملاً إن رُفض الطلب.</p>' : ''}
+    <h2>${pending ? (autoSale() ? 'جاري الشحن تلقائياً' : 'أُرسل الطلب إلى المدير') : external() ? 'تم شحن الرقم' : 'تم تفعيل الخط'}</h2>
+    ${pending ? `<p class="small muted">${autoSale() ? 'يصلك تنبيه عند اكتمال الشحن خلال دقيقة تقريباً.' : 'ستصلك رسالة عند التنفيذ.'} يُسترد المبلغ كاملاً إن رُفض الطلب.</p>` : ''}
     <p class="muted">${phone(l.number)} · ${esc(l.packageLabel)}${l.expiresAt && !pending ? ` · <span class="nowrap">حتى ${fmtDate(l.expiresAt)}</span>` : ''}</p>
     <p class="small muted">الرصيد المتاح الآن ${fmtMoney(W.result.available)}</p>
     <div class="btn-row" style="width:100%;max-width:420px">

@@ -14,6 +14,8 @@ require('./src/routes/agents');
 require('./src/routes/dashboard');
 require('./src/routes/reports');
 require('./src/routes/messages');
+require('./src/routes/art');
+require('./src/autoexec');
 const { dispatch } = require('./src/router');
 const { ApiError } = require('./src/util');
 

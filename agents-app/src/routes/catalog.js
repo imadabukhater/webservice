@@ -19,7 +19,7 @@ function amount(v, label) {
 }
 
 const packageAttrs = (p) => ({
-  dataGb: p.data_gb, minutes: p.minutes, sms: p.sms, tag: p.tag, description: p.description,
+  dataGb: p.data_gb, minutes: p.minutes, sms: p.sms, tag: p.tag, description: p.description, art: !!p.art_card_id,
 });
 
 // Agents see their own price (and never the cost); packages without a price are hidden from them.
@@ -52,7 +52,8 @@ function companyFields(body, existing = {}) {
   const logo = body.logo === undefined ? existing.logo ?? '' : imageOrEmpty(body.logo, { maxKb: 300, allowSvg: true, label: 'الشعار' });
   const rawPrefixes = body.prefixes === undefined ? existing.iccid_prefixes ?? '' : [].concat(body.prefixes).join(',');
   const prefixes = String(rawPrefixes).split(/[\s,]+/).map((p) => p.replace(/\D/g, '')).filter((p) => p.length >= 4).slice(0, 20).join(',');
-  const activation = (body.activation ?? existing.activation) === 'direct' ? 'direct' : 'manual';
+  const wanted = body.activation ?? existing.activation;
+  const activation = ['direct', 'auto'].includes(wanted) ? wanted : 'manual';
   return { name, color, logo, prefixes, activation };
 }
 

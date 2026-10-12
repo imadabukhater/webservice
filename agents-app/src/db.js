@@ -240,6 +240,13 @@ ensureColumn('ops', 'customer_price', 'customer_price REAL');
 // manual: the agent's sale becomes a request the manager carries out; direct: active at once, no disconnect or refund.
 ensureColumn('companies', 'activation', "activation TEXT NOT NULL DEFAULT 'manual'");
 ensureColumn('lines', 'direct', 'direct INTEGER NOT NULL DEFAULT 0');
+// art-topup: the card a package stands for, and the state of a request sent there automatically
+// (auto_status: '' not sent, sending, sent, done, failed, unknown; auto_ref: last operation id seen before sending).
+ensureColumn('packages', 'art_card_id', "art_card_id TEXT NOT NULL DEFAULT ''");
+ensureColumn('tasks', 'auto_status', "auto_status TEXT NOT NULL DEFAULT ''");
+ensureColumn('tasks', 'auto_note', "auto_note TEXT NOT NULL DEFAULT ''");
+ensureColumn('tasks', 'auto_ref', "auto_ref TEXT NOT NULL DEFAULT ''");
+ensureColumn('tasks', 'auto_at', 'auto_at INTEGER');
 
 const q = (sql) => db.prepare(sql);
 
@@ -256,7 +263,10 @@ function tx(fn) {
 }
 
 // ---------- settings ----------
-const DEFAULT_SETTINGS = { app_name: 'بوابة الوكلاء', warn_days: '7', low_balance: '50', esim_fee: '7', support_whatsapp: '972567725080' };
+const DEFAULT_SETTINGS = {
+  app_name: 'بوابة الوكلاء', warn_days: '7', low_balance: '50', esim_fee: '7', support_whatsapp: '972567725080',
+  art_user: '', art_pass: '', art_markup: '15',
+};
 function getSettings() {
   const out = { ...DEFAULT_SETTINGS };
   for (const r of q('SELECT key, value FROM settings').all()) out[r.key] = r.value;
@@ -266,7 +276,15 @@ function getSettings() {
     lowBalance: Number(out.low_balance) || 0,
     esimFee: Math.max(0, Number(out.esim_fee) || 0),
     supportWhatsapp: out.support_whatsapp,
+    // art-topup sign-in: the password never leaves the server (see artCredentials).
+    artUser: out.art_user,
+    artConfigured: !!(out.art_user && out.art_pass),
+    artMarkup: Math.max(0, Number(out.art_markup) || 0),
   };
+}
+function artCredentials() {
+  const get = (k) => q('SELECT value FROM settings WHERE key = ?').get(k)?.value || '';
+  return { user: get('art_user'), pass: get('art_pass') };
 }
 function setSetting(key, value) {
   q('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').run(key, String(value));
@@ -298,4 +316,4 @@ function bootstrap() {
 }
 bootstrap();
 
-module.exports = { db, q, tx, getSettings, setSetting, DB_FILE };
+module.exports = { db, q, tx, getSettings, setSetting, artCredentials, DB_FILE };

@@ -21,6 +21,7 @@ function taskCard(t) {
         <div class="item-sub">${admin ? `<span>${esc(t.agentName)}</span>` : ''}<span>${relTime(t.createdAt)}</span>${t.lineNumber ? `<span>${phone(t.lineNumber)}</span>` : ''}</div></div>
       <span class="pill s-${t.status}">${TASK_STATUS[t.status]}</span></div>
     ${t.note ? `<p class="small" style="color:var(--ink-2)">${esc(t.note)}</p>` : ''}
+    ${admin && t.autoStatus ? autoBox(t) : ''}
     ${t.response ? `<p class="small muted">الرد: ${esc(t.response)}${t.resolvedBy ? ` — ${esc(t.resolvedBy)}` : ''}</p>` : ''}
     <div class="item-actions">
       ${admin && t.status === 'open' && SALE_TASKS.includes(t.type) ? `<button class="btn btn-sm" data-action="copy-task" data-id="${t.id}">${icon('copy')}نسخ التفاصيل</button>` : ''}
@@ -29,6 +30,17 @@ function taskCard(t) {
         <button class="btn btn-sm btn-danger" data-action="reject" data-id="${t.id}">${icon('x')}رفض</button>` : ''}
       ${!admin && t.status === 'open' && ['topup', 'general'].includes(t.type) ? `<button class="btn btn-sm btn-ghost" data-action="cancel" data-id="${t.id}">إلغاء الطلب</button>` : ''}
     </div></article>`;
+}
+
+// What the art-topup executor did with a request. failed/unknown need the manager.
+const AUTO = {
+  sending: ['clock', 'info', 'يُرسل إلى art-topup…'], sent: ['clock', 'info', 'أُرسل إلى art-topup — بانتظار النتيجة'],
+  done: ['checkCircle', 'info', 'نُفّذ تلقائياً عبر art-topup'], failed: ['alert', '', 'لم ينجح الشحن التلقائي — نفّذه يدوياً أو ارفضه ليُسترد المبلغ'],
+  unknown: ['alert', 'warn', 'غير مؤكد — افحص «العمليات» في art-topup قبل أي تنفيذ يدوي'],
+};
+function autoBox(t) {
+  const [ic, cls, label] = AUTO[t.autoStatus] || AUTO.sent;
+  return `<div class="msg ${cls}">${icon(ic)}<span><b>${label}</b>${t.autoNote ? `<br><small>${esc(t.autoNote)}</small>` : ''}</span></div>`;
 }
 
 function dueCard(l) {

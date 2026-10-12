@@ -1,4 +1,4 @@
-import { S, api, icon, esc, field, toast, downloadBlob, changed } from '../core.js';
+import { S, api, icon, esc, field, toast, downloadBlob, changed, loadCatalog } from '../core.js';
 
 export default {
   admin: true,
@@ -27,6 +27,22 @@ export default {
           <div id="settings-msg"></div>
           <button class="btn btn-primary" type="submit">${icon('check')}حفظ الإعدادات</button>
         </form>
+        <form class="card card-pad form" id="art-form" novalidate autocomplete="off">
+          <h2 class="dot-title">الشحن التلقائي عبر art-topup</h2>
+          <p class="muted small">يشحن السيرفر كروت الشركات المضبوطة على «تلقائي» من حسابك في art-topup، ويُكمل الطلب بنفسه. إن تعذّر، يبقى الطلب عندك.</p>
+          <div class="row2 stack-xs">
+            <div class="field"><label for="art-user">اسم المستخدم في art-topup</label><input class="input ltr" id="art-user" name="artUser" value="${esc(s.artUser || '')}" autocomplete="off"></div>
+            <div class="field"><label for="art-pass">كلمة المرور</label><input class="input ltr" id="art-pass" name="artPass" type="password" autocomplete="new-password" placeholder="${s.artConfigured ? 'محفوظة — اتركها فارغة للإبقاء' : ''}"></div>
+          </div>
+          <div class="field"><label for="art-markup">زيادة سعر الوكيل على سعر art-topup (%)</label><input class="input ltr" id="art-markup" name="artMarkup" type="number" min="0" max="200" step="0.5" value="${s.artMarkup}">
+            <span class="hint">تُطبَّق عند «مزامنة الكروت»، وتستبدل أسعار كروت art-topup في «الشركات والرزم».</span></div>
+          <div id="art-msg"></div>
+          <div class="btn-row">
+            <button class="btn btn-primary" type="submit">${icon('check')}حفظ</button>
+            <button class="btn" type="button" data-action="art-check" ${s.artConfigured ? '' : 'disabled'}>${icon('wallet')}اختبار الاتصال والرصيد</button>
+            <button class="btn" type="button" data-action="art-sync" ${s.artConfigured ? '' : 'disabled'}>${icon('refresh')}مزامنة الكروت والأسعار</button>
+          </div>
+        </form>
         <section class="card card-pad form">
           <h2 class="dot-title">النسخ الاحتياطي</h2>
           <p class="muted">كل البيانات (الوكلاء، الأرصدة، الأرقام، السجل) في ملف واحد. نزّل نسخة بانتظام واحفظها في مكان آمن.</p>
@@ -38,6 +54,18 @@ export default {
       </div>`;
   },
   mount(root) {
+    root.querySelector('#art-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const form = e.currentTarget;
+      const msg = root.querySelector('#art-msg');
+      try {
+        S.settings = await api.put('/api/settings', { artUser: field(form, 'artUser'), artPass: form.elements.artPass.value, artMarkup: field(form, 'artMarkup') });
+        toast('تم حفظ إعدادات art-topup');
+        changed();
+      } catch (err) {
+        msg.innerHTML = `<div class="msg">${icon('alert')}<span>${esc(err.message)}</span></div>`;
+      }
+    });
     root.querySelector('#settings-form').addEventListener('submit', async (e) => {
       e.preventDefault();
       const form = e.currentTarget;
@@ -57,6 +85,28 @@ export default {
     });
   },
   actions: {
+    async 'art-check'(btn) {
+      const box = document.getElementById('art-msg');
+      btn.disabled = true;
+      try {
+        const r = await api.post('/api/art/check');
+        box.innerHTML = `<div class="msg info">${icon('checkCircle')}<span>تم الاتصال بـ art-topup. الرصيد: ${r.balance === null ? 'غير معروف' : `${r.balance} ₪`}</span></div>`;
+      } catch (err) {
+        box.innerHTML = `<div class="msg">${icon('alert')}<span>${esc(err.message)}</span></div>`;
+      } finally { btn.disabled = false; }
+    },
+    async 'art-sync'(btn) {
+      const box = document.getElementById('art-msg');
+      btn.disabled = true;
+      box.innerHTML = `<div class="msg info">${icon('clock')}<span>جاري قراءة الكروت من art-topup…</span></div>`;
+      try {
+        const r = await api.post('/api/art/sync');
+        await loadCatalog(true);
+        box.innerHTML = `<div class="msg info">${icon('checkCircle')}<span>${r.cards} كرتاً: أُضيف ${r.added}، حُدّث ${r.updated}${r.switchedOff ? `، أُوقف ${r.switchedOff}` : ''}. سعر الوكيل = سعر art-topup + ${r.markup}%. الشركات صارت «تلقائي».</span></div>`;
+      } catch (err) {
+        box.innerHTML = `<div class="msg">${icon('alert')}<span>${esc(err.message)}</span></div>`;
+      } finally { btn.disabled = false; }
+    },
     async backup() {
       const blob = await api.blob('/api/backup');
       downloadBlob(blob, `agents-backup-${new Date().toISOString().slice(0, 10)}.db`);

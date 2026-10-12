@@ -1,4 +1,5 @@
 'use strict';
+const { EventEmitter } = require('node:events');
 const { q, getSettings } = require('./db');
 const { fail, now, round, normalizeIccid, validIccid } = require('./util');
 
@@ -92,11 +93,16 @@ const packageLabel = (pkg) => `${pkg.company_name} ${pkg.name}`;
 // true when the company's sales are activated directly (final); false when the manager carries them out.
 const directCompany = (companyId) => q('SELECT activation FROM companies WHERE id = ?').get(companyId)?.activation === 'direct';
 
-// A sale the manager carries out by hand: opens a task and tells the manager.
+// Fired with a task id once a sale request is opened; listeners act after the current transaction (setImmediate).
+const events = new EventEmitter();
+
+// A sale the manager carries out by hand (or the art-topup executor): opens a task and tells the manager.
 function openSaleTask({ type, agent, lineId = null, amount, note, payload = null }) {
-  q('INSERT INTO tasks (type, agent_id, line_id, amount, note, payload, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
-    .run(type, agent.id, lineId, amount, note, payload ? JSON.stringify(payload) : '', now());
+  const id = Number(q('INSERT INTO tasks (type, agent_id, line_id, amount, note, payload, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
+    .run(type, agent.id, lineId, amount, note, payload ? JSON.stringify(payload) : '', now()).lastInsertRowid);
   notify({ role: 'admin', kind: 'task', title: `${note.split(' — ')[0]} من ${agent.name}`, body: note, link: '#/tasks' });
+  events.emit('sale-task', id);
+  return id;
 }
 
 // ---------- SIM cards ----------
@@ -185,7 +191,7 @@ function getLine(id, user) {
 
 module.exports = {
   getUser, getAgent, publicUser, logOp, opView, logLineOp, changeBalance, notify,
-  LIVE_OFFER, priceFor, liveOffer, quote, packageLabel, directCompany, openSaleTask,
+  LIVE_OFFER, priceFor, liveOffer, quote, packageLabel, directCompany, openSaleTask, events,
   prefixesOf, companyForIccid, learnPrefix, takeSim, markSimUsed,
   LINE_SELECT, lineState, lineView, getLine,
 };
