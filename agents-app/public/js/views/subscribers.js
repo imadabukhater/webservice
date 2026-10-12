@@ -32,7 +32,7 @@ export function lineCard(l) {
   const renewable = ['active', 'frozen'].includes(l.status);
   return `<article class="item clickable" data-action="open-line" data-id="${l.id}">
     <div class="item-top">${companyLogo(companyById(l.companyId) || (l.companyName ? { name: l.companyName, color: l.companyColor } : null), 'xs')}
-      <div class="grow">${phone(l.number)}<div class="item-sub"><span>${esc(l.customerName || 'بدون اسم')}</span><span>${esc(l.packageLabel)}</span>${isAdmin() ? `<span>${esc(l.agentName)}</span>` : ''}${l.esim ? '<span>eSIM</span>' : ''}${l.kind === 'external' ? '<span>خارجي</span>' : ''}</div></div>
+      <div class="grow">${phone(l.number)}<div class="item-sub"><span>${esc(l.customerName || 'بدون اسم')}</span><span>${esc(l.packageLabel)}</span>${isAdmin() ? `<span>${esc(l.agentName)}</span>` : ''}${l.esim ? '<span>eSIM</span>' : ''}${l.kind === 'external' ? '<span>شحن كرت</span>' : ''}</div></div>
       ${statePill(l.state)}</div>
     ${l.status !== 'disconnected' && l.status !== 'pending'
       ? `<div class="line-meter"><div class="meter ${meter}"><i style="width:${pct}%"></i></div>
@@ -72,19 +72,17 @@ export async function lineAction(line, name) {
         async onSubmit() { await act(line, 'unfreeze'); return finish('عاد الرقم فعّالاً'); },
       });
     case 'swap': {
-      const stock = (await api.get(isAdmin() ? `/api/sims?status=available&forAgent=${line.agentId}` : '/api/sims?status=available'))
-        .filter((s) => !s.companyId || s.companyId === line.companyId);
       let sim = { valid: false };
       return sheet({
         title: `تبديل شريحة ${fmtPhone(line.number)}`,
         subtitle: line.sim ? `الشريحة الحالية: <span class="ltr mono">${fmtIccid(line.sim)}</span>` : 'الرقم بدون شريحة مسجّلة',
-        body: `${simFieldHtml({ id: 'swap-sim', label: 'رقم الشريحة الجديدة', stock })}
+        body: `${simFieldHtml({ id: 'swap-sim', label: 'رقم الشريحة الجديدة — امسحه بالكاميرا أو اكتبه' })}
           <div class="field"><label for="sw-reason">السبب <span class="opt">(اختياري)</span></label><input class="input" id="sw-reason" name="reason" placeholder="مثال: شريحة تالفة"></div>`,
         submit: 'تبديل الشريحة',
-        onMount(form) { bindSimField(form, { id: 'swap-sim', companyId: line.companyId, stock, onChange: (s) => { sim = s; } }); },
+        onMount(form) { bindSimField(form, { id: 'swap-sim', companyId: line.companyId, onChange: (s) => { sim = s; } }); },
         async onSubmit(form) {
           if (!sim.valid) throw new Error('أدخل رقم شريحة صالحاً');
-          await act(line, 'swap_sim', { ...(sim.simId ? { simId: sim.simId } : { sim: sim.iccid }), reason: field(form, 'reason') });
+          await act(line, 'swap_sim', { sim: sim.iccid, reason: field(form, 'reason') });
           return finish('تم تبديل الشريحة');
         },
       });
@@ -183,7 +181,7 @@ export async function openLine(id) {
 
   sheet({
     title: fmtPhone(l.number),
-    subtitle: `${statePill(l.state)} ${l.kind === 'external' ? '<span class="pill plain">رقم خارجي</span>' : ''} ${l.port ? '<span class="pill plain">تحويل رقم</span>' : ''}`,
+    subtitle: `${statePill(l.state)} ${l.kind === 'external' ? '<span class="pill plain">شحن كرت</span>' : ''} ${l.port ? '<span class="pill plain">تحويل رقم</span>' : ''}`,
     wide: true,
     body: `
       <div class="summary-pkg">${companyLogo(co, 'sm')}<div class="grow"><b>${esc(l.packageLabel)}</b><small>${esc(co?.name || '')}</small></div></div>

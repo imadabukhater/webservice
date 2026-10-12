@@ -38,7 +38,7 @@ function newRequest() {
     title: 'طلب جديد',
     body: `<div class="action-list">
       <button type="button" data-kind="topup"><span class="tile sm green">${icon('wallet')}</span>طلب شحن رصيد</button>
-      <button type="button" data-kind="general"><span class="tile sm">${icon('msg')}</span>طلب أو رسالة للمدير</button></div>`,
+      <button type="button" data-kind="general"><span class="tile sm">${icon('msg')}</span>طلب عام للمدير</button></div>`,
     onMount(form, el) {
       el.querySelector('[data-kind="topup"]').addEventListener('click', () => openTopupRequest());
       el.querySelector('[data-kind="general"]').addEventListener('click', () => sheet({

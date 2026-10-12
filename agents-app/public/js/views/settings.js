@@ -2,7 +2,7 @@ import { S, api, icon, esc, field, toast, downloadBlob, changed } from '../core.
 
 export default {
   admin: true,
-  title: () => ({ title: 'الإعدادات', subtitle: 'اسم التطبيق والتنبيهات والنسخ الاحتياطي' }),
+  title: () => ({ title: 'الإعدادات', subtitle: 'اسم التطبيق، الرسوم، الدعم الفني والنسخ الاحتياطي' }),
   async load() { S.settings = await api.get('/api/settings'); },
   render() {
     const s = S.settings;
@@ -17,6 +17,12 @@ export default {
               <span class="hint">تظهر الأرقام في «قيد الفصل» وفي المهام قبل هذه المدة.</span></div>
             <div class="field"><label for="st-low">حد الرصيد المنخفض (₪)</label><input class="input ltr" id="st-low" name="lowBalance" type="number" min="0" step="1" value="${s.lowBalance}">
               <span class="hint">ينبّه الوكيل والمدير عندما ينزل الرصيد المتاح تحته. 0 لإيقاف التنبيه.</span></div>
+          </div>
+          <div class="row2 stack-xs">
+            <div class="field"><label for="st-esim">رسوم تفعيل eSIM (₪)</label><input class="input ltr" id="st-esim" name="esimFee" type="number" min="0" step="0.5" value="${s.esimFee}">
+              <span class="hint">تُضاف إلى سعر كل تفعيل eSIM جديد وتُخصم من رصيد الوكيل. 0 لإلغائها.</span></div>
+            <div class="field"><label for="st-wa">واتساب الدعم الفني</label><input class="input ltr" id="st-wa" name="supportWhatsapp" inputmode="tel" placeholder="972567725080" value="${esc(s.supportWhatsapp)}">
+              <span class="hint">بالصيغة الدولية بدون + أو 0 في البداية. يظهر للوكلاء زر واتساب في أعلى الشاشة. اتركه فارغاً لإخفائه.</span></div>
           </div>
           <div id="settings-msg"></div>
           <button class="btn btn-primary" type="submit">${icon('check')}حفظ الإعدادات</button>
@@ -38,7 +44,10 @@ export default {
       const msg = root.querySelector('#settings-msg');
       msg.innerHTML = '';
       try {
-        S.settings = await api.put('/api/settings', { appName: field(form, 'appName'), warnDays: field(form, 'warnDays'), lowBalance: field(form, 'lowBalance') });
+        S.settings = await api.put('/api/settings', {
+          appName: field(form, 'appName'), warnDays: field(form, 'warnDays'), lowBalance: field(form, 'lowBalance'),
+          esimFee: field(form, 'esimFee'), supportWhatsapp: field(form, 'supportWhatsapp'),
+        });
         toast('تم حفظ الإعدادات');
         changed({ keepView: true });
         document.querySelectorAll('.brand b').forEach((b) => { b.textContent = S.settings.appName; });

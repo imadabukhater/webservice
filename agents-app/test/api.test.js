@@ -235,3 +235,82 @@ test('offers: running offers only, priced per month', async () => {
   assert.equal(r.balance, 335);
   assert.equal(agent.balance, 500);
 });
+
+test('card recharge extends a known number; eSIM fee is charged and refunded', async () => {
+  const admin = await login('admin', 'admin-pass');
+  const p500 = (await ok(call(admin, 'GET', '/api/catalog'))).packages.find((p) => p.name === '500 جيجا');
+  await ok(call(admin, 'POST', '/api/agents', { name: 'محل الكروت', username: 'cards', password: 'secret7', balance: 500 }));
+  await ok(call(admin, 'POST', '/api/agents', { name: 'وكيل آخر', username: 'other', password: 'secret8', balance: 500 }));
+  const t = await login('cards', 'secret7');
+  const other = await login('other', 'secret8');
+
+  // ----- card recharge -----
+  const first = await ok(call(t, 'POST', '/api/lines', { kind: 'external', packageId: p500.id, number: '0587000001' }));
+  assert.equal(first.line.kind, 'external');
+  assert.equal(first.balance, 420);
+  assert.equal(first.renewed, undefined);
+  const again = await ok(call(t, 'POST', '/api/lines', { kind: 'external', packageId: p500.id, number: '058-700-0001' }));
+  assert.equal(again.renewed, true, 'a second card on the same number extends the line');
+  assert.equal(again.line.id, first.line.id);
+  assert.ok(again.line.expiresAt > first.line.expiresAt + 27 * DAY);
+  assert.equal(again.balance, 340);
+  const taken = await call(other, 'POST', '/api/lines', { kind: 'external', packageId: p500.id, number: '0587000001' });
+  assert.equal(taken.status, 409);
+  assert.match(taken.body.error, /وكيل آخر/);
+  assert.equal((await call(t, 'POST', '/api/lines', { packageId: p500.id, number: '0587000001', sim: '8997202000000000052' })).status, 409,
+    'a new activation still refuses a number in use');
+
+  // ----- eSIM fee (default 7 ₪), refunded in full when rejected -----
+  assert.equal((await ok(call(admin, 'GET', '/api/settings'))).esimFee, 7);
+  const es = await ok(call(t, 'POST', '/api/lines', { packageId: p500.id, number: '0587000002', esim: true }));
+  assert.equal(es.line.price, 87);
+  assert.equal(es.balance, 253);
+  const task = (await ok(call(admin, 'GET', '/api/tasks?status=open'))).find((x) => x.lineId === es.line.id);
+  await ok(call(admin, 'POST', `/api/tasks/${task.id}/resolve`, { status: 'rejected', response: 'خطأ' }));
+  assert.equal((await ok(call(t, 'GET', '/api/me'))).user.balance, 340);
+  const op = (await ok(call(admin, 'GET', `/api/ops?limit=20`))).find((o) => o.type === 'activate' && o.number === '0587000002');
+  assert.equal(op.profit, 87 - 67, 'the fee is passed through at cost');
+  await ok(call(admin, 'PUT', '/api/settings', { esimFee: 0 }));
+  assert.equal((await ok(call(t, 'POST', '/api/lines', { packageId: p500.id, number: '0587000003', esim: true }))).line.price, 80);
+  assert.equal((await call(admin, 'PUT', '/api/settings', { esimFee: -1 })).status, 400);
+  await ok(call(admin, 'PUT', '/api/settings', { esimFee: 7 }));
+});
+
+test('messages between the manager and an agent, and the support WhatsApp number', async () => {
+  const admin = await login('admin', 'admin-pass');
+  const agent = await ok(call(admin, 'POST', '/api/agents', { name: 'وكيل الرسائل', username: 'chat', password: 'secret6' }));
+  const t = await login('chat', 'secret6');
+
+  assert.equal((await call(t, 'POST', '/api/messages', { body: '   ' })).status, 400);
+  assert.equal((await call(t, 'GET', '/api/messages/threads')).status, 403);
+  const m1 = await ok(call(t, 'POST', '/api/messages', { body: 'أحتاج 10 شرائح\nمن سلكوم' }));
+  assert.equal(m1.fromAdmin, false);
+
+  let n = await ok(call(admin, 'GET', '/api/notifications'));
+  assert.equal(n.badges.messages, 1);
+  assert.ok(n.alerts.some((a) => a.kind === 'message' && a.link === '#/messages'));
+  const thread = (await ok(call(admin, 'GET', '/api/messages/threads'))).find((x) => x.agentId === agent.id);
+  assert.equal(thread.unread, 1);
+  assert.equal(thread.last.body, 'أحتاج 10 شرائح\nمن سلكوم');
+
+  const seen = await ok(call(admin, 'GET', `/api/messages?agentId=${agent.id}`));
+  assert.deepEqual(seen.map((m) => m.id), [m1.id]);
+  assert.equal((await ok(call(admin, 'GET', '/api/notifications'))).badges.messages, 0, 'opening the conversation reads it');
+
+  const reply = await ok(call(admin, 'POST', '/api/messages', { agentId: agent.id, body: 'تمام، تصلك غداً' }));
+  assert.equal(reply.fromAdmin, true);
+  n = await ok(call(t, 'GET', '/api/notifications'));
+  assert.equal(n.badges.messages, 1);
+  const newer = await ok(call(t, 'GET', `/api/messages?after=${m1.id}`));
+  assert.deepEqual(newer.map((m) => m.body), ['تمام، تصلك غداً']);
+  const mine = await ok(call(t, 'GET', '/api/messages'));
+  assert.equal(mine.find((m) => m.id === m1.id).read, true, 'the agent sees the manager read the message');
+  assert.equal((await call(admin, 'POST', '/api/messages', { agentId: 99999, body: 'x' })).status, 404);
+
+  // ----- support WhatsApp -----
+  assert.equal((await ok(call(null, 'GET', '/api/public'))).supportWhatsapp, '972567725080');
+  assert.equal((await ok(call(admin, 'PUT', '/api/settings', { supportWhatsapp: '+972 56-772-5081' }))).supportWhatsapp, '972567725081');
+  assert.equal((await call(admin, 'PUT', '/api/settings', { supportWhatsapp: '0567725080' })).status, 400);
+  assert.equal((await ok(call(admin, 'PUT', '/api/settings', { supportWhatsapp: '' }))).supportWhatsapp, '');
+  await ok(call(admin, 'PUT', '/api/settings', { supportWhatsapp: '972567725080' }));
+});

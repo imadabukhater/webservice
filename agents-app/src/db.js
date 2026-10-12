@@ -172,6 +172,15 @@ CREATE TABLE IF NOT EXISTS notifications (
   link TEXT NOT NULL DEFAULT '',
   ts INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS messages (
+  id INTEGER PRIMARY KEY,
+  agent_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  from_admin INTEGER NOT NULL DEFAULT 0,
+  sender_name TEXT NOT NULL DEFAULT '',
+  body TEXT NOT NULL,
+  ts INTEGER NOT NULL,
+  read_at INTEGER
+);
 `);
 if (!tableSql('lines')) db.exec(LINES_DDL);
 db.exec(`
@@ -184,6 +193,7 @@ CREATE INDEX IF NOT EXISTS ops_line ON ops(line_id);
 CREATE INDEX IF NOT EXISTS sims_agent ON sims(agent_id, status);
 CREATE INDEX IF NOT EXISTS tasks_status ON tasks(status, created_at);
 CREATE INDEX IF NOT EXISTS notif_user ON notifications(user_id, ts);
+CREATE INDEX IF NOT EXISTS messages_agent ON messages(agent_id, id);
 `);
 
 // Columns added after version 1.
@@ -219,7 +229,7 @@ function tx(fn) {
 }
 
 // ---------- settings ----------
-const DEFAULT_SETTINGS = { app_name: 'بوابة الوكلاء', warn_days: '7', low_balance: '50' };
+const DEFAULT_SETTINGS = { app_name: 'بوابة الوكلاء', warn_days: '7', low_balance: '50', esim_fee: '7', support_whatsapp: '972567725080' };
 function getSettings() {
   const out = { ...DEFAULT_SETTINGS };
   for (const r of q('SELECT key, value FROM settings').all()) out[r.key] = r.value;
@@ -227,6 +237,8 @@ function getSettings() {
     appName: out.app_name,
     warnDays: Math.max(1, Number(out.warn_days) || 7),
     lowBalance: Number(out.low_balance) || 0,
+    esimFee: Math.max(0, Number(out.esim_fee) || 0),
+    supportWhatsapp: out.support_whatsapp,
   };
 }
 function setSetting(key, value) {

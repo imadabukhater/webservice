@@ -1,7 +1,7 @@
 import {
   S, api, esc, icon, toast, isAdmin, setToken, onUnauthorized, fmtMoney, initials,
   sheet, closeAllSheets, navigate, go, relTime, field, skeleton, pushOverlayState, overlayBack, registerDrawer, setDrawerOpen,
-  tz, loadCatalog,
+  tz, loadCatalog, supportHref,
 } from './core.js';
 import { renderLogin } from './views/login.js';
 import home from './views/home.js';
@@ -12,22 +12,22 @@ import tasks from './views/tasks.js';
 import reports from './views/reports.js';
 import offers from './views/offers.js';
 import payments, { openTopupRequest, openAgentBalance } from './views/payments.js';
-import sims from './views/sims.js';
+import messages from './views/messages.js';
 import agents from './views/agents.js';
 import catalog from './views/catalog.js';
 import settings from './views/settings.js';
 
-const VIEWS = { home, new: wizard, renew, subscribers, tasks, reports, offers, payments, sims, agents, catalog, settings };
+const VIEWS = { home, new: wizard, renew, subscribers, tasks, messages, reports, offers, payments, agents, catalog, settings };
 
 const NAV = {
   agent: [
-    ['home', 'الرئيسية', 'grid'], ['tasks', 'المهام', 'tasks', 'tasks'], ['reports', 'التقارير', 'chart'],
-    ['subscribers', 'المشتركون', 'phone'], ['offers', 'العروض', 'percent'], ['payments', 'المدفوعات', 'wallet'], ['sims', 'مخزون الشرائح', 'sim'],
+    ['home', 'الرئيسية', 'grid'], ['tasks', 'المهام', 'tasks', 'tasks'], ['messages', 'الرسائل', 'msg', 'messages'], ['reports', 'التقارير', 'chart'],
+    ['subscribers', 'المشتركون', 'phone'], ['offers', 'العروض', 'percent'], ['payments', 'المدفوعات', 'wallet'],
   ],
   admin: [
-    ['home', 'الرئيسية', 'grid'], ['tasks', 'المهام', 'tasks', 'tasks'], ['reports', 'التقارير', 'chart'],
+    ['home', 'الرئيسية', 'grid'], ['tasks', 'المهام', 'tasks', 'tasks'], ['messages', 'الرسائل', 'msg', 'messages'], ['reports', 'التقارير', 'chart'],
     ['subscribers', 'المشتركون', 'phone'], ['agents', 'الوكلاء', 'users'], ['catalog', 'الشركات والرزم', 'box'],
-    ['offers', 'العروض', 'percent'], ['payments', 'المدفوعات', 'wallet'], ['sims', 'مخزون الشرائح', 'sim'], ['settings', 'الإعدادات', 'sliders'],
+    ['offers', 'العروض', 'percent'], ['payments', 'المدفوعات', 'wallet'], ['settings', 'الإعدادات', 'sliders'],
   ],
 };
 const TABS = {
@@ -94,6 +94,7 @@ function renderShell() {
         <div class="top-actions">
           <button class="icon-btn" id="sync-btn" data-action="refresh" aria-label="تحديث البيانات">${icon('refresh')}<span class="dot"></span></button>
           <button class="icon-btn hide-xs" id="theme-btn" data-action="theme" aria-label="تبديل المظهر"></button>
+          ${!isAdmin() && supportHref() ? `<a class="icon-btn wa-btn" href="${esc(supportHref())}" target="_blank" rel="noopener" aria-label="الدعم الفني عبر واتساب" title="الدعم الفني">${icon('whatsapp')}</a>` : ''}
           <button class="icon-btn" data-action="notifications" aria-label="التنبيهات">${icon('bell')}<span class="badge" data-badge="bell" hidden></span></button>
           <button class="avatar" data-action="account" aria-label="الحساب">${esc(initials(S.user.name))}</button>
         </div>
@@ -249,7 +250,7 @@ async function openNotifications() {
   let n = S.notifications;
   try { n = await api.get('/api/notifications'); } catch { /* show cached */ }
   if (!n) return;
-  const alertIcon = { expiring: ['calX', 'amber'], expired: ['alert', 'red'], balance: ['wallet', 'red'], tasks: ['tasks', 'blue'] };
+  const alertIcon = { expiring: ['calX', 'amber'], expired: ['alert', 'red'], balance: ['wallet', 'red'], tasks: ['tasks', 'blue'], message: ['msg', 'green'] };
   const kindIcon = { offer: ['gift', 'red'], balance: ['wallet', 'green'], task: ['tasks', 'blue'], line: ['phone', 'cyan'] };
   const tile = ([ic, color]) => `<span class="tile sm ${color === 'blue' ? '' : color}">${icon(ic)}</span>`;
   sheet({

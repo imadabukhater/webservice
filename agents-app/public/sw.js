@@ -1,5 +1,5 @@
 // App shell cache: pages and code load instantly and work offline; API calls always go to the network.
-const CACHE = 'agents-shell-v2';
+const CACHE = 'agents-shell-v3';
 const SHELL = [
   '/',
   '/css/app.css',
@@ -22,7 +22,7 @@ const SHELL = [
   '/js/views/renew.js',
   '/js/views/reports.js',
   '/js/views/settings.js',
-  '/js/views/sims.js',
+  '/js/views/messages.js',
   '/js/views/subscribers.js',
   '/js/views/tasks.js',
   '/js/views/wizard.js',

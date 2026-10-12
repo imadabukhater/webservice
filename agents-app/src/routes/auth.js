@@ -21,7 +21,10 @@ function createSession(userId) {
 // Login attempts: in-memory throttle per username + address.
 const attempts = new Map();
 
-route('GET', '/api/public', null, () => ({ appName: getSettings().appName }));
+route('GET', '/api/public', null, () => {
+  const { appName, supportWhatsapp } = getSettings();
+  return { appName, supportWhatsapp };
+});
 
 route('POST', '/api/login', null, ({ body, ip }) => {
   const username = str(body.username, 64);
@@ -67,6 +70,17 @@ route('PUT', '/api/settings', ADMIN, ({ body }) => {
   }
   if (body.warnDays !== undefined) setSetting('warn_days', int(Number(body.warnDays), 'أيام التنبيه', 1, 60));
   if (body.lowBalance !== undefined) setSetting('low_balance', Math.max(0, num(body.lowBalance, 'حد الرصيد المنخفض')));
+  if (body.esimFee !== undefined) {
+    const fee = num(body.esimFee, 'رسوم eSIM');
+    if (fee < 0) fail(400, 'رسوم eSIM لا تكون سالبة');
+    setSetting('esim_fee', fee);
+  }
+  if (body.supportWhatsapp !== undefined) {
+    // International format without + or leading zeros, as wa.me expects: 972567725080.
+    const wa = String(body.supportWhatsapp).replace(/\D/g, '').replace(/^00/, '');
+    if (wa && !/^[1-9]\d{7,14}$/.test(wa)) fail(400, 'اكتب رقم واتساب بالصيغة الدولية، مثل 972567725080');
+    setSetting('support_whatsapp', wa);
+  }
   return getSettings();
 });
 

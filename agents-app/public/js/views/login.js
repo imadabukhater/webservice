@@ -1,8 +1,13 @@
-import { S, api, esc, icon, setToken } from '../core.js';
+import { S, api, esc, icon, setToken, supportHref } from '../core.js';
 
 export async function renderLogin(onDone) {
   let appName = S.settings.appName;
-  try { appName = (await api.get('/api/public')).appName; } catch { /* offline: keep the default */ }
+  let support = '';
+  try {
+    const pub = await api.get('/api/public');
+    appName = pub.appName;
+    support = supportHref(pub.supportWhatsapp);
+  } catch { /* offline: keep the default */ }
   document.title = `تسجيل الدخول · ${appName}`;
   document.getElementById('app').innerHTML = `
   <div class="login">
@@ -29,6 +34,7 @@ export async function renderLogin(onDone) {
             <button type="button" class="icon-btn plain" id="pw-toggle" aria-label="إظهار كلمة المرور">${icon('eye')}</button></div></div>
         <div id="login-msg"></div>
         <button class="btn btn-primary btn-lg btn-block" type="submit">دخول ${icon('arrowL')}</button>
+        ${support ? `<a class="btn btn-ghost btn-block wa-link" href="${esc(support)}" target="_blank" rel="noopener">${icon('whatsapp')}نسيت كلمة المرور؟ الدعم الفني عبر واتساب</a>` : ''}
       </form>
     </section>
   </div>`;

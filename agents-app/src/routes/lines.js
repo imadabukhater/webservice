@@ -44,20 +44,28 @@ route('POST', '/api/lines', ANY, ({ user, body }) => tx(() => {
   const isAdmin = user.role === 'admin';
   const agent = isAdmin ? D.getAgent(body.agentId) : D.getUser(user.id);
   if (!agent.active) fail(403, 'حساب الوكيل موقوف');
+  // kind 'external' = card recharge for a prepaid number activated outside the portal.
   const kind = body.kind === 'external' ? 'external' : 'new';
   const months = int(Number(body.months ?? 1), 'المدة', 1, 24);
   const port = kind === 'new' && !!body.port;
   const esim = kind === 'new' && !!body.esim;
   const number = validPhone(normalizePhone(body.number));
-  if (q("SELECT 1 FROM lines WHERE number = ? AND status != 'disconnected'").get(number)) fail(409, `الرقم ${number} مفعّل مسبقاً`);
+  const existing = q("SELECT id, agent_id FROM lines WHERE number = ? AND status != 'disconnected'").get(number);
+  if (existing) {
+    // Recharging a card on one of the agent's own numbers extends that line.
+    if (kind === 'external' && existing.agent_id === agent.id) return { ...renewLine(user, D.getLine(existing.id, user), body), renewed: true };
+    fail(409, kind === 'external' ? `الرقم ${number} مسجّل عند وكيل آخر. تواصل مع المدير.` : `الرقم ${number} مفعّل مسبقاً`);
+  }
 
   const { pkg, offer, unit: quoted } = D.quote(agent.id, { packageId: body.packageId, offerId: body.offerId });
   let unit = quoted;
   if (isAdmin && !isBlank(body.unitPrice)) unit = num(body.unitPrice, 'السعر');
   if (unit < 0) fail(400, 'السعر لا يكون سالباً');
   if (!isAdmin && !(unit > 0)) fail(400, 'لم يحدد المدير سعر هذه الباقة بعد');
-  const total = round(unit * months);
-  const cost = round(pkg.cost * months);
+  // The eSIM activation fee is passed through at cost, so it adds to the price but not to the profit.
+  const esimFee = esim ? getSettings().esimFee : 0;
+  const total = round(unit * months + esimFee);
+  const cost = round(pkg.cost * months + esimFee);
 
   let sim = { iccid: '', stockId: null };
   if (kind === 'new' && !esim) {
@@ -79,8 +87,8 @@ route('POST', '/api/lines', ANY, ({ user, body }) => tx(() => {
   D.markSimUsed(sim.stockId, lineId);
   if (sim.iccid) D.learnPrefix(pkg.company_id, sim.iccid);
 
-  const detail = [monthsText(months), offer ? `عرض: ${offer.title}` : '', kind === 'external' ? 'رقم خارجي' : '',
-    esim ? 'eSIM' : '', port ? 'تحويل رقم' : ''].filter(Boolean).join(' · ');
+  const detail = [monthsText(months), offer ? `عرض: ${offer.title}` : '', kind === 'external' ? 'شحن كرت' : '',
+    esim ? (esimFee ? `eSIM (رسوم ${esimFee} ₪)` : 'eSIM') : '', port ? 'تحويل رقم' : ''].filter(Boolean).join(' · ');
   D.changeBalance(agent, -total, {
     type: 'activate', actor: user, lineId, number, cost, profit: total - cost, detail, package: label, customerPrice,
   }, { charge: true });
@@ -95,10 +103,12 @@ route('POST', '/api/lines', ANY, ({ user, body }) => tx(() => {
   return { line: view(lineId, user), balance: round(agent.balance), available: round(agent.balance + agent.credit_limit) };
 }));
 
-// ----- renewal (existing customer) -----
-route('POST', '/api/lines/:id/renew', ANY, ({ user, params, body }) => tx(() => {
+// ----- renewal (existing customer, or a card recharge on a known number) -----
+route('POST', '/api/lines/:id/renew', ANY, ({ user, params, body }) => tx(() => renewLine(user, D.getLine(params.id, user), body)));
+
+// Runs inside the caller's transaction.
+function renewLine(user, l, body) {
   const isAdmin = user.role === 'admin';
-  const l = D.getLine(params.id, user);
   if (l.status === 'pending') fail(400, 'طلب هذا الرقم ما زال قيد التنفيذ');
   if (l.status === 'disconnected') fail(400, 'الرقم مفصول. فعّله من جديد كمشترك جديد.');
   const agent = D.getUser(l.agent_id);
@@ -124,10 +134,10 @@ route('POST', '/api/lines/:id/renew', ANY, ({ user, params, body }) => tx(() => 
     .run(pkg.id, label, pkg.company_id, months, total, cost, offer?.id ?? null, expires, customerPrice, t, l.id);
   D.changeBalance(agent, -total, {
     type: 'renew', actor: user, lineId: l.id, number: l.number, cost, profit: total - cost, package: label, customerPrice,
-    detail: [`تمديد ${monthsText(months)}`, offer ? `عرض: ${offer.title}` : ''].filter(Boolean).join(' · '),
+    detail: [`تمديد ${monthsText(months)}`, offer ? `عرض: ${offer.title}` : '', body.kind === 'external' ? 'شحن كرت' : ''].filter(Boolean).join(' · '),
   }, { charge: true });
   return { line: view(l.id, user), balance: round(agent.balance), available: round(agent.balance + agent.credit_limit) };
-}));
+}
 
 // ----- freeze, unfreeze, disconnect, SIM swap -----
 const ACTIONS = {

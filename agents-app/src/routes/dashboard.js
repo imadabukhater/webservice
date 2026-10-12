@@ -3,6 +3,7 @@ const { q, getSettings } = require('../db');
 const { now, round, str, dayStart, monthStart, tzFrom, arCount } = require('../util');
 const D = require('../domain');
 const { route, ANY } = require('../router');
+const { unreadCount } = require('./messages');
 
 const SALE_TYPES = "('activate','renew','refund','line_delete')";
 
@@ -156,8 +157,13 @@ route('GET', '/api/notifications', ANY, ({ user }) => {
   }
   if (expiring) alerts.push({ kind: 'expiring', title: `${arCount(expiring, numbers)} ${expiring === 1 ? 'ينتهي' : 'تنتهي'} خلال ${s.warnDays} أيام`, body: 'مدّدها قبل أن تُفصل', link: '#/subscribers?state=expiring' });
   if (expired) alerts.push({ kind: 'expired', title: `${arCount(expired, numbers)} ${expired === 1 ? 'انتهى' : 'انتهت'} ولم ${expired === 1 ? 'يُمدَّد' : 'تُمدَّد'}`, body: 'آخر 30 يوماً', link: '#/subscribers?state=expired' });
+  const messages = unreadCount(user);
+  if (messages) {
+    alerts.unshift({ kind: 'message', title: arCount(messages, { one: 'رسالة جديدة', two: 'رسالتان جديدتان', few: 'رسائل جديدة', many: 'رسالة جديدة' }),
+      body: user.role === 'agent' ? 'من المدير' : 'من الوكلاء', link: '#/messages' });
+  }
   const unread = items.filter((i) => i.unread).length;
-  return { unread, alerts, items, badges: { bell: unread + alerts.length, tasks } };
+  return { unread, alerts, items, badges: { bell: unread + alerts.length, tasks, messages } };
 });
 
 route('POST', '/api/notifications/seen', ANY, ({ user }) => {

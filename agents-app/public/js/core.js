@@ -111,6 +111,8 @@ export const fmtPhone = (n) => {
   return /^0\d{9}$/.test(d) ? `${d.slice(0, 3)}-${d.slice(3, 6)}-${d.slice(6)}` : d;
 };
 export const phone = (n) => `<span class="phone">${esc(fmtPhone(n))}</span>`;
+// WhatsApp chat with technical support (number from the settings, international format).
+export const supportHref = (wa = S.settings?.supportWhatsapp) => (wa ? `https://wa.me/${encodeURIComponent(wa)}` : '');
 export const fmtIccid = (s) => String(s || '').replace(/(\d{4})(?=\d)/g, '$1 ');
 export const normalizePhone = (s) => {
   let d = String(s || '').replace(/[^\d+]/g, '');
@@ -253,6 +255,8 @@ const P = {
   info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v5.5M12 7.5v.5"/>',
   alert: '<path d="M12 4 2.8 19.5h18.4z"/><path d="M12 10v4.5M12 17.2v.3"/>',
   send: '<path d="M20.5 3.5 3.5 10.5l7 3 3 7z"/><path d="m10.5 13.5 4-4"/>',
+  card: '<rect x="3" y="5.5" width="18" height="13" rx="2.5"/><path d="M3 10h18M7 14.5h4"/>',
+  whatsapp: '<path d="m4.2 19.8 1.2-3.9a8.2 8.2 0 1 1 2.9 2.8z"/><path d="M9.3 8.4c.2-.4.6-.6 1-.5l.6.2.7 1.7-.6.8c.4.9 1.1 1.6 2 2l.8-.6 1.7.7.2.6c.1.4-.1.8-.5 1-2.7 1-6.9-3.2-5.9-5.9z" fill="currentColor" stroke="none"/>',
   qr: '<rect x="4" y="4" width="6" height="6" rx="1"/><rect x="14" y="4" width="6" height="6" rx="1"/><rect x="4" y="14" width="6" height="6" rx="1"/><path d="M14 14h2v2h-2zM18 14h2M14 18h2M18 18h2v2"/>',
   lock: '<rect x="5" y="10.5" width="14" height="10" rx="2.5"/><path d="M8 10.5V8a4 4 0 0 1 8 0v2.5"/>',
   shield: '<path d="M12 3 4.5 6v5.5c0 4.5 3.2 8 7.5 9.5 4.3-1.5 7.5-5 7.5-9.5V6z"/><path d="m8.5 12 2.5 2.5 4.5-5"/>',

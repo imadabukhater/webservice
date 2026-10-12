@@ -1,7 +1,61 @@
-// Camera barcode scanning for SIM cards (ICCID barcodes and QR codes) using the browser's BarcodeDetector.
+// Camera barcode scanning for SIM cards (ICCID barcodes and QR codes). Uses the browser's BarcodeDetector where it
+// exists (Chrome on Android) and otherwise the bundled ZXing decoder (Safari on iPhone, desktop browsers).
 import { esc, icon, fmtIccid, toast } from './core.js';
 
-export const scanSupported = () => 'BarcodeDetector' in window && !!navigator.mediaDevices?.getUserMedia;
+export const scanSupported = () => !!navigator.mediaDevices?.getUserMedia;
+
+let zxing = null;
+function loadZxing() {
+  zxing ||= new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = '/js/vendor/zxing.min.js';
+    s.onload = () => resolve(window.ZXing);
+    s.onerror = () => { zxing = null; s.remove(); reject(new Error('zxing')); };
+    document.head.appendChild(s);
+  });
+  return zxing;
+}
+
+// Same detect(video) contract as BarcodeDetector, decoding one downscaled video frame with ZXing.
+async function zxingDetector() {
+  const Z = await loadZxing();
+  const F = Z.BarcodeFormat;
+  const hints = new Map([
+    [Z.DecodeHintType.POSSIBLE_FORMATS, [F.CODE_128, F.CODE_39, F.EAN_13, F.ITF, F.QR_CODE, F.DATA_MATRIX, F.PDF_417, F.CODABAR]],
+    [Z.DecodeHintType.TRY_HARDER, true],
+  ]);
+  const reader = new Z.MultiFormatReader();
+  reader.setHints(hints);
+  const canvas = document.createElement('canvas');
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  return {
+    async detect(video) {
+      const w = video.videoWidth;
+      const h = video.videoHeight;
+      if (!w || !h) return [];
+      const scale = Math.min(1, 1280 / Math.max(w, h));
+      canvas.width = Math.round(w * scale);
+      canvas.height = Math.round(h * scale);
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      try {
+        const bitmap = new Z.BinaryBitmap(new Z.HybridBinarizer(new Z.HTMLCanvasElementLuminanceSource(canvas)));
+        return [{ rawValue: reader.decodeWithState(bitmap).getText() }];
+      } catch {
+        return []; // nothing readable in this frame
+      }
+    },
+  };
+}
+
+async function nativeDetector() {
+  const wanted = ['code_128', 'code_39', 'ean_13', 'itf', 'qr_code', 'data_matrix', 'pdf417', 'codabar'];
+  let formats = wanted;
+  try {
+    const supported = await window.BarcodeDetector.getSupportedFormats();
+    formats = wanted.filter((f) => supported.includes(f));
+  } catch { /* use the defaults */ }
+  return new window.BarcodeDetector({ formats });
+}
 
 // ICCIDs are 18–22 digits; anything else on the card (PUK, phone number) is ignored.
 const iccidFrom = (raw) => {
@@ -15,16 +69,16 @@ const iccidFrom = (raw) => {
  */
 export async function scanIccids({ multiple = false, title = 'امسح باركود الشريحة' } = {}) {
   if (!scanSupported()) {
-    toast('المسح بالكاميرا غير مدعوم في هذا المتصفح. استعمل Chrome على أندرويد أو اكتب الرقم.', { error: true });
+    toast('المسح بالكاميرا غير مدعوم في هذا المتصفح. اكتب رقم الشريحة.', { error: true });
     return [];
   }
-  const wanted = ['code_128', 'code_39', 'ean_13', 'itf', 'qr_code', 'data_matrix', 'pdf417', 'codabar'];
-  let formats = wanted;
+  let detector;
   try {
-    const supported = await window.BarcodeDetector.getSupportedFormats();
-    formats = wanted.filter((f) => supported.includes(f));
-  } catch { /* use the defaults */ }
-  const detector = new window.BarcodeDetector({ formats });
+    detector = 'BarcodeDetector' in window ? await nativeDetector() : await zxingDetector();
+  } catch {
+    toast('تعذّر تشغيل الماسح. تأكد من الاتصال بالإنترنت أو اكتب رقم الشريحة.', { error: true });
+    return [];
+  }
 
   let stream;
   try {

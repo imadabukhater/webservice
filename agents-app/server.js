@@ -13,6 +13,7 @@ require('./src/routes/tasks');
 require('./src/routes/agents');
 require('./src/routes/dashboard');
 require('./src/routes/reports');
+require('./src/routes/messages');
 const { dispatch } = require('./src/router');
 const { ApiError } = require('./src/util');
 

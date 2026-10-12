@@ -130,7 +130,7 @@ export default {
     const list = filtered();
     return `
       <div class="search-box">${icon('search', 'i lead')}<input class="input" id="renew-q" type="search" placeholder="ابحث برقم الهاتف، اسم الزبون أو الشريحة" value="${esc(V.q)}" autocomplete="off"></div>
-      <p class="small muted">الأرقام التي تنتهي قريباً تظهر أولاً. الرقم غير موجود في قائمتك؟ <a href="#/new?type=external">فعّله كزبون مسبق الدفع خارجي</a>.</p>
+      <p class="small muted">الأرقام التي تنتهي قريباً تظهر أولاً. الرقم غير موجود في قائمتك؟ <a href="#/new?type=external">اشحن له كرت</a>.</p>
       <div class="list" id="renew-list">${list.length ? list.slice(0, 80).map(renewCard).join('') : empty('phone', V.lines.length ? 'لا توجد نتائج' : 'لا توجد أرقام مفعّلة بعد', V.lines.length ? 'جرّب جزءاً آخر من الرقم أو الاسم.' : 'فعّل أول مشترك من «مشترك جديد».')}</div>`;
   },
   mount(root) {

@@ -1,10 +1,9 @@
 import {
   S, api, esc, icon, isAdmin, money, greeting, firstName, tz, statePill, phone, debounce, OP, OP_ICON, relTime,
-  signedMoney, companyLogo, companyById, fmtIccid, fmtDate, weekday, go, daysText,
+  signedMoney, companyLogo, companyById, fmtDate, weekday, go, daysText,
 } from '../core.js';
 import { drawActivity } from '../chart.js';
 import { openLine } from './subscribers.js';
-import { openAddSims } from './sims.js';
 import { openAgentForm } from './agents.js';
 import { offerCard } from './offers.js';
 
@@ -26,14 +25,14 @@ function quickActions() {
       <a class="btn btn-primary" href="#/new">${icon('userPlus')}مشترك جديد لوكيل</a>
       <button class="btn" data-action="add-agent">${icon('users')}إضافة وكيل</button>
       <button class="btn" data-action="agent-balance">${icon('wallet')}شحن رصيد وكيل</button>
-      <button class="btn" data-action="add-sims">${icon('chip')}إضافة شرائح</button>
+      <a class="btn" href="#/new?type=external">${icon('card')}شحن كرت لوكيل</a>
     </div>`;
   }
   return `<div class="quick">
     <a class="btn btn-primary" href="#/new">${icon('userPlus')}مشترك جديد</a>
+    <a class="btn" href="#/new?type=external">${icon('card')}شحن كرت</a>
     <a class="btn" href="#/renew">${icon('repeat')}زبون قائم</a>
-    <a class="btn" href="#/new?type=external">${icon('bolt')}زبون مسبق الدفع خارجي</a>
-    <button class="btn" data-action="add-sims">${icon('chip')}إضافة شرائح</button>
+    <a class="btn" href="#/messages">${icon('msg')}مراسلة المدير</a>
   </div>`;
 }
 
@@ -62,7 +61,7 @@ function kpis() {
       ${k('مجموع أرصدة الوكلاء', money(d.balances))}${k('ديون الوكلاء', money(d.debt))}</div>`;
   }
   return `<div class="kpis">${k('الرصيد المتاح', money(d.available))}${k('مبيعات اليوم', `${d.today.activations + d.today.renewals}`)}
-    ${k('ربحك هذا الشهر', money(d.month.margin))}${k('شرائح في مخزونك', d.sims)}</div>`;
+    ${k('ربحك هذا الشهر', money(d.month.margin))}${k('مبيعات هذا الشهر', `${d.month.activations + d.month.renewals}`)}</div>`;
 }
 
 function chartCard() {
@@ -95,13 +94,11 @@ function opsCard() {
 }
 
 function searchResults(r) {
-  if (!r.lines.length && !r.agents.length && !r.sims.length) return `<div class="group">لا نتائج</div>`;
+  if (!r.lines.length && !r.agents.length) return `<div class="group">لا نتائج</div>`;
   return `${r.lines.length ? `<div class="group">الأرقام</div>${r.lines.map((l) => `<button class="res" data-res-line="${l.id}">
       ${companyLogo(companyById(l.companyId), 'xs')}<span class="grow">${phone(l.number)}<span class="item-sub"><span>${esc(l.customerName || 'بدون اسم')}</span><span>${esc(l.packageLabel)}</span></span></span>${statePill(l.state)}</button>`).join('')}` : ''}
     ${r.agents.length ? `<div class="group">الوكلاء</div>${r.agents.map((a) => `<button class="res" data-res-go="#/agents?q=${encodeURIComponent(a.username)}">
-      <span class="avatar sm">${esc(a.name[0] || '')}</span><span class="grow"><b>${esc(a.name)}</b><span class="item-sub ltr">@${esc(a.username)}</span></span>${money(a.balance)}</button>`).join('')}` : ''}
-    ${r.sims.length ? `<div class="group">الشرائح</div>${r.sims.map((s) => `<button class="res" data-res-go="#/sims?q=${s.iccid}">
-      <span class="tile sm">${icon('sim')}</span><span class="grow"><b class="mono ltr">${fmtIccid(s.iccid)}</b><span class="item-sub"><span>${esc(s.companyName)}</span><span>${s.status === 'available' ? 'متاحة' : 'مستعملة'}</span></span></span></button>`).join('')}` : ''}`;
+      <span class="avatar sm">${esc(a.name[0] || '')}</span><span class="grow"><b>${esc(a.name)}</b><span class="item-sub ltr">@${esc(a.username)}</span></span>${money(a.balance)}</button>`).join('')}` : ''}`;
 }
 
 export default {
@@ -171,7 +168,6 @@ export default {
       ctx.rerender();
     },
     'toggle-table'(btn, e, ctx) { D.table = !D.table; ctx.rerender(); },
-    'add-sims': () => openAddSims(),
     'add-agent': () => openAgentForm(null),
     'use-offer': (btn) => go(`#/new?offer=${btn.dataset.id}`),
   },

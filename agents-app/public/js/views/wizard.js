@@ -1,5 +1,6 @@
 // New subscriber wizard: 1 company → 2 package (or campaign) → 3 SIM & number → 4 summary & confirm.
-// "External prepaid" mode skips the SIM. The order summary beside the steps updates on every change.
+// Card recharge mode (?type=external): 1 company → 2 card → 3 customer number & confirm; a number the agent
+// already has is extended. The order summary beside the steps updates on every change.
 import {
   S, api, esc, icon, isAdmin, fmtMoney, fmtDate, fmtPhone, phone, changed, loadCatalog, companyLogo, companyById, specs,
   monthsText, normalizePhone, empty, round, fmtNum, fmtIccid, copyText, debounce, toast,
@@ -9,7 +10,7 @@ import { addMonths } from './renew.js';
 
 const MONTHS = [1, 2, 3, 6, 12];
 let W = null;
-const D = { offers: [], stock: [], agents: [], prices: null, me: null };
+const D = { offers: [], agents: [], prices: null, me: null };
 
 const fresh = (mode, query) => ({
   mode, step: 1, agentId: null, companyId: null, packageId: null, offerId: null,
@@ -29,9 +30,10 @@ const unit = () => {
   if (o) return o.offerPrice ?? priceOf(pkg());
   return pkg() ? priceOf(pkg()) : 0;
 };
-const total = () => round(unit() * W.months);
+const esimFee = () => (W.esim && !external() ? Number(S.settings.esimFee) || 0 : 0);
+const total = () => round(unit() * W.months + esimFee());
 const available = () => (isAdmin() ? agent()?.available ?? 0 : D.me?.available ?? 0);
-const STEPS = () => ['الشركة', 'الرزمة', external() ? 'الرقم' : 'الشريحة والرقم', 'التأكيد'];
+const STEPS = () => (external() ? ['الشركة', 'الشحن', 'رقم الزبون'] : ['الشركة', 'الرزمة', 'الشريحة والرقم', 'التأكيد']);
 
 const step3Valid = () => {
   const numberOk = W.numberState === 'ok';
@@ -92,7 +94,7 @@ function step2() {
   const offers = D.offers.filter((o) => pk.some((p) => p.id === o.packageId));
   const c = company();
   return `<section class="card card-pad" style="display:grid;gap:16px">
-    <div class="section-title"><h2 class="dot-title">اختر الرزمة</h2><span class="muted small">${esc(c?.name || '')}</span></div>
+    <div class="section-title"><h2 class="dot-title">${external() ? 'اختر الشحن' : 'اختر الرزمة'}</h2><span class="muted small">${esc(c?.name || '')}</span></div>
     <div class="pkg-grid">
       ${offers.map((o) => {
         const p = pk.find((x) => x.id === o.packageId);
@@ -104,19 +106,36 @@ function step2() {
   </section>`;
 }
 
-function step3() {
-  const stock = D.stock.filter((s) => !s.companyId || s.companyId === W.companyId);
+// Card recharge: the customer's number, then charge straight away.
+function stepCard() {
+  const after = round(available() - total());
+  const short = after < 0;
   return `<section class="card card-pad" style="display:grid;gap:18px">
-    <h2 class="dot-title">${external() ? 'رقم الزبون' : 'إعدادات الشريحة ورقم الهاتف'}</h2>
-    ${external() ? `<div class="msg info">${icon('info')}<span>رقم مسبق الدفع مفعّل خارج المنصّة: تُشحن له الرزمة ويُضاف إلى مشتركيك لتتابع تاريخ انتهائها.</span></div>` : `
+    <h2 class="dot-title">رقم الزبون</h2>
+    <div class="field"><label for="wz-number">رقم الهاتف الذي تشحنه</label>
+      <input class="input ltr big" id="wz-number" inputmode="tel" autocomplete="off" placeholder="05X-XXX-XXXX" value="${esc(W.number)}">
+      <div class="hint" id="wz-number-hint"></div></div>
+    <div class="balance-preview" id="wz-balance">${balanceHtml()}</div>
+    ${short ? `<div class="msg">${icon('alert')}<span>الرصيد المتاح لا يكفي. ينقص ${fmtMoney(-after)}.${isAdmin() ? '' : ' اطلب شحن الرصيد من «المدفوعات».'}</span></div>` : ''}
+    ${W.error ? `<div class="msg">${icon('alert')}<span>${esc(W.error)}</span></div>` : ''}
+    <div class="step-foot"><button class="btn" data-action="wz-back">${icon('arrowR')}السابق</button>
+      <button class="btn btn-primary btn-lg" data-action="wz-confirm" id="wz-confirm" ${short || !step3Valid() ? 'disabled' : ''}>${icon('card')}اشحن ${fmtMoney(total())}</button></div>
+  </section>`;
+}
+
+function step3() {
+  if (external()) return stepCard();
+  const fee = Number(S.settings.esimFee) || 0;
+  return `<section class="card card-pad" style="display:grid;gap:18px">
+    <h2 class="dot-title">إعدادات الشريحة ورقم الهاتف</h2>
     <div class="switches">
-      <label class="switch-row"><span class="tile sm cyan">${icon('qr')}</span><span class="grow"><b>eSIM</b><small>بدون شريحة — يرسل المدير رمز QR</small></span>
+      <label class="switch-row"><span class="tile sm cyan">${icon('qr')}</span><span class="grow"><b>eSIM</b><small>بدون شريحة — يرسل المدير رمز QR${fee ? ` · رسوم التفعيل ${fmtMoney(fee)}` : ''}</small></span>
         <input class="switch" type="checkbox" id="wz-esim" ${W.esim ? 'checked' : ''}></label>
       <label class="switch-row"><span class="tile sm amber">${icon('repeat')}</span><span class="grow"><b>تحويل رقم</b><small>الزبون ينقل رقمه من شركة أخرى</small></span>
         <input class="switch" type="checkbox" id="wz-port" ${W.port ? 'checked' : ''}></label>
     </div>
     ${W.esim || W.port ? `<div class="msg warn">${icon('clock')}<span>يُرسَل الطلب إلى المدير لتنفيذه، ويبدأ احتساب مدة الرزمة من لحظة التنفيذ. يُسترد المبلغ كاملاً إن رُفض الطلب.</span></div>` : ''}
-    ${W.esim ? '' : `<div id="wz-sim-box">${simFieldHtml({ id: 'wz-sim', label: 'اختر شريحة', value: W.sim.iccid, stock })}</div>`}`}
+    ${W.esim ? '' : `<div id="wz-sim-box">${simFieldHtml({ id: 'wz-sim', label: 'رقم الشريحة — امسحه بالكاميرا أو اكتبه', value: W.sim.iccid })}</div>`}
     <div class="field"><label for="wz-number">${W.port ? 'الرقم المراد تحويله' : 'رقم الهاتف'}</label>
       <input class="input ltr big" id="wz-number" inputmode="tel" autocomplete="off" placeholder="05X-XXX-XXXX" value="${esc(W.number)}">
       <div class="hint" id="wz-number-hint"></div></div>
@@ -160,14 +179,14 @@ function resultView() {
   const pending = l.status === 'pending';
   return `<section class="card card-pad"><div class="success">
     <div class="success-mark ${pending ? 'pending' : ''}">${icon(pending ? 'clock' : 'check')}</div>
-    <h2>${pending ? 'أُرسل الطلب إلى المدير' : 'تم تفعيل الخط'}</h2>
+    <h2>${pending ? 'أُرسل الطلب إلى المدير' : external() ? 'تم شحن الرقم' : 'تم تفعيل الخط'}</h2>
     <p class="muted">${phone(l.number)} · ${esc(l.packageLabel)}${l.expiresAt ? ` · <span class="nowrap">حتى ${fmtDate(l.expiresAt)}</span>` : ''}</p>
     <p class="small muted">الرصيد المتاح الآن ${fmtMoney(W.result.available)}</p>
     <div class="btn-row" style="width:100%;max-width:420px">
       <button class="btn" data-action="wz-share">${icon('share')}مشاركة مع الزبون</button>
       <button class="btn" data-action="wz-copy">${icon('copy')}نسخ التفاصيل</button></div>
     <div class="btn-row" style="width:100%;max-width:420px">
-      <button class="btn btn-primary" data-action="wz-again">${icon('userPlus')}مشترك جديد آخر</button>
+      <button class="btn btn-primary" data-action="wz-again">${external() ? `${icon('card')}شحن كرت آخر` : `${icon('userPlus')}مشترك جديد آخر`}</button>
       <a class="btn" href="#/subscribers">${icon('phone')}المشتركون</a></div>
   </div></section>`;
 }
@@ -184,6 +203,7 @@ function rows() {
   if (!external()) r.push(['الشريحة', W.esim ? 'eSIM' : W.sim.valid ? `<span class="mono ltr">${fmtIccid(W.sim.iccid)}</span>` : unset]);
   r.push([W.port ? 'الرقم المحوَّل' : 'رقم الهاتف', W.numberState === 'ok' ? phone(normalizePhone(W.number)) : unset]);
   r.push(['مدة الخدمة', monthsText(W.months)]);
+  if (esimFee()) r.push(['رسوم تفعيل eSIM', fmtMoney(esimFee())]);
   if (W.step >= 4 && p) r.push(['تنتهي في', W.esim || W.port ? 'بعد تنفيذ الطلب' : fmtDate(addMonths(Date.now(), W.months))]);
   return r;
 }
@@ -207,6 +227,8 @@ function refreshSummary() {
   if (box) box.innerHTML = summary();
   const next = document.getElementById('wz-next');
   if (next) next.disabled = !step3Valid();
+  const charge = external() && document.getElementById('wz-confirm');
+  if (charge) charge.disabled = !step3Valid() || available() - total() < 0;
 }
 
 // ---------- number check ----------
@@ -226,6 +248,9 @@ const checkNumber = debounce(async () => {
   try {
     const r = await api.get(`/api/lines/check?number=${n}`);
     if (normalizePhone(W.number) !== n) return undefined;
+    if (r.exists && external()) {
+      return r.mine ? set('ok', 'ok', 'الرقم من زبائنك — يُشحن ويُمدَّد شهراً ·', fmtPhone(n)) : set('taken', 'bad', 'هذا الرقم مسجّل عند وكيل آخر. تواصل مع المدير.');
+    }
     if (r.exists) return set('taken', 'bad', r.mine ? 'هذا الرقم مفعّل لديك. لتمديده استعمل «زبون قائم».' : 'هذا الرقم مفعّل في المنصّة');
     const local = /^05\d{8}$/.test(n);
     return set('ok', local ? 'ok' : 'warn', local ? 'الرقم متاح ·' : 'الرقم متاح · تأكد منه: أرقام الجوال عادة 10 أرقام تبدأ بـ 05', local ? fmtPhone(n) : '');
@@ -250,33 +275,31 @@ function rememberPackage() {
 
 async function loadAgentContext() {
   if (!isAdmin()) return;
-  if (!W.agentId) { D.prices = null; D.stock = []; return; }
-  const [prices, stock] = await Promise.all([api.get(`/api/agents/${W.agentId}/prices`), api.get(`/api/sims?status=available&forAgent=${W.agentId}`)]);
+  if (!W.agentId) { D.prices = null; return; }
+  const prices = await api.get(`/api/agents/${W.agentId}/prices`);
   D.prices = new Map(prices.map((r) => [r.packageId, r.customPrice ?? r.defaultPrice]));
-  D.stock = stock;
 }
 
 function shareText() {
   const l = W.result.line;
-  return `${S.settings.appName}\nتم ${l.status === 'pending' ? 'استلام طلب' : 'تفعيل'} خطك\nالرقم: ${fmtPhone(l.number)}\nالرزمة: ${l.packageLabel}${l.expiresAt ? `\nصالحة حتى: ${fmtDate(l.expiresAt)}` : ''}`;
+  const done = l.status === 'pending' ? 'استلام طلب' : external() ? 'شحن' : 'تفعيل';
+  return `${S.settings.appName}\nتم ${done} خطك\nالرقم: ${fmtPhone(l.number)}\nالرزمة: ${l.packageLabel}${l.expiresAt ? `\nصالحة حتى: ${fmtDate(l.expiresAt)}` : ''}`;
 }
 
 export default {
-  title: () => ({ title: W?.mode === 'external' ? 'زبون مسبق الدفع خارجي' : 'مشترك جديد', subtitle: W?.result ? 'تم' : `الخطوة ${W?.step || 1} من 4` }),
+  title: () => ({ title: W?.mode === 'external' ? 'شحن كرت' : 'مشترك جديد', subtitle: W?.result ? 'تم' : `الخطوة ${W?.step || 1} من ${W?.mode === 'external' ? 3 : 4}` }),
   async load(ctx) {
     const mode = ctx.query.type === 'external' ? 'external' : 'new';
     if (!W || W.mode !== mode || W.result || JSON.stringify(W.query) !== JSON.stringify(ctx.query)) W = fresh(mode, ctx.query);
-    const [, offers, me, agents, stock] = await Promise.all([
+    const [, offers, me, agents] = await Promise.all([
       loadCatalog(true), api.get('/api/offers'),
       isAdmin() ? null : api.get('/api/me'),
       isAdmin() ? api.get('/api/agents') : [],
-      isAdmin() ? [] : api.get('/api/sims?status=available'),
     ]);
     D.offers = offers.filter((o) => o.live && o.packageId);
     D.me = me?.user || null;
     D.agents = agents;
-    if (!isAdmin()) D.stock = stock;
-    else await loadAgentContext();
+    await loadAgentContext();
     // Deep link from an offer: jump straight to the SIM step.
     if (ctx.query.offer && W.step === 1 && !isAdmin()) {
       const o = D.offers.find((x) => x.id === Number(ctx.query.offer));
@@ -302,14 +325,20 @@ export default {
       root.querySelector('#wz-port')?.addEventListener('change', (e) => { W.port = e.target.checked; this.rerenderSelf(); });
       if (!external() && !W.esim) {
         bindSimField(root, {
-          id: 'wz-sim', companyId: W.companyId, stock: D.stock,
+          id: 'wz-sim', companyId: W.companyId,
           onChange: (s) => { W.sim = s; refreshSummary(); },
         });
       }
       const num = root.querySelector('#wz-number');
       num.addEventListener('input', () => { W.number = num.value; W.numberState = 'checking'; refreshSummary(); checkNumber(); });
       num.addEventListener('blur', () => { const n = normalizePhone(num.value); if (/^0\d{9}$/.test(n)) num.value = fmtPhone(n); });
-      num.addEventListener('keydown', (e) => { if (e.key === 'Enter' && step3Valid()) { e.preventDefault(); W.step = 4; this.rerenderSelf(); } });
+      num.addEventListener('keydown', (e) => {
+        if (e.key !== 'Enter' || !step3Valid()) return;
+        e.preventDefault();
+        if (external()) root.querySelector('#wz-confirm')?.click();
+        else { W.step = 4; this.rerenderSelf(); }
+      });
+      if (external() && !W.number) num.focus();
       checkNumber();
     }
     if (W.step === 4) {
