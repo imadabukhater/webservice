@@ -7,6 +7,13 @@ const { getUser } = require('./domain');
 const routes = [];
 const ADMIN = ['admin'];
 const ANY = ['admin', 'agent'];
+// Behind a reverse proxy (TRUST_PROXY=1) the client address is the last X-Forwarded-For entry, added by the proxy.
+const TRUST_PROXY = process.env.TRUST_PROXY === '1';
+
+function clientIp(req) {
+  const fwd = TRUST_PROXY && String(req.headers['x-forwarded-for'] || '').split(',').pop().trim();
+  return fwd || req.socket.remoteAddress || '';
+}
 
 // roles: null = public; maxBody in bytes (images need more than the default).
 function route(method, pattern, roles, handler, { maxBody = 64 * 1024 } = {}) {
@@ -67,7 +74,7 @@ async function dispatch(req, res, url) {
   return r.handler({
     req, res, user, token, params, body,
     query: Object.fromEntries(url.searchParams),
-    ip: req.socket.remoteAddress || '',
+    ip: clientIp(req),
   });
 }
 
