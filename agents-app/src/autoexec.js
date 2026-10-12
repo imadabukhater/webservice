@@ -27,7 +27,18 @@ function job(taskId) {
   const packageId = t.type === 'renew' ? JSON.parse(t.payload || '{}').packageId : line.package_id;
   const p = q(`SELECT p.art_card_id, p.cost, c.activation FROM packages p JOIN companies c ON c.id = p.company_id WHERE p.id = ?`).get(packageId);
   if (!p || !p.art_card_id || p.activation !== 'auto') return null;
-  return { t, number: line.number, cardId: p.art_card_id, price: p.cost };
+  return { t, number: line.number, ref: p.art_card_id, price: p.cost };
+}
+
+// Finishes a task as carried out by art-topup.
+function finish(taskId, note, reply) {
+  tx(() => {
+    // Another check may have finished it meanwhile.
+    const fresh = q("SELECT * FROM tasks WHERE id = ? AND status = 'open' AND auto_status IN ('sending','sent')").get(taskId);
+    if (!fresh) return;
+    resolveTask(fresh, ACTOR, { status: 'done', response: reply || 'نُفّذ تلقائياً عبر art-topup' });
+    setAuto(taskId, 'done', note);
+  });
 }
 
 async function send(taskId) {
@@ -42,31 +53,49 @@ async function send(taskId) {
     return;
   }
   const creds = artCredentials();
-  let before;
-  try {
-    before = Math.max(0, ...(await art.operations(creds)).map((o) => o.id));
-  } catch (e) {
-    // Nothing was sent yet: give it back to the manager.
-    setAuto(taskId, 'failed', `لم يُرسل: ${e.message}`);
-    tellManager('تعذّر الشحن التلقائي', `${number}: ${e.message}`);
-    return;
+  const israeli = j.ref.startsWith('ic:');
+  let before = 0;
+  if (israeli) {
+    // Israeli cards report their result in the operations list: remember where it stood before sending.
+    try {
+      before = Math.max(0, ...(await art.operations(creds)).map((o) => o.id));
+    } catch (e) {
+      // Nothing was sent yet: give it back to the manager.
+      setAuto(taskId, 'failed', `لم يُرسل: ${e.message}`);
+      tellManager('تعذّر الشحن التلقائي', `${number}: ${e.message}`);
+      return;
+    }
   }
-  let answer;
+  let r;
   try {
-    answer = await art.recharge(creds, { cardId: j.cardId, number, price: j.price });
+    r = await art.recharge(creds, { ref: j.ref, number, price: j.price });
   } catch (e) {
     // The request may or may not have reached art-topup: never resend automatically.
     setAuto(taskId, 'unknown', `انقطع الاتصال أثناء الإرسال (${e.message}). افحص «العمليات» في art-topup قبل أي تنفيذ يدوي.`);
     tellManager('شحن تلقائي غير مؤكد', `${number}: افحص art-topup قبل التنفيذ`);
     return;
   }
-  if (/رصيد/.test(answer) && /كاف|يكفي|غير كاف/.test(answer)) {
-    setAuto(taskId, 'failed', `رصيد art-topup لا يكفي: ${answer}`, { ref: String(before) });
-    tellManager('رصيد art-topup لا يكفي', `اشحن رصيد art-topup ثم نفّذ طلب ${number} يدوياً`);
-    return;
+  const lowBalance = /رصيد/.test(r.text) && /كاف|يكفي/.test(r.text);
+  if (!r.async) {
+    // Palestinian bundles and cash: the answer is final.
+    if (r.ok) return finish(taskId, 'art-topup: success', 'تم الشحن عبر art-topup');
+    if (r.error || lowBalance) {
+      setAuto(taskId, 'failed', `رفض art-topup: ${r.error || r.text}`);
+      tellManager(lowBalance ? 'رصيد art-topup لا يكفي' : 'رفض art-topup الشحن', `${number}: ${r.error || r.text}. نفّذه يدوياً أو ارفضه ليُسترد المبلغ.`);
+      return undefined;
+    }
+    setAuto(taskId, 'unknown', `ردّ غير متوقع من art-topup: «${r.text || 'فارغ'}». افحص «العمليات» هناك قبل أي تنفيذ يدوي.`);
+    tellManager('شحن تلقائي غير مؤكد', `${number}: افحص art-topup قبل التنفيذ`);
+    return undefined;
   }
-  setAuto(taskId, 'sent', `أُرسل إلى art-topup${answer ? ` · ${answer.slice(0, 120)}` : ''}`, { ref: String(before) });
+  if (lowBalance) {
+    setAuto(taskId, 'failed', `رصيد art-topup لا يكفي: ${r.text}`, { ref: String(before) });
+    tellManager('رصيد art-topup لا يكفي', `اشحن رصيد art-topup ثم نفّذ طلب ${number} يدوياً`);
+    return undefined;
+  }
+  setAuto(taskId, 'sent', `أُرسل إلى art-topup${r.text ? ` · ${r.text.slice(0, 120)}` : ''}`, { ref: String(before) });
   later(taskId);
+  return undefined;
 }
 
 // Looks again while art-topup is still working on it (the sweep is the slower safety net).
@@ -90,13 +119,7 @@ async function check(taskId) {
   const result = art.outcome(op.status);
   const note = `art-topup #${op.id}: ${op.status}${op.reply ? ` — ${op.reply}` : ''}`;
   if (result === 'done') {
-    tx(() => {
-      // Another check may have finished it meanwhile.
-      const fresh = q("SELECT * FROM tasks WHERE id = ? AND status = 'open' AND auto_status = 'sent'").get(taskId);
-      if (!fresh) return;
-      resolveTask(fresh, ACTOR, { status: 'done', response: op.reply || 'نُفّذ تلقائياً عبر art-topup' });
-      setAuto(taskId, 'done', note);
-    });
+    finish(taskId, note, op.reply);
   } else if (result === 'failed') {
     setAuto(taskId, 'failed', note);
     tellManager('رفض art-topup الشحن', `${line?.number}: ${op.status}. ارفض الطلب ليُسترد المبلغ أو نفّذه يدوياً.`);

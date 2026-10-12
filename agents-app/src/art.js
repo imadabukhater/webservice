@@ -76,12 +76,13 @@ function inputs(html) {
 const money = (s) => { const n = Number(String(s).replace(/[^\d.]/g, '')); return Number.isFinite(n) ? n : null; };
 
 // ---------- reading ----------
-// Recharge pages linked from the home page: [{ pageId, title }] e.g. { pageId: '16666331', title: 'شحن سيلكوم' }.
+// Recharge pages linked from the home page: [{ kind, page, title }], kind israel (card pages), bundles or cash.
 function parseCompanies(html) {
   const out = [];
-  for (const [, pageId, title] of html.matchAll(/israel_c\.php\?id=(\d+)['"][\s\S]{0,800}?alt="([^"]*)"/g)) {
-    if (!out.some((c) => c.pageId === pageId)) out.push({ pageId, title: decode(title).trim() });
-  }
+  const add = (kind, page, title) => { if (!out.some((c) => c.page === page)) out.push({ kind, page, title: decode(title).trim() }); };
+  for (const [, page, title] of html.matchAll(/(israel_c\.php\?id=\d+)['"][\s\S]{0,800}?alt="([^"]*)"/g)) add('israel', page, title);
+  for (const [, page, title] of html.matchAll(/(pal_chargen\.php\?type=\w+)['"][\s\S]{0,800}?alt="([^"]*)"/g)) add('bundles', page, title);
+  for (const [, page, title] of html.matchAll(/(pal_charge\.php\?id=\d+)['"][\s\S]{0,800}?alt="([^"]*)"/g)) add('cash', page, title);
   return out;
 }
 
@@ -102,6 +103,24 @@ function parseCards(html) {
     const desc = (block.split('وصف الكرت')[1] || '').split('رقم الجوال')[0].replace(/\s+/g, ' ').trim();
     return { cardId: c.cardId, name: c.name.trim(), agentPrice: money(c.price), pageId: c.comp || '', description: desc.slice(0, 300) };
   });
+}
+
+// Palestinian bundle pages (pal_chargen.php?type=jawwal_minutes …): openModal('<id>', '<title>', <price>, '<category>').
+// Bundles above the account's balance are shown without an id, so they cannot be read until the balance allows them.
+function parseBundles(html, type) {
+  const items = [];
+  for (const [, id, title, price, category] of html.matchAll(/openModal\(\s*'(\d+)'\s*,\s*'((?:[^'\\]|\\.)*)'\s*,\s*([\d.]+)\s*,\s*'([^']*)'\s*\)/g)) {
+    items.push({ ref: `pb:${type}:${id}:${category}`, name: decode(title).replace(/\s+/g, ' ').trim(), agentPrice: Number(price), description: '' });
+  }
+  const hidden = (html.match(/class="pkg-card\s+disabled"/g) || []).length;
+  return { items, hidden };
+}
+
+// Cash recharge pages (pal_charge.php?id=…): one product id and the amounts on offer.
+function parseCash(html) {
+  const product = inputs(html).find((a) => a.id === 'product_id')?.value || '';
+  const amounts = [...new Set([...html.matchAll(/data-amount="([\d.]+)"/g)].map((m) => Number(m[1])))];
+  return product ? amounts.map((a) => ({ ref: `pc:${product}:${a}`, amount: a })) : [];
 }
 
 function parseBalance(html) {
@@ -134,26 +153,58 @@ function outcome(status) {
 }
 
 async function companies(creds) { return parseCompanies(await page(creds, '/Portal/index.php')); }
+
+// Everything that can be sold: [{ ref, company, name, agentPrice, description }] plus how many bundles were hidden.
+// ref says how to buy it: ic:<card> (Israeli card), pb:<type>:<id>:<category> (Palestinian bundle), pc:<product>:<amount> (cash).
 async function cards(creds) {
   const list = await companies(creds);
   if (!list.length) throw new ArtError('art-topup: لم أجد صفحات الشحن. ربما تغيّر تصميم الموقع.');
   const out = [];
+  let hidden = 0;
   for (const c of list) {
-    for (const card of parseCards(await page(creds, `/Portal/israel_c.php?id=${c.pageId}`))) out.push({ ...card, company: c.title });
+    const html = await page(creds, `/Portal/${c.page}`);
+    if (c.kind === 'israel') {
+      for (const card of parseCards(html)) out.push({ ...card, ref: `ic:${card.cardId}`, company: c.title });
+    } else if (c.kind === 'bundles') {
+      const type = c.page.split('=')[1];
+      const r = parseBundles(html, type);
+      hidden += r.hidden;
+      // The same bundle can be listed on both the minutes and the internet page.
+      const key = (ref) => { const [, t, id] = ref.split(':'); return `${t.split('_')[0]}:${id}`; };
+      for (const b of r.items) if (!out.some((o) => o.ref.startsWith('pb:') && key(o.ref) === key(b.ref))) out.push({ ...b, company: c.title });
+    } else {
+      for (const x of parseCash(html)) {
+        out.push({ ref: x.ref, company: c.title, name: `${c.title} ${x.amount} ₪`, agentPrice: x.amount, description: 'شحن رصيد نقدي' });
+      }
+    }
   }
-  return out;
+  return Object.assign(out, { hidden });
 }
 async function balance(creds) { return parseBalance(await page(creds, '/Portal/index.php')); }
 async function operations(creds) { return parseOperations(await page(creds, '/Portal/processes.php')); }
 
-// Sends one recharge. The portal answers before carrying it out; the result appears in operations().
-async function recharge(creds, { cardId, number, price }) {
+// Sends one sale. Israeli cards: the portal answers before carrying it out and the result appears in operations()
+// ({ async: true }). Palestinian bundles and cash: the answer is final, "success" or "error: …" ({ ok, error }).
+async function recharge(creds, { ref, number, price }) {
   if (session.key !== `${creds.user}\n${creds.pass}`) await login(creds);
-  const qs = `makeIR&id=${encodeURIComponent(cardId)}&no=${encodeURIComponent(number)}&price=${encodeURIComponent(price)}&cust_price=${encodeURIComponent(price)}`;
-  const r = await request('POST', `/controllers/agents_tk_db.php?${qs}`);
+  const [kind, a, b, c] = String(ref).split(':');
+  const enc = encodeURIComponent;
+  let r;
+  if (kind === 'ic') {
+    r = await request('POST', `/controllers/agents_tk_db.php?makeIR&id=${enc(a)}&no=${enc(number)}&price=${enc(price)}&cust_price=${enc(price)}`);
+  } else if (kind === 'pb') {
+    const company = a.includes('jawwal') ? 'jawwal' : 'ooredoo';
+    r = await request('GET', `/controllers/makePC1.php?${new URLSearchParams({ phone: number, product_id: b, company, price: String(price), category: c || '', pkg_type: a })}`);
+  } else if (kind === 'pc') {
+    r = await request('GET', `/controllers/makePC2.php?no2=${enc(number)}&id2=${enc(a)}&price2=${enc(b)}`);
+  } else {
+    throw new ArtError('art-topup: نوع غير معروف');
+  }
   if (signedOut(r)) throw new ArtError('art-topup: انتهت الجلسة قبل الإرسال');
   if (r.status >= 400) throw new ArtError(`art-topup: رُفض الطلب (${r.status})`);
-  return textOf(r.text).slice(0, 300);
+  const text = textOf(r.text).slice(0, 300);
+  if (kind === 'ic') return { async: true, text };
+  return { async: false, ok: text.trim() === 'success', error: /error\s*:/i.test(text) ? text.replace(/^.*?error\s*:/i, '').trim() || text : '', text };
 }
 
 // Phone numbers in the portal's 10-digit local form (05XXXXXXXX).
@@ -165,5 +216,5 @@ function localNumber(n) {
 
 module.exports = {
   ArtError, login, cards, balance, operations, recharge, localNumber, outcome,
-  parseCompanies, parseCards, parseBalance, parseOperations,
+  parseCompanies, parseCards, parseBundles, parseCash, parseBalance, parseOperations,
 };

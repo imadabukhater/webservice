@@ -102,7 +102,7 @@ export default {
       try {
         const r = await api.post('/api/art/sync');
         await loadCatalog(true);
-        box.innerHTML = `<div class="msg info">${icon('checkCircle')}<span>${r.cards} كرتاً: أُضيف ${r.added}، حُدّث ${r.updated}${r.switchedOff ? `، أُوقف ${r.switchedOff}` : ''}. سعر الوكيل = سعر art-topup + ${r.markup}%. الشركات صارت «تلقائي».</span></div>`;
+        box.innerHTML = `<div class="msg info">${icon('checkCircle')}<span>${r.cards} كرتاً: أُضيف ${r.added}، حُدّث ${r.updated}${r.switchedOff ? `، أُوقف ${r.switchedOff}` : ''}. سعر الوكيل = سعر art-topup + ${r.markup}%. الشركات صارت «تلقائي».${r.hidden ? ` و${r.hidden} حزمة لم تظهر لأن رصيد art-topup أقل من سعرها: أعد المزامنة بعد شحنه.` : ''}</span></div>`;
       } catch (err) {
         box.innerHTML = `<div class="msg">${icon('alert')}<span>${esc(err.message)}</span></div>`;
       } finally { btn.disabled = false; }

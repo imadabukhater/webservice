@@ -4,7 +4,7 @@ const http = require('node:http');
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const fake = { ops: [], recharges: [], next: 'done', nextId: 900 };
+const fake = { ops: [], recharges: [], next: 'done', nextId: 900, pal: [], palNext: 'success' };
 const CARDS = {
   111: [['5001', 'سلكوم 350 جيجا (79.90 شيقل) 5G', '76', '350 جيجا تصفح'], ['5002', 'اضافة 4 جيجا (15 شيقل)', '14.25', 'تصفح انترنت: 4 جيجا']],
   222: [['6001', 'بطاقة جولان 49 شيكل شهريًا: ‏50 جيجابايت', '46.55', '50 جيجابايت']],
@@ -15,7 +15,17 @@ function page(url) {
     return `<div class="section-card" onclick="location.href='israel_c.php?id=111'"><div class="hover-badge badge-api">API</div>
         <img src="x.png" alt="شحن سيلكوم" class="section-image"><div class="section-title">شحن سيلكوم</div></div>
       <div class="section-card" onclick="location.href='israel_c.php?id=222'"><img src="y.png" alt="شحن جولان" class="section-image"></div>
+      <div class="section-card" onclick="location.href='pal_chargen.php?type=jawwal_minutes'"><img src="z.png" alt="حزم دقائق جوال" class="section-image"></div>
+      <div class="section-card" onclick="location.href='pal_charge.php?id=27713199'"><img src="w.png" alt="شحن جوال" class="section-image"></div>
       <div class="balance"><b>40.00 ₪</b><br><span>رصيدك</span></div>`;
+  }
+  if (url.startsWith('/Portal/pal_chargen.php')) {
+    return `<div class="pkg-grid"><div class="pkg-card " onclick="openModal('277', 'حزمة جوال أسبوعية 90 دقيقة 15 شيكل', 15, '')">
+        <div class="pkg-title">حزمة جوال أسبوعية 90 دقيقة 15 شيكل</div><div class="pkg-price">15 <small>₪</small></div></div>
+      <div class="pkg-card disabled" onclick=""><div class="pkg-title">حزمة شهرية 400 دقيقة 63 شيكل</div><button class="pkg-btn" disabled="">رصيد غير كافٍ</button></div></div>`;
+  }
+  if (url.startsWith('/Portal/pal_charge.php')) {
+    return '<input type="hidden" id="product_id" value="27713199"><button data-amount="10">10 ₪</button><button data-amount="20">20 ₪</button>';
   }
   const m = /israel_c\.php\?id=(\d+)/.exec(url);
   if (m) {
@@ -48,6 +58,11 @@ const portal = http.createServer((req, res) => {
         return res.end('true');
       }
       return res.end('wrong');
+    }
+    if (req.url.startsWith('/controllers/makePC1.php') || req.url.startsWith('/controllers/makePC2.php')) {
+      if (!signed) return res.end(loginPage);
+      fake.pal.push(Object.fromEntries(new URL(req.url, 'http://x').searchParams));
+      return res.end(fake.palNext === 'success' ? 'success' : 'error: الرقم غير صحيح');
     }
     if (req.url.startsWith('/controllers/agents_tk_db.php?makeIR')) {
       if (!signed) return res.end(loginPage);
@@ -108,7 +123,7 @@ test('art-topup: sync cards with the markup, recharge automatically, hand failur
 
   // ----- sync -----
   const sync = await ok(call(admin, 'POST', '/api/art/sync'));
-  assert.deepEqual([sync.cards, sync.added, sync.updated], [3, 3, 0]);
+  assert.deepEqual([sync.cards, sync.hidden, sync.added, sync.updated, sync.switchedOff], [6, 1, 6, 0, 0], '3 cards + 1 bundle (1 hidden) + 2 cash amounts');
   const cat = await ok(call(admin, 'GET', '/api/catalog'));
   const card = cat.packages.find((p) => p.name === 'سلكوم 350 جيجا (79.90 شيقل) 5G');
   assert.equal(card.cost, 76);
@@ -118,7 +133,7 @@ test('art-topup: sync cards with the markup, recharge automatically, hand failur
   assert.equal(cat.companies.find((c) => c.id === card.companyId).name, 'سلكوم', 'matched to the existing company');
   assert.equal(cat.companies.find((c) => c.id === card.companyId).activation, 'auto');
   assert.ok(cat.companies.some((c) => c.name === 'جولان' && c.activation === 'auto'), 'a missing company is created');
-  assert.deepEqual([(await ok(call(admin, 'POST', '/api/art/sync'))).added, (await ok(call(admin, 'POST', '/api/art/sync'))).updated], [0, 3]);
+  assert.deepEqual([(await ok(call(admin, 'POST', '/api/art/sync'))).added, (await ok(call(admin, 'POST', '/api/art/sync'))).updated], [0, 6]);
 
   // ----- automatic recharge -----
   const agent = await ok(call(admin, 'POST', '/api/agents', { name: 'وكيل', username: 'agent1', password: 'secret1', balance: 500 }));
@@ -146,6 +161,24 @@ test('art-topup: sync cards with the markup, recharge automatically, hand failur
   await ok(call(admin, 'POST', `/api/tasks/${failed.id}/resolve`, { status: 'rejected', response: 'رفضه art-topup' }));
   assert.equal((await ok(call(t, 'GET', '/api/me'))).user.balance, 412.6);
   assert.equal(fake.recharges.length, 2, 'never resent');
+
+  // ----- Jawwal: bundles and cash answer at once -----
+  const cat2 = await ok(call(admin, 'GET', '/api/catalog'));
+  const jawwal = cat2.companies.find((c) => c.name === 'جوال');
+  assert.equal(jawwal.activation, 'auto');
+  const bundle = cat2.packages.find((p) => p.companyId === jawwal.id && p.name.includes('90 دقيقة'));
+  assert.equal(bundle.price, 17.25);
+  const cash10 = cat2.packages.find((p) => p.companyId === jawwal.id && p.name === 'شحن جوال 10 ₪');
+  assert.equal(cash10.cost, 10);
+  const rb = await ok(call(t, 'POST', '/api/lines', { kind: 'external', packageId: bundle.id, number: '0591234567' }));
+  await until(async () => (await ok(call(t, 'GET', `/api/lines/${rb.line.id}`))).line.status === 'active');
+  assert.deepEqual(fake.pal[0], { phone: '0591234567', product_id: '277', company: 'jawwal', price: '15', category: '', pkg_type: 'jawwal_minutes' });
+  fake.palNext = 'error';
+  const rc = await ok(call(t, 'POST', '/api/lines', { kind: 'external', packageId: cash10.id, number: '0591234568' }));
+  const cashTask = await until(async () => (await ok(call(admin, 'GET', '/api/tasks'))).find((x) => x.lineId === rc.line.id && x.autoStatus === 'failed'));
+  assert.match(cashTask.autoNote, /الرقم غير صحيح/);
+  assert.deepEqual(fake.pal[1], { no2: '0591234568', id2: '27713199', price2: '10' });
+  assert.equal(fake.pal.length, 2);
 
   // ----- a manual company is not sent -----
   await ok(call(admin, 'PUT', `/api/companies/${card.companyId}`, { activation: 'manual' }));

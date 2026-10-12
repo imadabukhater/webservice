@@ -9,6 +9,7 @@ const { route, ADMIN } = require('../router');
 const COMPANIES = [
   ['سلكوم', /سي?لكوم|cel+e?com/i], ['جولان', /جولان|golan/i], ['بيلفون', /بيلفون|pelephone/i], ['هوت موبايل', /هوت|hot/i],
   ['019', /019/], ['رامي ليفي', /رامي|rami/i], ['بارتنر', /بارتنر|partner/i],
+  ['جوال', /جوال|jawwal/i], ['أوريدو', /[أا]وريدو|ooredoo|oredoo/i],
 ];
 function companyFor(title) {
   const [name, re] = COMPANIES.find(([, r]) => r.test(title)) || [title.replace(/^\s*شحن\s*/, '').trim(), null];
@@ -29,7 +30,9 @@ route('POST', '/api/art/check', ADMIN, () => wrap(async (creds) => ({ ok: true, 
 
 // Cards become packages: cost = art-topup's agent price, agents' price = cost + the markup. Cards gone from
 // art-topup are switched off. Companies with cards are set to "auto" unless they are "direct".
-route('POST', '/api/art/sync', ADMIN, () => wrap(async (creds) => {
+route('POST', '/api/art/sync', ADMIN, () => wrap(syncCards));
+
+async function syncCards(creds) {
   const cards = await art.cards(creds);
   if (!cards.length) fail(502, 'art-topup: لم أجد كروتاً');
   const markup = getSettings().artMarkup;
@@ -41,7 +44,7 @@ route('POST', '/api/art/sync', ADMIN, () => wrap(async (creds) => {
       const companyId = companyFor(c.company);
       companyIds.add(companyId);
       const price = round(c.agentPrice * (1 + markup / 100));
-      const p = q('SELECT id FROM packages WHERE art_card_id = ?').get(c.cardId);
+      const p = q('SELECT id FROM packages WHERE art_card_id = ?').get(c.ref);
       if (p) {
         q('UPDATE packages SET company_id = ?, name = ?, cost = ?, price = ?, description = ?, active = 1, data_gb = COALESCE(?, data_gb) WHERE id = ?')
           .run(companyId, c.name, c.agentPrice, price, c.description, gbOf(c.name), p.id);
@@ -49,13 +52,17 @@ route('POST', '/api/art/sync', ADMIN, () => wrap(async (creds) => {
       } else {
         const sort = q('SELECT COALESCE(MAX(sort), 0) + 1 AS s FROM packages WHERE company_id = ?').get(companyId).s;
         q('INSERT INTO packages (company_id, name, cost, price, active, sort, data_gb, description, art_card_id) VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?)')
-          .run(companyId, c.name, c.agentPrice, price, sort, gbOf(c.name), c.description, c.cardId);
+          .run(companyId, c.name, c.agentPrice, price, sort, gbOf(c.name), c.description, c.ref);
         added++;
       }
     }
-    const ids = cards.map((c) => c.cardId);
-    const off = q(`UPDATE packages SET active = 0 WHERE art_card_id != '' AND active = 1 AND art_card_id NOT IN (${ids.map(() => '?').join(',')})`).run(...ids).changes;
+    // Bundles hidden for lack of balance are not "gone": only switch off what disappeared from a page that was read.
+    const ids = cards.map((c) => c.ref);
+    const off = cards.hidden ? 0
+      : q(`UPDATE packages SET active = 0 WHERE art_card_id != '' AND active = 1 AND art_card_id NOT IN (${ids.map(() => '?').join(',')})`).run(...ids).changes;
     for (const id of companyIds) q("UPDATE companies SET activation = 'auto' WHERE id = ? AND activation = 'manual'").run(id);
-    return { cards: cards.length, added, updated, switchedOff: off, markup };
+    return { cards: cards.length, hidden: cards.hidden, added, updated, switchedOff: off, markup };
   });
-}));
+}
+
+module.exports = { syncCards };
