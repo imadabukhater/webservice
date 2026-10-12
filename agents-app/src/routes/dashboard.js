@@ -5,7 +5,7 @@ const D = require('../domain');
 const { route, ANY } = require('../router');
 const { unreadCount } = require('./messages');
 
-const SALE_TYPES = "('activate','renew','refund','line_delete')";
+const SALE_TYPES = "('activate','renew','refund','line_delete','line_edit')";
 
 // Counts lines by display state for one agent (or everyone).
 function lineCounts(agentId) {

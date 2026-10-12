@@ -109,6 +109,33 @@ export async function lineAction(line, name) {
           return finish('تم الحفظ');
         },
       });
+    case 'correct': {
+      await loadCatalog();
+      const pkgs = S.catalog.packages.filter((p) => p.active || p.id === line.packageId);
+      return sheet({
+        title: `تعديل ${fmtPhone(line.number)}`, subtitle: `خط ${esc(line.agentName)}`,
+        body: `<div class="field"><label for="cr-number">رقم الهاتف</label><input class="input ltr" id="cr-number" name="number" inputmode="tel" value="${esc(fmtPhone(line.number))}"></div>
+          <div class="field"><label for="cr-pkg">الرزمة</label><select class="input" id="cr-pkg" name="packageId">
+            ${pkgs.map((p) => `<option value="${p.id}" ${p.id === line.packageId ? 'selected' : ''}>${esc(`${p.companyName} ${p.name}`)}</option>`).join('')}</select></div>
+          <div class="field"><label for="cr-price">السعر المخصوم من الوكيل (₪)</label><input class="input ltr" id="cr-price" name="price" type="number" min="0" step="0.01" inputmode="decimal" value="${line.price}">
+            <div class="hint" id="cr-diff"></div></div>
+          <div class="field"><label for="cr-reason">السبب <span class="opt">(اختياري — يظهر في السجل)</span></label><input class="input" id="cr-reason" name="reason"></div>`,
+        submit: 'حفظ التعديل',
+        onInput(form) {
+          const diff = Math.round((Number(field(form, 'price')) - line.price) * 100) / 100;
+          const box = form.querySelector('#cr-diff');
+          box.className = `hint ${diff > 0 ? 'warn' : diff < 0 ? 'ok' : ''}`;
+          box.innerHTML = diff > 0 ? `${icon('alert')}<span>يُخصم ${fmtMoney(diff)} إضافية من رصيد ${esc(line.agentName)}</span>`
+            : diff < 0 ? `${icon('checkCircle')}<span>يُرجع ${fmtMoney(-diff)} إلى رصيد ${esc(line.agentName)}</span>` : '';
+        },
+        async onSubmit(form) {
+          await api.post(`/api/lines/${line.id}/correct`, {
+            number: digits(field(form, 'number')), packageId: Number(field(form, 'packageId')), price: field(form, 'price'), reason: field(form, 'reason'),
+          });
+          return finish('تم تعديل الخط');
+        },
+      });
+    }
     case 'move': {
       const agents = (await api.get('/api/agents')).filter((a) => a.id !== line.agentId && a.active);
       return sheet({
@@ -162,6 +189,7 @@ export async function openLine(id) {
   if (['active', 'frozen'].includes(l.status)) add('swap', 'تبديل الشريحة', 'sim', 'amber');
   add('edit', 'بيانات الزبون والملاحظات', 'edit');
   if (l.status !== 'disconnected') add('share', 'مشاركة التفاصيل مع الزبون', 'share', 'cyan');
+  if (admin && l.status !== 'disconnected') add('correct', 'تعديل الرقم والرزمة والسعر', 'edit', 'amber');
   if (admin && l.status !== 'disconnected') add('move', 'نقل لوكيل آخر', 'swap', 'amber');
   if (['active', 'frozen'].includes(l.status)) add('disconnect', 'فصل الرقم', 'power', 'red', true);
   if (admin) add('delete', 'حذف الخط (تصحيح خطأ)', 'trash', 'red', true);

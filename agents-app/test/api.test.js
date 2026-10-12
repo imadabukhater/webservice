@@ -314,3 +314,31 @@ test('messages between the manager and an agent, and the support WhatsApp number
   assert.equal((await ok(call(admin, 'PUT', '/api/settings', { supportWhatsapp: '' }))).supportWhatsapp, '');
   await ok(call(admin, 'PUT', '/api/settings', { supportWhatsapp: '972567725080' }));
 });
+
+test('the manager corrects number, package and price of an activated line', async () => {
+  const admin = await login('admin', 'admin-pass');
+  const cat = await ok(call(admin, 'GET', '/api/catalog'));
+  const p500 = cat.packages.find((p) => p.name === '500 جيجا');
+  const p300 = cat.packages.find((p) => p.name === '300 جيجا');
+  await ok(call(admin, 'PUT', `/api/packages/${p300.id}`, { cost: 30, price: 45 }));
+  await ok(call(admin, 'POST', '/api/agents', { name: 'وكيل التعديل', username: 'fix', password: 'secret5', balance: 200 }));
+  const t = await login('fix', 'secret5');
+  const act = await ok(call(t, 'POST', '/api/lines', { packageId: p500.id, number: '0588000001', sim: '8997202000000000060' }));
+  assert.equal(act.balance, 120);
+  assert.equal((await call(t, 'POST', `/api/lines/${act.line.id}/correct`, { price: 1 })).status, 403, 'agents cannot correct');
+  assert.equal((await call(admin, 'POST', `/api/lines/${act.line.id}/correct`, {})).status, 400);
+
+  const r = await ok(call(admin, 'POST', `/api/lines/${act.line.id}/correct`, { number: '0588000002', packageId: p300.id, price: 45, reason: 'خطأ وكيل' }));
+  assert.equal(r.line.number, '0588000002');
+  assert.equal(r.line.packageId, p300.id);
+  assert.equal(r.line.price, 45);
+  assert.equal(r.balance, 155, 'the 35 ₪ difference goes back to the agent');
+  const op = (await ok(call(admin, 'GET', '/api/ops?limit=5'))).find((o) => o.type === 'line_edit');
+  assert.equal(op.amount, 35);
+  assert.equal(op.profit, -35 + 30, 'profit follows the new price and cost');
+  assert.match(op.detail, /0588000001 ← 0588000002/);
+  assert.ok((await ok(call(t, 'GET', '/api/notifications'))).items.some((i) => i.title.includes('عدّل المدير')));
+
+  await ok(call(t, 'POST', '/api/lines', { packageId: p500.id, number: '0588000003', sim: '8997202000000000078' }));
+  assert.equal((await call(admin, 'POST', `/api/lines/${act.line.id}/correct`, { number: '0588000003' })).status, 409);
+});

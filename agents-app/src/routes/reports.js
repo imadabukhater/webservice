@@ -9,7 +9,7 @@ const col = (key, label, type = 'text') => ({ key, label, type });
 
 const OP_LABEL = {
   activate: 'تفعيل', renew: 'تمديد', topup: 'شحن رصيد', deduct: 'خصم رصيد', transfer_in: 'رصيد وارد', transfer_out: 'رصيد صادر',
-  refund: 'استرجاع', line_move: 'نقل رقم', line_delete: 'حذف خط', freeze: 'تجميد', unfreeze: 'إلغاء تجميد',
+  refund: 'استرجاع', line_move: 'نقل رقم', line_delete: 'حذف خط', line_edit: 'تعديل خط', freeze: 'تجميد', unfreeze: 'إلغاء تجميد',
   disconnect: 'فصل', swap_sim: 'تبديل شريحة', port_done: 'تحويل رقم', esim_done: 'تفعيل eSIM',
 };
 
@@ -139,7 +139,7 @@ const REPORTS = [
   {
     key: 'statement', group: 'المالية', title: 'كشف حساب الرصيد', dated: true,
     build(user, p) {
-      const types = ['activate', 'renew', 'topup', 'deduct', 'transfer_in', 'transfer_out', 'refund', 'line_move', 'line_delete'];
+      const types = ['activate', 'renew', 'topup', 'deduct', 'transfer_in', 'transfer_out', 'refund', 'line_move', 'line_delete', 'line_edit'];
       const rows = opsRows(user, types, p, 'AND amount != 0');
       return {
         columns: [col('ts', 'التاريخ', 'datetime'), col('type', 'العملية'), col('detail', 'التفاصيل'), col('amount', 'المبلغ', 'money'),
@@ -156,7 +156,7 @@ const REPORTS = [
       const agentId = admin ? p.agentId : user.id;
       const rows = q(`SELECT package, SUM(type = 'activate') AS activations, SUM(type = 'renew') AS renewals,
                         SUM(-amount) AS revenue, SUM(cost) AS cost, SUM(profit) AS profit
-                      FROM ops WHERE type IN ('activate','renew','refund','line_delete') AND package != '' AND ts >= ? AND ts < ?
+                      FROM ops WHERE type IN ('activate','renew','refund','line_delete','line_edit') AND package != '' AND ts >= ? AND ts < ?
                       ${agentId ? 'AND agent_id = ?' : ''} GROUP BY package ORDER BY revenue DESC`).all(p.from, p.to, ...(agentId ? [agentId] : []));
       return {
         columns: [col('package', 'اسم الرزمة'), col('activations', 'تفعيلات', 'num'), col('renewals', 'تمديدات', 'num'),
@@ -172,7 +172,7 @@ const REPORTS = [
       const rows = q(`SELECT u.id, u.name, u.balance, u.credit_limit,
                         COALESCE(SUM(o.type = 'activate'), 0) AS activations, COALESCE(SUM(o.type = 'renew'), 0) AS renewals,
                         COALESCE(SUM(-o.amount), 0) AS revenue, COALESCE(SUM(o.cost), 0) AS cost, COALESCE(SUM(o.profit), 0) AS profit
-                      FROM users u LEFT JOIN ops o ON o.agent_id = u.id AND o.type IN ('activate','renew','refund','line_delete') AND o.ts >= ? AND o.ts < ?
+                      FROM users u LEFT JOIN ops o ON o.agent_id = u.id AND o.type IN ('activate','renew','refund','line_delete','line_edit') AND o.ts >= ? AND o.ts < ?
                       WHERE u.role = 'agent' GROUP BY u.id ORDER BY profit DESC`).all(p.from, p.to);
       return {
         columns: [col('agent', 'الوكيل'), col('activations', 'تفعيلات', 'num'), col('renewals', 'تمديدات', 'num'), col('revenue', 'المبيعات', 'money'),

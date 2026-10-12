@@ -183,6 +183,56 @@ route('PUT', '/api/lines/:id', ANY, ({ user, params, body }) => {
   return { line: view(l.id, user) };
 });
 
+// The manager corrects what an agent activated: number, package and/or the price charged.
+// A price change charges or refunds the difference to the agent (it may go past the credit limit).
+route('POST', '/api/lines/:id/correct', ADMIN, ({ user, params, body }) => tx(() => {
+  const l = D.getLine(params.id, user);
+  const agent = D.getUser(l.agent_id);
+  const full = q('SELECT cost FROM lines WHERE id = ?').get(l.id);
+  const changes = [];
+
+  let number = l.number;
+  if (!isBlank(body.number) && normalizePhone(body.number) !== l.number) {
+    number = validPhone(normalizePhone(body.number));
+    if (q("SELECT 1 FROM lines WHERE number = ? AND status != 'disconnected' AND id != ?").get(number, l.id)) fail(409, `الرقم ${number} مفعّل على خط آخر`);
+    changes.push(`الرقم ${l.number} ← ${number}`);
+  }
+
+  let pkg = null;
+  let cost = full.cost;
+  if (body.packageId && Number(body.packageId) !== l.package_id) {
+    pkg = D.priceFor(agent.id, body.packageId);
+    const old = l.package_id ? q('SELECT cost FROM packages WHERE id = ?').get(l.package_id) : null;
+    // Keep any eSIM fee inside the cost: swap only the package part.
+    cost = round(old ? full.cost - old.cost * l.months + pkg.cost * l.months : pkg.cost * l.months);
+    changes.push(`الرزمة ${l.package_label} ← ${D.packageLabel(pkg)}`);
+  }
+
+  let price = l.price;
+  if (!isBlank(body.price)) {
+    price = num(body.price, 'السعر');
+    if (price < 0) fail(400, 'السعر لا يكون سالباً');
+    if (round(price) !== round(l.price)) changes.push(`السعر ${round(l.price)} ← ${round(price)} ₪`);
+  }
+  if (!changes.length) fail(400, 'لم يتغير شيء');
+
+  const label = pkg ? D.packageLabel(pkg) : l.package_label;
+  q('UPDATE lines SET number = ?, package_id = ?, package_label = ?, company_id = ?, price = ?, cost = ?, updated_at = ? WHERE id = ?')
+    .run(number, pkg ? pkg.id : l.package_id, label, pkg ? pkg.company_id : l.company_id, price, cost, now(), l.id);
+  const detail = `تعديل المدير: ${changes.join(' · ')}${body.reason ? ' · ' + str(body.reason, 200) : ''}`;
+  const priceDelta = round(price - l.price);
+  const costDelta = round(cost - full.cost);
+  if (priceDelta || costDelta) {
+    D.changeBalance(agent, -priceDelta, {
+      type: 'line_edit', actor: user, lineId: l.id, number, cost: costDelta, profit: priceDelta - costDelta, package: label, detail,
+    });
+  } else {
+    D.logLineOp('line_edit', { ...l, number }, agent, user, detail, { package: label });
+  }
+  D.notify({ userId: agent.id, kind: 'line', title: `عدّل المدير الخط ${number}`, body: changes.join(' · '), link: '#/subscribers' });
+  return { line: view(l.id, user), balance: round(agent.balance) };
+}));
+
 route('POST', '/api/lines/:id/move', ADMIN, ({ user, params, body }) => tx(() => {
   const l = D.getLine(params.id, user);
   const from = D.getUser(l.agent_id);
