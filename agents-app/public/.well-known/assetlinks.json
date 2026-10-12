@@ -1,0 +1,10 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.agentsportal.app",
+      "sha256_cert_fingerprints": ["1A:9A:A5:90:AB:C3:B1:7C:DB:5C:F9:AF:C0:B2:3F:E4:44:10:7B:A6:61:F9:56:53:6B:AA:D9:4B:44:07:0E:F3"]
+    }
+  }
+]
