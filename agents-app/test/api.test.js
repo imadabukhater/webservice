@@ -39,6 +39,9 @@ test('portal flow: catalog, prices, credit, SIM stock, activations, tasks, renew
   const cellcom = cat.companies.find((c) => c.name === 'سلكوم');
   const partner = cat.companies.find((c) => c.name === 'بارتنر');
   assert.deepEqual(cellcom.prefixes, ['8997202']);
+  assert.equal(cellcom.activation, 'manual', 'sales are requests to the manager by default');
+  // These flows test instant activation: switch the companies to direct.
+  for (const c of cat.companies) await ok(call(admin, 'PUT', `/api/companies/${c.id}`, { activation: 'direct' }));
   const p500 = cat.packages.find((p) => p.name === '500 جيجا');
   const p300 = cat.packages.find((p) => p.name === '300 جيجا');
   const pPartner = cat.packages.find((p) => p.companyId === partner.id);
@@ -341,4 +344,70 @@ test('the manager corrects number, package and price of an activated line', asyn
 
   await ok(call(t, 'POST', '/api/lines', { packageId: p500.id, number: '0588000003', sim: '8997202000000000078' }));
   assert.equal((await call(admin, 'POST', `/api/lines/${act.line.id}/correct`, { number: '0588000003' })).status, 409);
+});
+
+test('manual companies: sales become requests the manager carries out; direct lines are final', async () => {
+  const admin = await login('admin', 'admin-pass');
+  const cat = await ok(call(admin, 'GET', '/api/catalog'));
+  const cellcom = cat.companies.find((c) => c.name === 'سلكوم');
+  const p500 = cat.packages.find((p) => p.name === '500 جيجا');
+  await ok(call(admin, 'PUT', `/api/companies/${cellcom.id}`, { activation: 'manual' }));
+  assert.equal((await ok(call(admin, 'GET', '/api/catalog'))).companies.find((c) => c.id === cellcom.id).activation, 'manual');
+  const agent = await ok(call(admin, 'POST', '/api/agents', { name: 'وكيل الطلبات', username: 'manual', password: 'secret4', balance: 500 }));
+  const t = await login('manual', 'secret4');
+  const openTask = async (lineId, type) => (await ok(call(admin, 'GET', '/api/tasks?status=open'))).find((x) => x.lineId === lineId && x.type === type);
+
+  // ----- activation request -----
+  const act = await ok(call(t, 'POST', '/api/lines', { packageId: p500.id, number: '0589000001', sim: '8997202000000000086', customerName: 'سامي' }));
+  assert.equal(act.line.status, 'pending');
+  assert.equal(act.line.expiresAt, null);
+  assert.equal(act.balance, 420, 'charged when the request is made');
+  const task = await openTask(act.line.id, 'activate');
+  assert.match(task.note, /0589000001/);
+  assert.match(task.note, /8997202000000000086/);
+  assert.match(task.note, /سامي/);
+  assert.equal(task.amount, 80);
+  assert.equal((await call(t, 'POST', `/api/tasks/${task.id}/cancel`)).status, 400, 'agents cannot cancel a sale request');
+  await ok(call(admin, 'POST', `/api/tasks/${task.id}/resolve`, { status: 'done' }));
+  const done = (await ok(call(t, 'GET', `/api/lines/${act.line.id}`))).line;
+  assert.equal(done.status, 'active');
+  assert.ok(done.expiresAt > Date.now() + 27 * 864e5);
+  assert.equal(done.direct, false);
+
+  // ----- renewal request: charged now, extended when carried out, refunded when rejected -----
+  const ren = await ok(call(t, 'POST', `/api/lines/${act.line.id}/renew`, { months: 1 }));
+  assert.equal(ren.pending, true);
+  assert.equal(ren.line.expiresAt, done.expiresAt, 'not extended yet');
+  assert.equal(ren.balance, 340);
+  const renTask = await openTask(act.line.id, 'renew');
+  await ok(call(admin, 'POST', `/api/tasks/${renTask.id}/resolve`, { status: 'done' }));
+  const extended = (await ok(call(t, 'GET', `/api/lines/${act.line.id}`))).line.expiresAt;
+  assert.ok(extended > done.expiresAt + 27 * 864e5);
+  await ok(call(t, 'POST', `/api/lines/${act.line.id}/renew`, { months: 1 }));
+  const rej = await openTask(act.line.id, 'renew');
+  await ok(call(admin, 'POST', `/api/tasks/${rej.id}/resolve`, { status: 'rejected', response: 'الرقم غير صحيح' }));
+  assert.equal((await ok(call(t, 'GET', '/api/me'))).user.balance, 340);
+  assert.equal((await ok(call(t, 'GET', `/api/lines/${act.line.id}`))).line.expiresAt, extended);
+
+  // ----- card recharge request, rejected: refunded and removed -----
+  const card = await ok(call(t, 'POST', '/api/lines', { kind: 'external', packageId: p500.id, number: '0589000002' }));
+  assert.equal(card.line.status, 'pending');
+  const cardTask = await openTask(card.line.id, 'recharge');
+  await ok(call(admin, 'POST', `/api/tasks/${cardTask.id}/resolve`, { status: 'rejected' }));
+  assert.equal((await ok(call(t, 'GET', '/api/me'))).user.balance, 340);
+  assert.equal((await call(t, 'GET', `/api/lines/${card.line.id}`)).status, 404);
+
+  // ----- the manager's own sales are not requests -----
+  const mine = await ok(call(admin, 'POST', '/api/lines', { agentId: agent.id, packageId: p500.id, number: '0589000003', sim: '8997202000000000094' }));
+  assert.equal(mine.line.status, 'active');
+
+  // ----- direct: active at once, the agent cannot disconnect -----
+  await ok(call(admin, 'PUT', `/api/companies/${cellcom.id}`, { activation: 'direct' }));
+  const direct = await ok(call(t, 'POST', '/api/lines', { packageId: p500.id, number: '0589000004', sim: '8997202000000000102' }));
+  assert.equal(direct.line.status, 'active');
+  assert.equal(direct.line.direct, true);
+  const cut = await call(t, 'POST', `/api/lines/${direct.line.id}/action`, { action: 'disconnect' });
+  assert.equal(cut.status, 400);
+  assert.match(cut.body.error, /تفعيلاً مباشراً/);
+  assert.equal((await ok(call(t, 'POST', `/api/lines/${direct.line.id}/renew`, { months: 1 }))).pending, false);
 });

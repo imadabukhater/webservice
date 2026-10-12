@@ -85,6 +85,7 @@ export async function openRenew(line) {
           <div><span>تنتهي في</span><b>${fmtDate(addMonths(base, st.months))}</b></div>
           <div><span>المتاح قبل</span><b>${fmtMoney(available)}</b></div>
           <div><span>المتاح بعد</span><b class="${after < 0 ? 'minus' : ''}">${fmtMoney(after)}</b></div></div>
+        ${!admin && companyById(line.companyId)?.activation !== 'direct' ? `<div class="msg info" style="margin-top:10px">${icon('tasks')}<span>يُرسَل التمديد إلى المدير لتنفيذه، ويُمدَّد الخط عند التنفيذ.</span></div>` : ''}
         ${cp !== '' ? `<p class="hint ${Number(cp) - total >= 0 ? 'ok' : 'bad'}" style="margin-top:8px">${icon('coins')}<span>ربحك من هذا التمديد: ${fmtMoney(Number(cp) - total)}</span></p>` : ''}
         ${after < 0 ? `<div class="msg" style="margin-top:10px">${icon('alert')}<span>الرصيد المتاح لا يكفي. ينقص ${fmtMoney(-after)}.</span></div>` : ''}`;
     },
@@ -96,7 +97,7 @@ export async function openRenew(line) {
       const r = await api.post(`/api/lines/${line.id}/renew`, body);
       await closeAllSheets();
       changed();
-      return `تم التمديد حتى ${fmtDate(r.line.expiresAt)}`;
+      return r.pending ? 'أُرسل طلب التمديد إلى المدير' : `تم التمديد حتى ${fmtDate(r.line.expiresAt)}`;
     },
   });
 }

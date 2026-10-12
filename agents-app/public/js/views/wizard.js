@@ -35,6 +35,15 @@ const total = () => round(unit() * W.months + esimFee());
 const available = () => (isAdmin() ? agent()?.available ?? 0 : D.me?.available ?? 0);
 const STEPS = () => (external() ? ['الشركة', 'الشحن', 'رقم الزبون'] : ['الشركة', 'الرزمة', 'الشريحة والرقم', 'التأكيد']);
 
+// An agent's sale for a "manual" company becomes a request the manager carries out on the company's site.
+const manualSale = () => !isAdmin() && !W.esim && !W.port && company()?.activation !== 'direct';
+const directSale = () => !isAdmin() && !W.esim && !W.port && company()?.activation === 'direct';
+function modeNote() {
+  if (directSale()) return `<div class="msg warn">${icon('bolt')}<span>تفعيل مباشر: بعد التأكيد يصبح الخط فعّالاً فوراً، ولا يمكن فصله أو استرداد المبلغ.</span></div>`;
+  if (manualSale()) return `<div class="msg info">${icon('tasks')}<span>يُرسَل الطلب إلى المدير لتنفيذه على موقع الشركة. يُسترد المبلغ كاملاً إن رُفض.</span></div>`;
+  return '';
+}
+
 const step3Valid = () => {
   const numberOk = W.numberState === 'ok';
   if (external() || W.esim) return numberOk;
@@ -115,6 +124,7 @@ function stepCard() {
     <div class="field"><label for="wz-number">رقم الهاتف الذي تشحنه</label>
       <input class="input ltr big" id="wz-number" inputmode="tel" autocomplete="off" placeholder="05X-XXX-XXXX" value="${esc(W.number)}">
       <div class="hint" id="wz-number-hint"></div></div>
+    ${modeNote()}
     <div class="balance-preview" id="wz-balance">${balanceHtml()}</div>
     ${short ? `<div class="msg">${icon('alert')}<span>الرصيد المتاح لا يكفي. ينقص ${fmtMoney(-after)}.${isAdmin() ? '' : ' اطلب شحن الرصيد من «المدفوعات».'}</span></div>` : ''}
     ${W.error ? `<div class="msg">${icon('alert')}<span>${esc(W.error)}</span></div>` : ''}
@@ -160,6 +170,7 @@ function step4() {
     ${isAdmin() ? `<div class="field"><label for="wz-unit">سعر خاص للشهر <span class="opt">(اختياري — بدل سعر الوكيل ${fmtMoney(offer()?.offerPrice ?? priceOf(pkg()))})</span></label>
       <input class="input ltr" id="wz-unit" type="number" min="0" step="0.01" inputmode="decimal" value="${esc(W.unitPrice)}"></div>` : ''}
     <div class="field"><label for="wz-note">ملاحظة <span class="opt">(اختياري)</span></label><input class="input" id="wz-note" value="${esc(W.note)}"></div>
+    ${modeNote()}
     <div class="balance-preview" id="wz-balance">${balanceHtml()}</div>
     ${short ? `<div class="msg">${icon('alert')}<span>الرصيد المتاح لا يكفي. ينقص ${fmtMoney(-after)}.${isAdmin() ? '' : ' اطلب شحن الرصيد من «المدفوعات».'}</span></div>` : ''}
     ${W.error ? `<div class="msg">${icon('alert')}<span>${esc(W.error)}</span></div>` : ''}
@@ -176,11 +187,12 @@ function balanceHtml() {
 
 function resultView() {
   const l = W.result.line;
-  const pending = l.status === 'pending';
+  const pending = l.status === 'pending' || W.result.pending;
   return `<section class="card card-pad"><div class="success">
     <div class="success-mark ${pending ? 'pending' : ''}">${icon(pending ? 'clock' : 'check')}</div>
     <h2>${pending ? 'أُرسل الطلب إلى المدير' : external() ? 'تم شحن الرقم' : 'تم تفعيل الخط'}</h2>
-    <p class="muted">${phone(l.number)} · ${esc(l.packageLabel)}${l.expiresAt ? ` · <span class="nowrap">حتى ${fmtDate(l.expiresAt)}</span>` : ''}</p>
+    ${pending ? '<p class="small muted">ستصلك رسالة عند التنفيذ. يُسترد المبلغ كاملاً إن رُفض الطلب.</p>' : ''}
+    <p class="muted">${phone(l.number)} · ${esc(l.packageLabel)}${l.expiresAt && !pending ? ` · <span class="nowrap">حتى ${fmtDate(l.expiresAt)}</span>` : ''}</p>
     <p class="small muted">الرصيد المتاح الآن ${fmtMoney(W.result.available)}</p>
     <div class="btn-row" style="width:100%;max-width:420px">
       <button class="btn" data-action="wz-share">${icon('share')}مشاركة مع الزبون</button>
@@ -204,7 +216,7 @@ function rows() {
   r.push([W.port ? 'الرقم المحوَّل' : 'رقم الهاتف', W.numberState === 'ok' ? phone(normalizePhone(W.number)) : unset]);
   r.push(['مدة الخدمة', monthsText(W.months)]);
   if (esimFee()) r.push(['رسوم تفعيل eSIM', fmtMoney(esimFee())]);
-  if (W.step >= 4 && p) r.push(['تنتهي في', W.esim || W.port ? 'بعد تنفيذ الطلب' : fmtDate(addMonths(Date.now(), W.months))]);
+  if (W.step >= 4 && p) r.push(['تنتهي في', W.esim || W.port || manualSale() ? 'بعد تنفيذ الطلب' : fmtDate(addMonths(Date.now(), W.months))]);
   return r;
 }
 
@@ -249,6 +261,7 @@ const checkNumber = debounce(async () => {
     const r = await api.get(`/api/lines/check?number=${n}`);
     if (normalizePhone(W.number) !== n) return undefined;
     if (r.exists && external()) {
+      if (r.pending) return set('taken', 'bad', 'لهذا الرقم طلب ما زال بانتظار المدير. انتظر تنفيذه.');
       return r.mine ? set('ok', 'ok', 'الرقم من زبائنك — يُشحن ويُمدَّد شهراً ·', fmtPhone(n)) : set('taken', 'bad', 'هذا الرقم مسجّل عند وكيل آخر. تواصل مع المدير.');
     }
     if (r.exists) return set('taken', 'bad', r.mine ? 'هذا الرقم مفعّل لديك. لتمديده استعمل «زبون قائم».' : 'هذا الرقم مفعّل في المنصّة');

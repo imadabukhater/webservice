@@ -191,7 +191,7 @@ export async function openLine(id) {
   if (l.status !== 'disconnected') add('share', 'مشاركة التفاصيل مع الزبون', 'share', 'cyan');
   if (admin && l.status !== 'disconnected') add('correct', 'تعديل الرقم والرزمة والسعر', 'edit', 'amber');
   if (admin && l.status !== 'disconnected') add('move', 'نقل لوكيل آخر', 'swap', 'amber');
-  if (['active', 'frozen'].includes(l.status)) add('disconnect', 'فصل الرقم', 'power', 'red', true);
+  if (['active', 'frozen'].includes(l.status) && (admin || !l.direct)) add('disconnect', 'فصل الرقم', 'power', 'red', true);
   if (admin) add('delete', 'حذف الخط (تصحيح خطأ)', 'trash', 'red', true);
 
   const kv = [
@@ -209,7 +209,7 @@ export async function openLine(id) {
 
   sheet({
     title: fmtPhone(l.number),
-    subtitle: `${statePill(l.state)} ${l.kind === 'external' ? '<span class="pill plain">شحن كرت</span>' : ''} ${l.port ? '<span class="pill plain">تحويل رقم</span>' : ''}`,
+    subtitle: `${statePill(l.state)} ${l.kind === 'external' ? '<span class="pill plain">شحن كرت</span>' : ''} ${l.port ? '<span class="pill plain">تحويل رقم</span>' : ''} ${l.direct ? '<span class="pill plain">تفعيل مباشر</span>' : ''}`,
     wide: true,
     body: `
       <div class="summary-pkg">${companyLogo(co, 'sm')}<div class="grow"><b>${esc(l.packageLabel)}</b><small>${esc(co?.name || '')}</small></div></div>

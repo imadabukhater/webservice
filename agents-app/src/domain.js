@@ -89,6 +89,16 @@ function quote(agentId, { packageId, offerId }) {
 
 const packageLabel = (pkg) => `${pkg.company_name} ${pkg.name}`;
 
+// true when the company's sales are activated directly (final); false when the manager carries them out.
+const directCompany = (companyId) => q('SELECT activation FROM companies WHERE id = ?').get(companyId)?.activation === 'direct';
+
+// A sale the manager carries out by hand: opens a task and tells the manager.
+function openSaleTask({ type, agent, lineId = null, amount, note, payload = null }) {
+  q('INSERT INTO tasks (type, agent_id, line_id, amount, note, payload, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
+    .run(type, agent.id, lineId, amount, note, payload ? JSON.stringify(payload) : '', now());
+  notify({ role: 'admin', kind: 'task', title: `${note.split(' — ')[0]} من ${agent.name}`, body: note, link: '#/tasks' });
+}
+
 // ---------- SIM cards ----------
 const prefixesOf = (c) => String(c.iccid_prefixes || '').split(/[\s,]+/).filter(Boolean);
 
@@ -137,7 +147,7 @@ function markSimUsed(stockId, lineId) {
 }
 
 // ---------- lines ----------
-const LINE_SELECT = `SELECT l.id, l.number, l.sim, l.company_id, l.package_id, l.package_label, l.agent_id, l.kind, l.esim, l.port,
+const LINE_SELECT = `SELECT l.id, l.number, l.sim, l.company_id, l.package_id, l.package_label, l.agent_id, l.kind, l.esim, l.port, l.direct,
   l.months, l.price, l.cost, l.offer_id, l.status, l.customer_name, l.customer_price, l.note, l.esim_code, (l.esim_qr != '') AS has_qr,
   l.activated_at, l.expires_at, l.updated_at, u.name AS agent_name, c.name AS company_name, c.color AS company_color
   FROM lines l JOIN users u ON u.id = l.agent_id LEFT JOIN companies c ON c.id = l.company_id`;
@@ -157,7 +167,7 @@ function lineView(l, role, warnDays) {
   return {
     id: l.id, number: l.number, sim: l.sim, companyId: l.company_id, companyName: l.company_name || '', companyColor: l.company_color || '',
     packageId: l.package_id, packageLabel: l.package_label, agentId: l.agent_id, agentName: l.agent_name,
-    kind: l.kind, esim: !!l.esim, port: !!l.port, months: l.months, price: round(l.price), offerId: l.offer_id,
+    kind: l.kind, esim: !!l.esim, port: !!l.port, direct: !!l.direct, months: l.months, price: round(l.price), offerId: l.offer_id,
     ...(admin ? { cost: round(l.cost) } : {}),
     status: l.status, state: lineState(l, warnDays),
     customerName: l.customer_name, customerPrice: l.customer_price === null ? null : round(l.customer_price),
@@ -175,7 +185,7 @@ function getLine(id, user) {
 
 module.exports = {
   getUser, getAgent, publicUser, logOp, opView, logLineOp, changeBalance, notify,
-  LIVE_OFFER, priceFor, liveOffer, quote, packageLabel,
+  LIVE_OFFER, priceFor, liveOffer, quote, packageLabel, directCompany, openSaleTask,
   prefixesOf, companyForIccid, learnPrefix, takeSim, markSimUsed,
   LINE_SELECT, lineState, lineView, getLine,
 };

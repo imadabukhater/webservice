@@ -148,20 +148,6 @@ CREATE TABLE IF NOT EXISTS ops (
   package TEXT NOT NULL DEFAULT '',
   customer_price REAL
 );
-CREATE TABLE IF NOT EXISTS tasks (
-  id INTEGER PRIMARY KEY,
-  type TEXT NOT NULL CHECK (type IN ('topup','port','esim','general')),
-  status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','done','rejected')),
-  agent_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
-  line_id INTEGER,
-  amount REAL,
-  note TEXT NOT NULL DEFAULT '',
-  response TEXT NOT NULL DEFAULT '',
-  attachment TEXT NOT NULL DEFAULT '',
-  created_at INTEGER NOT NULL,
-  resolved_at INTEGER,
-  resolved_by TEXT NOT NULL DEFAULT ''
-);
 CREATE TABLE IF NOT EXISTS notifications (
   id INTEGER PRIMARY KEY,
   user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
@@ -183,6 +169,44 @@ CREATE TABLE IF NOT EXISTS messages (
 );
 `);
 if (!tableSql('lines')) db.exec(LINES_DDL);
+
+// activate / recharge / renew: sales the manager carries out by hand on the company's site.
+// payload: JSON with what a renewal applies once it is done.
+const TASKS_DDL = `
+CREATE TABLE tasks (
+  id INTEGER PRIMARY KEY,
+  type TEXT NOT NULL CHECK (type IN ('topup','port','esim','general','activate','recharge','renew')),
+  status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','done','rejected')),
+  agent_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+  line_id INTEGER,
+  amount REAL,
+  note TEXT NOT NULL DEFAULT '',
+  response TEXT NOT NULL DEFAULT '',
+  attachment TEXT NOT NULL DEFAULT '',
+  payload TEXT NOT NULL DEFAULT '',
+  created_at INTEGER NOT NULL,
+  resolved_at INTEGER,
+  resolved_by TEXT NOT NULL DEFAULT ''
+)`;
+// Earlier versions allowed fewer task types; SQLite cannot change a CHECK, so rebuild the table once.
+function migrateTasks() {
+  const sql = tableSql('tasks');
+  if (!sql) { db.exec(TASKS_DDL); return; }
+  if (sql.includes("'renew'")) return;
+  db.exec('BEGIN');
+  try {
+    db.exec('ALTER TABLE tasks RENAME TO tasks_v2; DROP INDEX IF EXISTS tasks_status;');
+    db.exec(TASKS_DDL);
+    db.exec(`INSERT INTO tasks (id, type, status, agent_id, line_id, amount, note, response, attachment, created_at, resolved_at, resolved_by)
+             SELECT id, type, status, agent_id, line_id, amount, note, response, attachment, created_at, resolved_at, resolved_by FROM tasks_v2;
+             DROP TABLE tasks_v2;`);
+    db.exec('COMMIT');
+  } catch (e) {
+    db.exec('ROLLBACK');
+    throw e;
+  }
+}
+migrateTasks();
 db.exec(`
 CREATE INDEX IF NOT EXISTS lines_agent ON lines(agent_id);
 CREATE INDEX IF NOT EXISTS lines_number ON lines(number);
@@ -213,6 +237,9 @@ ensureColumn('packages', 'tag', "tag TEXT NOT NULL DEFAULT ''");
 ensureColumn('packages', 'description', "description TEXT NOT NULL DEFAULT ''");
 ensureColumn('ops', 'package', "package TEXT NOT NULL DEFAULT ''");
 ensureColumn('ops', 'customer_price', 'customer_price REAL');
+// manual: the agent's sale becomes a request the manager carries out; direct: active at once, no disconnect or refund.
+ensureColumn('companies', 'activation', "activation TEXT NOT NULL DEFAULT 'manual'");
+ensureColumn('lines', 'direct', 'direct INTEGER NOT NULL DEFAULT 0');
 
 const q = (sql) => db.prepare(sql);
 

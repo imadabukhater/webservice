@@ -17,7 +17,14 @@ export function openCompanyForm(c) {
       <div class="field"><label for="co-color">اللون</label><div class="input-group"><input class="input" id="co-color" name="color" type="color" value="${esc(c?.color || '#2563eb')}" style="padding:4px;max-width:90px">
         <span class="hint">يُستعمل عندما لا يوجد شعار، وفي النقاط الملونة بجانب الأرقام.</span></div></div>
       <div class="field"><label for="co-prefix">بادئات أرقام الشرائح (ICCID)</label><input class="input ltr mono" id="co-prefix" name="prefixes" value="${esc((c?.prefixes || []).join(', '))}" placeholder="8997202">
-        <span class="hint">أول 7 أرقام من شرائح هذه الشركة. تتعلّمها المنصّة تلقائياً من أول تفعيل، ويمكنك تعديلها هنا.</span></div>`,
+        <span class="hint">أول 7 أرقام من شرائح هذه الشركة. تتعلّمها المنصّة تلقائياً من أول تفعيل، ويمكنك تعديلها هنا.</span></div>
+      <div class="field"><span class="label">طريقة التفعيل</span>
+        <div class="switches">
+          <label class="switch-row"><span class="tile sm">${icon('tasks')}</span><span class="grow"><b>طلب للمدير</b><small>يُخصم المبلغ ويصلك طلب، تفعّل الخط على موقع الشركة ثم تضغط «تنفيذ». يُسترد المبلغ إن رفضت.</small></span>
+            <input type="radio" name="activation" value="manual" ${c?.activation !== 'direct' ? 'checked' : ''}></label>
+          <label class="switch-row"><span class="tile sm amber">${icon('bolt')}</span><span class="grow"><b>تفعيل مباشر</b><small>الخط فعّال فوراً. لا يستطيع الوكيل فصله ولا يُسترد المبلغ.</small></span>
+            <input type="radio" name="activation" value="direct" ${c?.activation === 'direct' ? 'checked' : ''}></label>
+        </div><span class="hint">eSIM وتحويل الأرقام تصلك دائماً كطلبات.</span></div>`,
     submit: c ? 'حفظ' : 'إضافة الشركة',
     onMount(form) {
       const prev = () => { form.querySelector('#co-prev').innerHTML = companyLogo({ name: field(form, 'name') || '؟', color: field(form, 'color'), logo }); };
@@ -32,7 +39,7 @@ export function openCompanyForm(c) {
       form.addEventListener('input', prev);
     },
     async onSubmit(form) {
-      const body = { name: field(form, 'name'), color: field(form, 'color'), logo, prefixes: field(form, 'prefixes') };
+      const body = { name: field(form, 'name'), color: field(form, 'color'), logo, prefixes: field(form, 'prefixes'), activation: form.elements.activation.value };
       await (c ? api.put(`/api/companies/${c.id}`, body) : api.post('/api/companies', body));
       await loadCatalog(true);
       changed();
@@ -102,9 +109,10 @@ export default {
     const tabs = `<div class="segmented"><button data-action="tab" data-tab="packages" aria-pressed="${V.tab === 'packages'}">الرزم (${packages.length})</button>
       <button data-action="tab" data-tab="companies" aria-pressed="${V.tab === 'companies'}">الشركات (${companies.length})</button></div>`;
     if (V.tab === 'companies') {
-      return `${tabs}<div class="page-head"><p>الشعار واللون وبادئات الشرائح لكل شركة.</p><button class="btn btn-primary" data-action="add-company">${icon('plus')}شركة جديدة</button></div>
+      return `${tabs}<div class="page-head"><p>الشعار واللون وبادئات الشرائح وطريقة التفعيل لكل شركة.</p><button class="btn btn-primary" data-action="add-company">${icon('plus')}شركة جديدة</button></div>
         ${companies.length ? `<div class="grid-cards">${companies.map((c) => `<article class="item"><div class="item-top">${companyLogo(c, 'sm')}
-          <div class="grow"><b class="item-title">${esc(c.name)}</b><div class="item-sub"><span>${c.packageCount} رزمة</span><span class="mono ltr">${esc((c.prefixes || []).join(', ') || 'بدون بادئة')}</span></div></div></div>
+          <div class="grow"><b class="item-title">${esc(c.name)}</b><div class="item-sub"><span>${c.packageCount} رزمة</span><span class="mono ltr">${esc((c.prefixes || []).join(', ') || 'بدون بادئة')}</span></div></div>
+            <span class="pill ${c.activation === 'direct' ? 's-expiring' : 'plain'}">${c.activation === 'direct' ? 'تفعيل مباشر' : 'طلب للمدير'}</span></div>
           <div class="item-actions"><button class="btn btn-sm" data-action="edit-company" data-id="${c.id}">${icon('edit')}تعديل</button>
             <button class="btn btn-sm btn-ghost" data-action="delete-company" data-id="${c.id}">${icon('trash')}حذف</button></div></article>`).join('')}</div>`
           : empty('building', 'لا توجد شركات', 'أضف أول شركة اتصالات.')}`;

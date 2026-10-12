@@ -4,7 +4,14 @@ const { fail, now, round, str, num, isBlank, addMonths, imageOrEmpty } = require
 const D = require('../domain');
 const { route, ADMIN, ANY } = require('../router');
 
-const TYPE_LABEL = { topup: 'طلب شحن رصيد', port: 'تحويل رقم', esim: 'تفعيل eSIM', general: 'طلب عام' };
+const { applyRenewal } = require('./lines');
+
+const TYPE_LABEL = {
+  topup: 'طلب شحن رصيد', port: 'تحويل رقم', esim: 'تفعيل eSIM', general: 'طلب عام', activate: 'تفعيل خط', recharge: 'شحن كرت', renew: 'تمديد رزمة',
+};
+// Requests that hold a pending line until the manager carries them out.
+const LINE_TASKS = ['port', 'esim', 'activate', 'recharge'];
+const DONE_OP = { port: 'port_done', esim: 'esim_done', activate: 'activate_done', recharge: 'activate_done' };
 
 const taskView = (t) => ({
   id: t.id, type: t.type, status: t.status, agentId: t.agent_id, agentName: t.agent_name || '',
@@ -87,16 +94,30 @@ route('POST', '/api/tasks/:id/resolve', ADMIN, ({ user, params, body }) => tx(()
     D.changeBalance(agent, amount, { type: 'topup', actor: user, detail: `طلب شحن رقم ${t.id}${response ? ' · ' + response : ''}` });
   }
 
-  if ((t.type === 'port' || t.type === 'esim') && t.line_id) {
+  if (t.type === 'renew' && t.line_id) {
+    const l = q('SELECT * FROM lines WHERE id = ?').get(t.line_id);
+    const r = JSON.parse(t.payload || '{}');
+    if (status === 'done' && l) {
+      applyRenewal(l.id, r);
+      D.logLineOp('renew_done', l, agent, user, response || `تم ${TYPE_LABEL.renew}`, { package: r.label });
+    } else if (status === 'rejected') {
+      D.changeBalance(agent, t.amount, {
+        type: 'refund', actor: user, lineId: t.line_id, number: l?.number || '', cost: -(r.cost || 0), profit: -(t.amount - (r.cost || 0)),
+        package: r.label || '', detail: `رفض التمديد${response ? ' · ' + response : ''}`,
+      });
+    }
+  }
+
+  if (LINE_TASKS.includes(t.type) && t.line_id) {
     const l = q('SELECT * FROM lines WHERE id = ?').get(t.line_id);
     if (l && l.status === 'pending') {
-      const what = t.type === 'port' ? 'تحويل الرقم' : 'eSIM';
+      const what = { port: 'تحويل الرقم', esim: 'eSIM', activate: 'تفعيل الخط', recharge: 'شحن الكرت' }[t.type];
       if (status === 'done') {
         const esimQr = t.type === 'esim' ? imageOrEmpty(body.attachment, { maxKb: 600, label: 'رمز QR' }) : '';
         const esimCode = t.type === 'esim' ? str(body.esimCode, 500) : '';
         q("UPDATE lines SET status = 'active', activated_at = ?, expires_at = ?, esim_code = ?, esim_qr = ?, updated_at = ? WHERE id = ?")
           .run(ts, addMonths(ts, l.months), esimCode, esimQr, ts, l.id);
-        D.logLineOp(t.type === 'port' ? 'port_done' : 'esim_done', l, agent, user, response || `تم ${what}`, { package: l.package_label });
+        D.logLineOp(DONE_OP[t.type], l, agent, user, response || `تم ${what}`, { package: l.package_label });
       } else {
         D.changeBalance(agent, l.price, {
           type: 'refund', actor: user, lineId: l.id, number: l.number, cost: -l.cost, profit: -(l.price - l.cost), package: l.package_label,
@@ -113,7 +134,7 @@ route('POST', '/api/tasks/:id/resolve', ADMIN, ({ user, params, body }) => tx(()
   if (agent) {
     const label = TYPE_LABEL[t.type];
     D.notify({
-      userId: agent.id, kind: 'task', link: t.type === 'esim' || t.type === 'port' ? '#/subscribers' : '#/tasks',
+      userId: agent.id, kind: 'task', link: LINE_TASKS.includes(t.type) || t.type === 'renew' ? '#/subscribers' : '#/tasks',
       title: status === 'done'
         ? (t.type === 'topup' ? `تم شحن رصيدك بـ ${round(amount)} ₪` : `تم تنفيذ ${label}`)
         : `رُفض ${label}`,

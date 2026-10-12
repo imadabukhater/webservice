@@ -1,23 +1,29 @@
 import {
-  api, esc, icon, isAdmin, fmtMoney, fmtDate, phone, sheet, field, changed, fileToDataUrl, relTime, TASK_STATUS, TASK_TYPE, empty, daysText,
+  api, esc, icon, isAdmin, fmtMoney, fmtDate, phone, sheet, field, changed, fileToDataUrl, relTime, TASK_STATUS, TASK_TYPE, empty, daysText, copyText,
 } from '../core.js';
 import { openRenew } from './renew.js';
 import { openTopupRequest } from './payments.js';
 
 const V = { tasks: [], due: [], tab: 'open' };
-const TYPE_ICON = { topup: ['wallet', 'green'], port: ['repeat', 'amber'], esim: ['qr', 'cyan'], general: ['msg', ''] };
+const TYPE_ICON = {
+  topup: ['wallet', 'green'], port: ['repeat', 'amber'], esim: ['qr', 'cyan'], general: ['msg', ''],
+  activate: ['userPlus', ''], recharge: ['card', 'green'], renew: ['repeat', 'green'],
+};
+// Sales the manager carries out on the company's site; rejecting refunds the agent in full.
+const SALE_TASKS = ['port', 'esim', 'activate', 'recharge', 'renew'];
 
 function taskCard(t) {
   const [ic, color] = TYPE_ICON[t.type];
   const admin = isAdmin();
   return `<article class="item">
     <div class="item-top"><span class="tile sm ${color}">${icon(ic)}</span>
-      <div class="grow"><b class="item-title">${TASK_TYPE[t.type]}${t.amount !== null && t.type === 'topup' ? ` · <span class="ltr">${fmtMoney(t.amount)}</span>` : ''}</b>
+      <div class="grow"><b class="item-title">${TASK_TYPE[t.type]}${t.amount !== null ? ` · <span class="ltr">${fmtMoney(t.amount)}</span>` : ''}</b>
         <div class="item-sub">${admin ? `<span>${esc(t.agentName)}</span>` : ''}<span>${relTime(t.createdAt)}</span>${t.lineNumber ? `<span>${phone(t.lineNumber)}</span>` : ''}</div></div>
       <span class="pill s-${t.status}">${TASK_STATUS[t.status]}</span></div>
     ${t.note ? `<p class="small" style="color:var(--ink-2)">${esc(t.note)}</p>` : ''}
     ${t.response ? `<p class="small muted">الرد: ${esc(t.response)}${t.resolvedBy ? ` — ${esc(t.resolvedBy)}` : ''}</p>` : ''}
     <div class="item-actions">
+      ${admin && t.status === 'open' && SALE_TASKS.includes(t.type) ? `<button class="btn btn-sm" data-action="copy-task" data-id="${t.id}">${icon('copy')}نسخ التفاصيل</button>` : ''}
       ${t.hasAttachment ? `<button class="btn btn-sm" data-action="attachment" data-id="${t.id}">${icon('image')}عرض المرفق</button>` : ''}
       ${admin && t.status === 'open' ? `<button class="btn btn-sm btn-good" data-action="resolve" data-id="${t.id}">${icon('check')}تنفيذ</button>
         <button class="btn btn-sm btn-danger" data-action="reject" data-id="${t.id}">${icon('x')}رفض</button>` : ''}
@@ -65,14 +71,21 @@ async function resolveTask(t) {
       <label class="upload" for="rs-qr"><span class="tile sm cyan">${icon('qr')}</span><span class="grow"><b>صورة رمز QR</b><br><small class="muted">يراها الوكيل في تفاصيل الرقم ليعرضها على الزبون</small></span>
         <img id="rs-qr-prev" alt="" hidden><input id="rs-qr" type="file" accept="image/*"></label>`,
     port: `<p class="muted">بعد إتمام التحويل لدى الشركة يصبح الرقم فعّالاً، ويبدأ احتساب مدة الرزمة من الآن.</p>`,
+    activate: '<p class="muted">فعّل الخط على موقع الشركة أولاً. بعد الضغط على «تم التنفيذ» يصبح الرقم فعّالاً عند الوكيل وتبدأ مدة الرزمة من الآن.</p>',
+    recharge: '<p class="muted">اشحن الكرت على موقع الشركة أولاً. بعد الضغط على «تم التنفيذ» يظهر الرقم فعّالاً عند الوكيل لمدة شهر من الآن.</p>',
+    renew: '<p class="muted">مدّد الرزمة على موقع الشركة أولاً. بعد الضغط على «تم التنفيذ» تُضاف المدة إلى الخط عند الوكيل.</p>',
     general: '',
   }[t.type];
+  const details = SALE_TASKS.includes(t.type) && t.note
+    ? `<div class="msg info" style="align-items:center">${icon('info')}<span class="grow">${esc(t.note)}</span>
+        <button type="button" class="btn btn-sm" data-copy-note>${icon('copy')}نسخ</button></div>` : '';
   sheet({
     title: `تنفيذ: ${TASK_TYPE[t.type]}`,
     subtitle: `${esc(t.agentName)}${t.lineNumber ? ` · ${t.lineNumber}` : ''}`,
-    body: `${body}<div class="field"><label for="rs-resp">ملاحظة للوكيل <span class="opt">(اختياري)</span></label><input class="input" id="rs-resp" name="response"></div>`,
+    body: `${details}${body}<div class="field"><label for="rs-resp">ملاحظة للوكيل <span class="opt">(اختياري)</span></label><input class="input" id="rs-resp" name="response"></div>`,
     submit: 'تم التنفيذ',
     onMount(form) {
+      form.querySelector('[data-copy-note]')?.addEventListener('click', () => copyText(t.note));
       form.querySelector('#rs-qr')?.addEventListener('change', async (e) => {
         const f = e.target.files[0];
         if (!f) return;
@@ -108,7 +121,7 @@ export default {
         <div class="segmented"><button data-action="tab" data-tab="open" aria-pressed="${V.tab === 'open'}">مفتوحة (${open.length})</button>
           <button data-action="tab" data-tab="closed" aria-pressed="${V.tab === 'closed'}">المنجزة</button></div>
         ${list.length ? `<div class="grid-cards">${list.map(taskCard).join('')}</div>`
-          : empty('checkCircle', V.tab === 'open' ? 'لا توجد مهام مفتوحة' : 'لا توجد مهام منجزة', V.tab === 'open' ? 'طلبات الشحن وتحويل الأرقام وeSIM تظهر هنا.' : '')}`;
+          : empty('checkCircle', V.tab === 'open' ? 'لا توجد مهام مفتوحة' : 'لا توجد مهام منجزة', V.tab === 'open' ? 'طلبات التفعيل والشحن والتمديد وتحويل الأرقام وeSIM تظهر هنا.' : '')}`;
     }
     return `
       <section class="list"><div class="section-title"><h2 class="dot-title">تجديدات مستحقة</h2><span class="muted small">${V.due.length}</span></div>
@@ -125,11 +138,12 @@ export default {
       sheet({ title: 'المرفق', body: `<img class="thumb" style="max-height:70vh" src="${esc(t.attachment)}" alt="مرفق الطلب">` });
     },
     resolve: (btn) => resolveTask(V.tasks.find((t) => t.id === Number(btn.dataset.id))),
+    'copy-task': (btn) => copyText(V.tasks.find((t) => t.id === Number(btn.dataset.id)).note),
     reject(btn) {
       const t = V.tasks.find((x) => x.id === Number(btn.dataset.id));
       sheet({
         title: `رفض: ${TASK_TYPE[t.type]}`,
-        body: `${['port', 'esim'].includes(t.type) ? `<div class="msg info">${icon('info')}<span>يُسترد للوكيل المبلغ كاملاً (${fmtMoney(t.amount)}) ويُحذف الرقم من قائمته.</span></div>` : ''}
+        body: `${SALE_TASKS.includes(t.type) ? `<div class="msg info">${icon('info')}<span>يُسترد للوكيل المبلغ كاملاً (${fmtMoney(t.amount)})${t.type === 'renew' ? ' ولا يُمدَّد الخط' : ' ويُحذف الرقم من قائمته'}.</span></div>` : ''}
           <div class="field"><label for="rj-reason">السبب</label><input class="input" id="rj-reason" name="response" placeholder="يظهر للوكيل"></div>`,
         submit: 'رفض الطلب', danger: true,
         async onSubmit(form) {

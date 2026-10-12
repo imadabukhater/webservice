@@ -148,7 +148,7 @@ route('GET', '/api/notifications', ANY, ({ user }) => {
     tasks = expiring + q("SELECT COUNT(*) AS n FROM tasks WHERE agent_id = ? AND status = 'open'").get(user.id).n;
   } else {
     const open = q("SELECT COUNT(*) AS n FROM tasks WHERE status = 'open'").get().n;
-    if (open) alerts.push({ kind: 'tasks', title: `${arCount(open, { one: 'طلب واحد', two: 'طلبان', few: 'طلبات', many: 'طلباً' })} بانتظارك`, body: 'شحن رصيد، تحويل أرقام وeSIM', link: '#/tasks' });
+    if (open) alerts.push({ kind: 'tasks', title: `${arCount(open, { one: 'طلب واحد', two: 'طلبان', few: 'طلبات', many: 'طلباً' })} بانتظارك`, body: 'تفعيل وشحن وتمديد خطوط، أرصدة، تحويل أرقام وeSIM', link: '#/tasks' });
     if (s.lowBalance > 0) {
       const low = q("SELECT COUNT(*) AS n FROM users WHERE role = 'agent' AND active = 1 AND balance + credit_limit < ?").get(s.lowBalance).n;
       if (low) alerts.push({ kind: 'balance', title: `${arCount(low, { one: 'وكيل واحد', two: 'وكيلان', few: 'وكلاء', many: 'وكيلاً' })} برصيد منخفض`, body: `أقل من ${s.lowBalance} ₪`, link: '#/agents' });

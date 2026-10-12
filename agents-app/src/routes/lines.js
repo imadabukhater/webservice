@@ -27,9 +27,9 @@ route('GET', '/api/lines', ANY, ({ user, query }) => listLines(user, query));
 route('GET', '/api/lines/check', ANY, ({ user, query }) => {
   const number = normalizePhone(query.number);
   if (!/^\d{9,13}$/.test(number)) return { valid: false, number };
-  const l = q("SELECT id, agent_id FROM lines WHERE number = ? AND status != 'disconnected'").get(number);
+  const l = q("SELECT id, agent_id, status FROM lines WHERE number = ? AND status != 'disconnected'").get(number);
   const mine = !!l && (user.role === 'admin' || l.agent_id === user.id);
-  return { valid: true, number, exists: !!l, mine, lineId: mine ? l.id : null };
+  return { valid: true, number, exists: !!l, mine, lineId: mine ? l.id : null, pending: mine && l.status === 'pending' };
 });
 
 route('GET', '/api/lines/:id', ANY, ({ user, params }) => {
@@ -75,14 +75,19 @@ route('POST', '/api/lines', ANY, ({ user, body }) => tx(() => {
   const customerPrice = optNum(body.customerPrice, 'سعر الزبون');
   if (customerPrice !== null && customerPrice < 0) fail(400, 'سعر الزبون لا يكون سالباً');
 
-  const pending = port || esim;
+  // Direct companies: active at once and final. Manual companies: a request the manager carries out
+  // (the manager's own sales count as already done). eSIM and number porting always go through the manager.
+  const direct = D.directCompany(pkg.company_id) && !port && !esim;
+  const manual = !direct && !port && !esim && !isAdmin;
+  const pending = port || esim || manual;
   const t = now();
   const label = D.packageLabel(pkg);
-  const lineId = Number(q(`INSERT INTO lines (number, sim, company_id, package_id, package_label, agent_id, kind, esim, port, months, price, cost,
+  const customerName = str(body.customerName, 80);
+  const lineId = Number(q(`INSERT INTO lines (number, sim, company_id, package_id, package_label, agent_id, kind, esim, port, direct, months, price, cost,
                                               offer_id, status, customer_name, customer_price, note, activated_at, expires_at, updated_at)
-                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-    .run(number, sim.iccid, pkg.company_id, pkg.id, label, agent.id, kind, esim ? 1 : 0, port ? 1 : 0, months, total, cost,
-      offer?.id ?? null, pending ? 'pending' : 'active', str(body.customerName, 80), customerPrice, str(body.note, 300),
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    .run(number, sim.iccid, pkg.company_id, pkg.id, label, agent.id, kind, esim ? 1 : 0, port ? 1 : 0, direct ? 1 : 0, months, total, cost,
+      offer?.id ?? null, pending ? 'pending' : 'active', customerName, customerPrice, str(body.note, 300),
       t, pending ? null : addMonths(t, months), t).lastInsertRowid);
   D.markSimUsed(sim.stockId, lineId);
   if (sim.iccid) D.learnPrefix(pkg.company_id, sim.iccid);
@@ -94,11 +99,12 @@ route('POST', '/api/lines', ANY, ({ user, body }) => tx(() => {
   }, { charge: true });
 
   if (pending) {
-    const type = port ? 'port' : 'esim';
-    const what = port ? 'تحويل رقم' : 'تفعيل eSIM';
-    q('INSERT INTO tasks (type, agent_id, line_id, amount, note, created_at) VALUES (?, ?, ?, ?, ?, ?)')
-      .run(type, agent.id, lineId, total, `${what} ${number} — ${label}`, t);
-    D.notify({ role: 'admin', kind: 'task', title: `${what} من ${agent.name}`, body: `${number} — ${label}`, link: '#/tasks' });
+    const type = port ? 'port' : esim ? 'esim' : kind === 'external' ? 'recharge' : 'activate';
+    const what = { port: 'تحويل رقم', esim: 'تفعيل eSIM', recharge: 'شحن كرت', activate: 'تفعيل خط' }[type];
+    // Everything the manager needs to carry it out on the company's site.
+    const note = [`${what} ${number}`, label, monthsText(months), sim.iccid ? `شريحة ${sim.iccid}` : '', customerName ? `الزبون: ${customerName}` : '']
+      .filter(Boolean).join(' — ');
+    D.openSaleTask({ type, agent, lineId, amount: total, note });
   }
   return { line: view(lineId, user), balance: round(agent.balance), available: round(agent.balance + agent.credit_limit) };
 }));
@@ -126,17 +132,32 @@ function renewLine(user, l, body) {
   const cost = round(pkg.cost * months);
   const customerPrice = optNum(body.customerPrice, 'سعر الزبون');
 
-  const t = now();
-  const expires = addMonths(Math.max(t, l.expires_at || t), months);
   const label = D.packageLabel(pkg);
-  q(`UPDATE lines SET package_id = ?, package_label = ?, company_id = ?, months = ?, price = ?, cost = ?, offer_id = ?, expires_at = ?,
-       customer_price = COALESCE(?, customer_price), updated_at = ? WHERE id = ?`)
-    .run(pkg.id, label, pkg.company_id, months, total, cost, offer?.id ?? null, expires, customerPrice, t, l.id);
+  const card = body.kind === 'external';
+  const renewal = { packageId: pkg.id, label, companyId: pkg.company_id, months, total, cost, offerId: offer?.id ?? null, customerPrice };
+  // Manual companies: the agent pays now; the line is extended when the manager marks the request done.
+  const manual = !isAdmin && !D.directCompany(pkg.company_id);
+  if (!manual) applyRenewal(l.id, renewal);
   D.changeBalance(agent, -total, {
     type: 'renew', actor: user, lineId: l.id, number: l.number, cost, profit: total - cost, package: label, customerPrice,
-    detail: [`تمديد ${monthsText(months)}`, offer ? `عرض: ${offer.title}` : '', body.kind === 'external' ? 'شحن كرت' : ''].filter(Boolean).join(' · '),
+    detail: [`تمديد ${monthsText(months)}`, offer ? `عرض: ${offer.title}` : '', card ? 'شحن كرت' : '', manual ? 'بانتظار التنفيذ' : ''].filter(Boolean).join(' · '),
   }, { charge: true });
-  return { line: view(l.id, user), balance: round(agent.balance), available: round(agent.balance + agent.credit_limit) };
+  if (manual) {
+    const note = [`${card ? 'شحن كرت' : 'تمديد رزمة'} ${l.number}`, label, monthsText(months), l.customer_name ? `الزبون: ${l.customer_name}` : '']
+      .filter(Boolean).join(' — ');
+    D.openSaleTask({ type: 'renew', agent, lineId: l.id, amount: total, note, payload: renewal });
+  }
+  return { line: view(l.id, user), pending: manual, balance: round(agent.balance), available: round(agent.balance + agent.credit_limit) };
+}
+
+// Extends a line by a renewal (now, or when the manager carries out a renewal request).
+function applyRenewal(lineId, r) {
+  const t = now();
+  const l = q('SELECT expires_at FROM lines WHERE id = ?').get(lineId);
+  q(`UPDATE lines SET package_id = ?, package_label = ?, company_id = ?, months = ?, price = ?, cost = ?, offer_id = ?, expires_at = ?,
+       customer_price = COALESCE(?, customer_price), updated_at = ? WHERE id = ?`)
+    .run(r.packageId, r.label, r.companyId, r.months, r.total, r.cost, r.offerId, addMonths(Math.max(t, l.expires_at || t), r.months),
+      r.customerPrice, t, lineId);
 }
 
 // ----- freeze, unfreeze, disconnect, SIM swap -----
@@ -163,6 +184,7 @@ route('POST', '/api/lines/:id/action', ANY, ({ user, params, body }) => tx(() =>
   } else {
     const a = ACTIONS[action];
     if (!a) fail(400, 'إجراء غير معروف');
+    if (action === 'disconnect' && l.direct && user.role !== 'admin') fail(400, 'هذا الخط مفعّل تفعيلاً مباشراً ولا يمكن فصله');
     if (!a.from.includes(l.status)) fail(400, 'لا يمكن تنفيذ هذا الإجراء على حالة الرقم الحالية');
     q('UPDATE lines SET status = ?, updated_at = ? WHERE id = ?').run(a.to, now(), l.id);
     D.logLineOp(action, l, agent, user, a.label + (reason ? ' · ' + reason : ''), { package: l.package_label });
@@ -267,4 +289,4 @@ route('DELETE', '/api/lines/:id', ADMIN, ({ user, params, query }) => tx(() => {
   return { ok: true };
 }));
 
-module.exports = { monthsText };
+module.exports = { monthsText, applyRenewal };

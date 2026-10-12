@@ -10,7 +10,7 @@ const col = (key, label, type = 'text') => ({ key, label, type });
 const OP_LABEL = {
   activate: 'تفعيل', renew: 'تمديد', topup: 'شحن رصيد', deduct: 'خصم رصيد', transfer_in: 'رصيد وارد', transfer_out: 'رصيد صادر',
   refund: 'استرجاع', line_move: 'نقل رقم', line_delete: 'حذف خط', line_edit: 'تعديل خط', freeze: 'تجميد', unfreeze: 'إلغاء تجميد',
-  disconnect: 'فصل', swap_sim: 'تبديل شريحة', port_done: 'تحويل رقم', esim_done: 'تفعيل eSIM',
+  disconnect: 'فصل', swap_sim: 'تبديل شريحة', port_done: 'تحويل رقم', esim_done: 'تفعيل eSIM', activate_done: 'تنفيذ تفعيل', renew_done: 'تنفيذ تمديد',
 };
 
 function lineRows(user, p, where, args, order = 'l.activated_at DESC') {

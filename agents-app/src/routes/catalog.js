@@ -5,7 +5,7 @@ const { LIVE_OFFER, priceFor, notify, prefixesOf } = require('../domain');
 const { route, ADMIN, ANY } = require('../router');
 
 const companyView = (c, admin) => ({
-  id: c.id, name: c.name, sort: c.sort, color: c.color, logo: c.logo, prefixes: prefixesOf(c),
+  id: c.id, name: c.name, sort: c.sort, color: c.color, logo: c.logo, prefixes: prefixesOf(c), activation: c.activation || 'manual',
   ...(admin ? { packageCount: c.package_count ?? 0 } : {}),
 });
 
@@ -52,15 +52,16 @@ function companyFields(body, existing = {}) {
   const logo = body.logo === undefined ? existing.logo ?? '' : imageOrEmpty(body.logo, { maxKb: 300, allowSvg: true, label: 'الشعار' });
   const rawPrefixes = body.prefixes === undefined ? existing.iccid_prefixes ?? '' : [].concat(body.prefixes).join(',');
   const prefixes = String(rawPrefixes).split(/[\s,]+/).map((p) => p.replace(/\D/g, '')).filter((p) => p.length >= 4).slice(0, 20).join(',');
-  return { name, color, logo, prefixes };
+  const activation = (body.activation ?? existing.activation) === 'direct' ? 'direct' : 'manual';
+  return { name, color, logo, prefixes, activation };
 }
 
 route('POST', '/api/companies', ADMIN, ({ body }) => {
   const f = companyFields(body);
   if (q('SELECT 1 FROM companies WHERE name = ?').get(f.name)) fail(409, 'الشركة موجودة');
   const sort = q('SELECT COALESCE(MAX(sort), 0) + 1 AS s FROM companies').get().s;
-  return { id: Number(q('INSERT INTO companies (name, sort, color, logo, iccid_prefixes) VALUES (?, ?, ?, ?, ?)')
-    .run(f.name, sort, f.color, f.logo, f.prefixes).lastInsertRowid) };
+  return { id: Number(q('INSERT INTO companies (name, sort, color, logo, iccid_prefixes, activation) VALUES (?, ?, ?, ?, ?, ?)')
+    .run(f.name, sort, f.color, f.logo, f.prefixes, f.activation).lastInsertRowid) };
 }, { maxBody: 600 * 1024 });
 
 route('PUT', '/api/companies/:id', ADMIN, ({ params, body }) => {
@@ -68,7 +69,7 @@ route('PUT', '/api/companies/:id', ADMIN, ({ params, body }) => {
   if (!c) fail(404, 'الشركة غير موجودة');
   const f = companyFields(body, c);
   if (q('SELECT 1 FROM companies WHERE name = ? AND id != ?').get(f.name, c.id)) fail(409, 'الشركة موجودة');
-  q('UPDATE companies SET name = ?, color = ?, logo = ?, iccid_prefixes = ? WHERE id = ?').run(f.name, f.color, f.logo, f.prefixes, c.id);
+  q('UPDATE companies SET name = ?, color = ?, logo = ?, iccid_prefixes = ?, activation = ? WHERE id = ?').run(f.name, f.color, f.logo, f.prefixes, f.activation, c.id);
   return { ok: true };
 }, { maxBody: 600 * 1024 });
 
