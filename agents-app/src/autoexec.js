@@ -25,10 +25,11 @@ function job(taskId) {
   const line = q('SELECT number, package_id FROM lines WHERE id = ?').get(t.line_id);
   if (!line) return null;
   const packageId = t.type === 'renew' ? JSON.parse(t.payload || '{}').packageId : line.package_id;
-  const p = q(`SELECT p.art_card_id, p.cost, c.activation FROM packages p JOIN companies c ON c.id = p.company_id WHERE p.id = ?`).get(packageId);
+  const p = q(`SELECT p.art_card_id, p.cost, p.art_price, c.activation FROM packages p JOIN companies c ON c.id = p.company_id WHERE p.id = ?`).get(packageId);
   // Only recharge cards are carried out automatically; invoice packages (inv:) stay requests for the manager.
   if (!p || !/^(ic|pb|pc):/.test(p.art_card_id) || p.activation !== 'auto') return null;
-  return { t, number: line.number, ref: p.art_card_id, price: p.cost };
+  // art-topup is paid its own current price, never the cost the manager may have typed.
+  return { t, number: line.number, ref: p.art_card_id, price: p.art_price ?? p.cost };
 }
 
 // Finishes a task as carried out by art-topup.

@@ -1,10 +1,10 @@
 import {
-  S, api, esc, icon, money, fmtMoney, sheet, field, changed, loadCatalog, companyLogo, specs, fileToDataUrl, empty, fmtNum, round,
+  S, api, esc, icon, money, fmtMoney, sheet, field, changed, loadCatalog, companyLogo, specs, fileToDataUrl, empty, fmtNum, round, relTime, toast,
 } from '../core.js';
 
 // Two separate systems, each with its own packages: invoices (activating a new line with a SIM) and
 // recharge cards (cards, bundles and cash for an existing number).
-const V = { tab: 'invoice', q: '' };
+const V = { tab: 'invoice', q: '', msg: {} };
 const KINDS = {
   invoice: { label: 'الفواتير', icon: 'sim', color: '', note: 'رزم تفعيل خط جديد بشريحة. تظهر للوكيل في «مشترك جديد».' },
   card: { label: 'كروت الشحن', icon: 'card', color: 'green', note: 'كروت وحزم ورصيد لرقم موجود. تظهر للوكيل في «شحن كرت» و«تمديد».' },
@@ -111,9 +111,120 @@ export function openPackageForm(p, companyId, kind = 'invoice') {
   });
 }
 
+// ---------- one system's controls: profit percentage, art-topup sync, price changes awaiting approval ----------
+const markupOf = (kind) => (kind === 'card' ? S.settings.artMarkupCard : S.settings.artMarkupInvoice) ?? 0;
+const syncedOf = (kind) => (kind === 'card' ? S.settings.artSyncedCard : S.settings.artSyncedInvoice);
+
+function systemBar(kind) {
+  const d = KINDS[kind];
+  const pending = S.catalog.packages.filter((p) => p.kind === kind && p.artPending).length;
+  const synced = syncedOf(kind);
+  const msg = V.msg[kind];
+  return `<section class="card card-pad sys-bar">
+    <div class="sys-row"><span class="tile sm ${d.color}">${icon('percent')}</span>
+      <div class="grow"><b>نسبة ربحك على ${d.label}: <span class="ltr">${markupOf(kind)}%</span></b><small>سعر الوكيل = التكلفة + ${markupOf(kind)}%. منفصلة عن ${kind === 'card' ? 'الفواتير' : 'كروت الشحن'}.</small></div>
+      <button class="btn btn-sm" data-action="set-markup" data-kind="${kind}">${icon('edit')}تغيير</button></div>
+    <div class="sys-row"><span class="tile sm">${icon('refresh')}</span>
+      <div class="grow"><b>المزامنة من art-topup</b><small>${synced ? `آخر مزامنة ${relTime(synced)}` : 'لم تتم بعد'} · تضيف الجديد ولا تغيّر أسعارك الحالية</small></div>
+      <button class="btn btn-sm" data-action="art-sync" data-kind="${kind}" ${S.settings.artConfigured ? '' : 'disabled title="أدخل بيانات art-topup في الإعدادات"'}>${icon('refresh')}مزامنة ${d.label}</button></div>
+    ${pending ? `<div class="msg warn" style="align-items:center">${icon('alert')}<span class="grow"><b>${pending} رزمة تغيّر سعرها في art-topup</b> — لن تتغيّر أسعارك إلا بموافقتك.</span>
+      <button class="btn btn-sm" data-action="art-pending" data-kind="${kind}">مراجعة</button></div>` : ''}
+    ${msg ? `<div class="msg ${msg.error ? '' : 'info'}">${icon(msg.error ? 'alert' : 'checkCircle')}<span>${esc(msg.text)}</span></div>` : ''}
+  </section>`;
+}
+
+async function refreshAll(ctx) {
+  S.settings = await api.get('/api/settings');
+  await loadCatalog(true);
+  ctx.rerender();
+}
+
+function openMarkup(kind, ctx) {
+  const d = KINDS[kind];
+  api.get(`/api/art/reprice?kind=${kind}`).then((info) => sheet({
+    title: `نسبة ربحك على ${d.label}`,
+    subtitle: 'سعر الوكيل = التكلفة + النسبة',
+    body: `<div class="field"><label for="mk-val">النسبة (%)</label><input class="input ltr big" id="mk-val" name="markup" type="number" min="0" max="200" step="0.5" inputmode="decimal" value="${info.markup}"></div>
+      <div class="hint" id="mk-example"></div>
+      <div class="field"><span class="label">ماذا يحدث للأسعار الحالية؟</span><div class="switches">
+        <label class="switch-row"><span class="grow"><b>طبّقها على الرزم التي لم أعدّل سعرها يدوياً (${info.total - info.edited})</b><small>الرزم التي وضعت سعرها بنفسك (${info.edited}) تبقى كما هي.</small></span><input type="radio" name="scope" value="unedited" checked></label>
+        <label class="switch-row"><span class="grow"><b>طبّقها على كل رزم ${d.label} (${info.total})</b><small>تستبدل الأسعار التي وضعتها يدوياً أيضاً.</small></span><input type="radio" name="scope" value="all"></label>
+        <label class="switch-row"><span class="grow"><b>احفظ النسبة فقط</b><small>للرزم الجديدة من المزامنة وللاعتمادات القادمة.</small></span><input type="radio" name="scope" value="none"></label>
+      </div></div>`,
+    submit: 'حفظ',
+    onInput(form) {
+      const m = Number(field(form, 'markup')) || 0;
+      form.querySelector('#mk-example').innerHTML = `${icon('coins')}<span>مثال: رزمة تكلفتها 50 ₪ تصبح للوكيل ${fmtMoney(50 * (1 + m / 100))}</span>`;
+    },
+    async onSubmit(form) {
+      const markup = field(form, 'markup');
+      await api.put('/api/settings', kind === 'card' ? { artMarkupCard: markup } : { artMarkupInvoice: markup });
+      const scope = form.elements.scope.value;
+      let text = `حُفظت نسبة ${d.label}: ${Number(markup)}%`;
+      if (scope !== 'none') {
+        const r = await api.post('/api/art/reprice', { kind, scope });
+        text += ` — تحدّث سعر ${r.changed} رزمة`;
+      }
+      V.msg[kind] = { text };
+      await refreshAll(ctx);
+      return text;
+    },
+  }));
+}
+
+function openPending(kind, ctx) {
+  const d = KINDS[kind];
+  api.get(`/api/art/pending?kind=${kind}`).then((rows) => {
+    if (!rows.length) { toast('لا توجد تغييرات بانتظارك'); return; }
+    const row = (p) => `<article class="item pend-row" data-id="${p.id}">
+      <div class="item-top"><div class="grow"><b class="item-title">${esc(p.name)}</b><div class="item-sub"><span>${esc(p.companyName)}</span>${p.active ? '' : '<span>مخفية</span>'}${p.edited ? '<span>سعرها معدّل يدوياً</span>' : ''}</div></div></div>
+      <div class="kv small"><div>التكلفة</div><div>${money(p.cost)} ← <b>${money(p.artPrice)}</b></div>
+        <div>سعر الوكيل</div><div>${money(p.price)} ← <b>${money(p.suggested)}</b> <span class="muted">(+${markupOf(kind)}%)</span></div></div>
+      <div class="item-actions"><button type="button" class="btn btn-sm btn-good" data-mode="all">${icon('check')}اعتماد</button>
+        <button type="button" class="btn btn-sm" data-mode="cost">التكلفة فقط</button>
+        <button type="button" class="btn btn-sm btn-ghost" data-mode="ignore">تجاهل</button></div></article>`;
+    sheet({
+      title: `تغييرات أسعار art-topup — ${d.label}`,
+      subtitle: '«اعتماد»: التكلفة والسعر الجديدان · «التكلفة فقط»: يبقى سعر الوكيل · «تجاهل»: يبقى كل شيء',
+      wide: true,
+      body: `<div class="list" id="pend-list">${rows.map(row).join('')}</div>`,
+      footer: `<button type="button" class="btn btn-primary" data-bulk="all">${icon('check')}اعتماد الكل (${rows.length})</button>
+        <button type="button" class="btn" data-bulk="ignore">تجاهل الكل</button>`,
+      onMount(form, el) {
+        const left = () => form.querySelectorAll('.pend-row').length;
+        const act = async (ids, mode) => {
+          await api.post('/api/art/approve', { ids, mode });
+          await loadCatalog(true);
+          ctx.rerender();
+        };
+        form.querySelector('#pend-list').addEventListener('click', async (e) => {
+          const b = e.target.closest('[data-mode]');
+          if (!b) return;
+          const card = b.closest('.pend-row');
+          card.querySelectorAll('button').forEach((x) => { x.disabled = true; });
+          try {
+            await act([Number(card.dataset.id)], b.dataset.mode);
+            card.remove();
+            if (!left()) el.querySelector('[data-close]').click();
+          } catch (err) { toast(err.message, { error: true }); card.querySelectorAll('button').forEach((x) => { x.disabled = false; }); }
+        });
+        el.querySelectorAll('[data-bulk]').forEach((b) => b.addEventListener('click', async () => {
+          const ids = [...form.querySelectorAll('.pend-row')].map((c) => Number(c.dataset.id));
+          b.disabled = true;
+          try {
+            await act(ids, b.dataset.bulk);
+            toast(b.dataset.bulk === 'all' ? `اعتُمد ${ids.length}` : `تُجوهل ${ids.length}`);
+            el.querySelector('[data-close]').click();
+          } catch (err) { toast(err.message, { error: true }); b.disabled = false; }
+        }));
+      },
+    });
+  });
+}
+
 function packageCardAdmin(p) {
   return `<article class="pkg-card ${p.active ? '' : 'inactive'}" style="cursor:default">
-    <div class="pkg-head"><span class="pkg-name">${esc(p.name)}</span>${p.active ? '' : '<span class="pill">مخفية عن الوكلاء</span>'}${!p.price ? '<span class="pill s-expiring">حدد السعر</span>' : ''}</div>
+    <div class="pkg-head"><span class="pkg-name">${esc(p.name)}</span>${p.active ? '' : '<span class="pill">مخفية عن الوكلاء</span>'}${!p.price ? '<span class="pill s-expiring">حدد السعر</span>' : ''}${p.artPending ? `<span class="pill s-expiring">سعر art-topup الجديد: ${fmtMoney(p.artPrice)}</span>` : ''}</div>
     ${p.dataGb ? `<div class="pkg-data"><b>${fmtNum(p.dataGb)}</b><span>GB</span></div>` : ''}
     ${specs(p) ? `<div class="pkg-specs">${specs(p)}</div>` : ''}
     <div class="kv small"><div>المدة</div><div>${p.days ? `${p.days} يوماً` : 'شهرية'}</div>
@@ -130,7 +241,7 @@ function packageCardAdmin(p) {
 export default {
   admin: true,
   title: () => ({ title: 'الشركات والرزم', subtitle: 'الفواتير وكروت الشحن: الأسعار والأحجام وما يظهر للوكلاء' }),
-  async load() { await loadCatalog(true); },
+  async load() { [S.settings] = await Promise.all([api.get('/api/settings'), loadCatalog(true)]); },
   mount(root, ctx) {
     const box = root.querySelector('#pkg-q');
     box?.addEventListener('input', () => {
@@ -160,7 +271,7 @@ export default {
     const term = V.q.trim().toLowerCase();
     const mine = packages.filter((p) => p.kind === kind && (!term || `${p.name} ${p.companyName} ${p.artCode}`.toLowerCase().includes(term)));
     const shown = mine.filter((p) => p.active).length;
-    return `${tabs}<div class="page-head"><p><b>${KINDS[kind].label}:</b> ${KINDS[kind].note} ظاهرة للوكلاء ${shown} من ${mine.length}.</p>
+    return `${tabs}${systemBar(kind)}<div class="page-head"><p><b>${KINDS[kind].label}:</b> ${KINDS[kind].note} ظاهرة للوكلاء ${shown} من ${mine.length}.</p>
         <button class="btn btn-primary" data-action="add-package">${icon('plus')}رزمة جديدة</button></div>
       <div class="search-box">${icon('search', 'i lead')}<input class="input" id="pkg-q" type="search" placeholder="ابحث باسم الرزمة أو الشركة أو رمز art-topup…" value="${esc(V.q)}" aria-label="بحث في الرزم"></div>
       ${companies.map((c) => {
@@ -183,6 +294,20 @@ export default {
       });
     },
     'add-package': (btn) => openPackageForm(null, Number(btn.dataset.company) || undefined, KINDS[V.tab] ? V.tab : 'invoice'),
+    'set-markup': (btn, e, ctx) => openMarkup(btn.dataset.kind, ctx),
+    'art-pending': (btn, e, ctx) => openPending(btn.dataset.kind, ctx),
+    async 'art-sync'(btn, e, ctx) {
+      const kind = btn.dataset.kind;
+      btn.disabled = true;
+      btn.innerHTML = `${icon('clock')}جاري القراءة من art-topup…`;
+      try {
+        const r = await api.post('/api/art/sync', { kind });
+        V.msg[kind] = { text: `${r.total} من art-topup: أُضيف ${r.added} جديدة بسعر التكلفة + ${r.markup}%${r.switchedOff ? `، أُخفيت ${r.switchedOff} لم تعد موجودة` : ''}. أسعارك الحالية لم تتغيّر${r.pending ? `، و${r.pending} تغيّر سعرها بانتظار موافقتك` : ''}.${r.hidden ? ` ${r.hidden} حزمة لم تظهر لأن رصيد art-topup أقل من سعرها.` : ''}` };
+      } catch (err) {
+        V.msg[kind] = { text: err.message, error: true };
+      }
+      await refreshAll(ctx);
+    },
     async 'toggle-package'(btn, e, ctx) {
       const p = S.catalog.packages.find((x) => x.id === Number(btn.dataset.id));
       btn.disabled = true;

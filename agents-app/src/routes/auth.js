@@ -40,7 +40,7 @@ route('POST', '/api/login', null, ({ body, ip }) => {
   }
   attempts.delete(key);
   if (!u.active) fail(403, 'هذا الحساب موقوف. تواصل مع المدير.');
-  return { token: createSession(u.id), user: publicUser(u), settings: getSettings() };
+  return { token: createSession(u.id), user: publicUser(u), settings: settingsFor(u) };
 });
 
 route('POST', '/api/logout', ANY, ({ token }) => {
@@ -48,7 +48,14 @@ route('POST', '/api/logout', ANY, ({ token }) => {
   return { ok: true };
 });
 
-route('GET', '/api/me', ANY, ({ user }) => ({ user: publicUser(user), settings: getSettings() }));
+route('GET', '/api/me', ANY, ({ user }) => ({ user: publicUser(user), settings: settingsFor(user) }));
+
+// Agents do not see the manager's art-topup account or profit percentages.
+function settingsFor(user) {
+  const s = getSettings();
+  if (user.role === 'admin') return s;
+  return Object.fromEntries(Object.entries(s).filter(([k]) => !k.startsWith('art')));
+}
 
 route('POST', '/api/me/password', ANY, ({ user, body, token }) => {
   if (!verifyPassword(String(body.current || ''), user.password_hash)) fail(400, 'كلمة المرور الحالية غير صحيحة');
@@ -78,10 +85,11 @@ route('PUT', '/api/settings', ADMIN, ({ body }) => {
   if (body.artUser !== undefined) setSetting('art_user', str(body.artUser, 80));
   // Write-only: an empty password keeps the saved one.
   if (body.artPass) setSetting('art_pass', String(body.artPass).slice(0, 200));
-  if (body.artMarkup !== undefined) {
-    const m = num(body.artMarkup, 'نسبة الزيادة');
-    if (m < 0 || m > 200) fail(400, 'نسبة الزيادة بين 0 و200%');
-    setSetting('art_markup', m);
+  for (const [field, key] of [['artMarkupCard', 'art_markup_card'], ['artMarkupInvoice', 'art_markup_invoice']]) {
+    if (body[field] === undefined) continue;
+    const m = num(body[field], 'نسبة الربح');
+    if (m < 0 || m > 200) fail(400, 'نسبة الربح بين 0 و200%');
+    setSetting(key, m);
   }
   if (body.supportWhatsapp !== undefined) {
     // International format without + or leading zeros, as wa.me expects: 972567725080.

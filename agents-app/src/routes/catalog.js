@@ -41,7 +41,10 @@ function catalogFor(user) {
   const packages = q(`SELECT p.*, c.name AS company_name FROM packages p JOIN companies c ON c.id = p.company_id
                       ORDER BY c.sort, c.id, p.sort, p.id`).all()
     .map((p) => ({ id: p.id, name: p.name, companyId: p.company_id, companyName: p.company_name, cost: round(p.cost), price: round(p.price), active: !!p.active, sort: p.sort,
-      artCode: artCode(p.art_card_id), edited: !!p.edited, ...packageAttrs(p) }));
+      artCode: artCode(p.art_card_id), edited: !!p.edited, artPrice: p.art_price === null ? null : round(p.art_price),
+      // art-topup's price changed and the manager has not decided yet.
+      artPending: p.art_price !== null && round(p.art_price) !== round(p.cost) && (p.art_ack === null || round(p.art_ack) !== round(p.art_price)),
+      ...packageAttrs(p) }));
   return { companies: companies.map((c) => companyView(c, true)), packages };
 }
 

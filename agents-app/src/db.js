@@ -263,6 +263,11 @@ ensureColumn('packages', 'days', 'days INTEGER');
 ensureColumn('packages', 'edited', 'edited INTEGER NOT NULL DEFAULT 0');
 ensureColumn('lines', 'days', 'days INTEGER');
 db.exec("UPDATE packages SET kind = 'card' WHERE kind != 'card' AND (art_card_id LIKE 'ic:%' OR art_card_id LIKE 'pb:%' OR art_card_id LIKE 'pc:%')");
+// art_price: art-topup's current price, refreshed by every sync and used when buying there. cost and price change
+// only with the manager's approval; art_ack is an art-topup price the manager chose to ignore.
+ensureColumn('packages', 'art_price', 'art_price REAL');
+ensureColumn('packages', 'art_ack', 'art_ack REAL');
+db.exec("UPDATE packages SET art_price = cost WHERE art_card_id != '' AND art_price IS NULL");
 ensureColumn('tasks', 'auto_status', "auto_status TEXT NOT NULL DEFAULT ''");
 ensureColumn('tasks', 'auto_note', "auto_note TEXT NOT NULL DEFAULT ''");
 ensureColumn('tasks', 'auto_ref', "auto_ref TEXT NOT NULL DEFAULT ''");
@@ -299,7 +304,12 @@ function getSettings() {
     // art-topup sign-in: the password never leaves the server (see artCredentials).
     artUser: out.art_user,
     artConfigured: !!(out.art_user && out.art_pass),
-    artMarkup: Math.max(0, Number(out.art_markup) || 0),
+    // The manager's profit on top of art-topup's price, separately for recharge cards and for invoices
+    // (both start from the older single art_markup).
+    artMarkupCard: Math.max(0, Number(out.art_markup_card ?? out.art_markup) || 0),
+    artMarkupInvoice: Math.max(0, Number(out.art_markup_invoice ?? out.art_markup) || 0),
+    artSyncedCard: Number(out.art_synced_card) || null,
+    artSyncedInvoice: Number(out.art_synced_invoice) || null,
   };
 }
 function artCredentials() {
