@@ -24,6 +24,10 @@ function page(url) {
         <div class="pkg-title">حزمة جوال أسبوعية 90 دقيقة 15 شيكل</div><div class="pkg-price">15 <small>₪</small></div></div>
       <div class="pkg-card disabled" onclick=""><div class="pkg-title">حزمة شهرية 400 دقيقة 63 شيكل</div><button class="pkg-btn" disabled="">رصيد غير كافٍ</button></div></div>`;
   }
+  if (url.startsWith('/Portal/invoices.php')) {
+    return `<div class="company-card api-card" onclick="showIPackages2(45511371, 'ramilevy', 'Ramilevy')"></div>
+      <div class="company-card" onclick="showIPackages2(16666331, '', 'celecom')"></div>`;
+  }
   if (url.startsWith('/Portal/pal_charge.php')) {
     return '<input type="hidden" id="product_id" value="27713199"><button data-amount="10">10 ₪</button><button data-amount="20">20 ₪</button>';
   }
@@ -58,6 +62,17 @@ const portal = http.createServer((req, res) => {
         return res.end('true');
       }
       return res.end('wrong');
+    }
+    if (req.url.startsWith('/controllers/packages_tk_db.php?getIPackages2')) {
+      if (!signed) return res.end(loginPage);
+      const id = new URL(req.url, 'http://x').searchParams.get('id');
+      const INV = { 45511371: [['716', 'رامي ليفي شهر 200 جيجا &amp;quot; 30 شيكل &amp;quot; 5G', '30.00', '30']],
+        16666331: [['94853317', 'سلكوم 3 شهور 400 جيجا كل شهر', '75.00', '90']] };
+      return res.end((INV[id] || []).map(([pid, name, price, days]) => `<a href="#" onclick="showISModal2(${pid}); return false;"><h4 id="package_name_${pid}">${name}</h4></a>
+        <div class="modal fade" id="ISModal2_${pid}"><table><tr><th>اسم الشركة</th><td>x</td></tr><tr><th>وصف العرض</th><td>400 جيجا</td></tr>
+        <tr><th>عدد الأيام</th><td>${days} يوم</td></tr><tr><th>رقم الشريحة</th><td><input name="sim" id="isim_${pid}"></td></tr></table>
+        <input type="hidden" id="i_comp2_${pid}" value="${id}"><input type="hidden" id="i_name2_${pid}" value="${name}">
+        <input type="hidden" id="i_cust_price2_${pid}" value="${price}"></div>`).join('\n'));
     }
     if (req.url.startsWith('/controllers/makePC1.php') || req.url.startsWith('/controllers/makePC2.php')) {
       if (!signed) return res.end(loginPage);
@@ -123,7 +138,8 @@ test('art-topup: sync cards with the markup, recharge automatically, hand failur
 
   // ----- sync -----
   const sync = await ok(call(admin, 'POST', '/api/art/sync'));
-  assert.deepEqual([sync.cards, sync.hidden, sync.added, sync.updated, sync.switchedOff], [6, 1, 6, 0, 0], '3 cards + 1 bundle (1 hidden) + 2 cash amounts');
+  assert.deepEqual([sync.total, sync.cards, sync.invoices, sync.hidden, sync.added, sync.updated, sync.switchedOff], [8, 6, 2, 1, 8, 0, 0],
+    '3 cards + 1 bundle (1 hidden) + 2 cash amounts, and 2 invoice packages');
   const cat = await ok(call(admin, 'GET', '/api/catalog'));
   const card = cat.packages.find((p) => p.name === 'سلكوم 350 جيجا (79.90 شيقل) 5G');
   assert.equal(card.cost, 76);
@@ -133,7 +149,31 @@ test('art-topup: sync cards with the markup, recharge automatically, hand failur
   assert.equal(cat.companies.find((c) => c.id === card.companyId).name, 'سلكوم', 'matched to the existing company');
   assert.equal(cat.companies.find((c) => c.id === card.companyId).activation, 'auto');
   assert.ok(cat.companies.some((c) => c.name === 'جولان' && c.activation === 'auto'), 'a missing company is created');
-  assert.deepEqual([(await ok(call(admin, 'POST', '/api/art/sync'))).added, (await ok(call(admin, 'POST', '/api/art/sync'))).updated], [0, 6]);
+  assert.deepEqual([(await ok(call(admin, 'POST', '/api/art/sync'))).added, (await ok(call(admin, 'POST', '/api/art/sync'))).updated], [0, 8]);
+  assert.equal(card.kind, 'card');
+
+  // ----- invoices: their own system, with a set duration -----
+  const inv = cat.packages.filter((p) => p.kind === 'invoice' && p.art);
+  assert.equal(inv.length, 2);
+  const rami = inv.find((p) => p.artCode === '716');
+  assert.equal(rami.name, 'رامي ليفي شهر 200 جيجا " 30 شيكل " 5G', 'double-escaped names are decoded');
+  assert.equal(rami.price, 34.5);
+  assert.equal(rami.days, 30);
+  const cel3 = inv.find((p) => p.artCode === '94853317');
+  assert.equal(cel3.days, 90);
+  assert.equal(cel3.companyId, card.companyId, 'celecom invoices belong to سلكوم');
+
+  // ----- the manager's edits and visibility survive a sync; only the cost follows art-topup -----
+  await ok(call(admin, 'PUT', `/api/packages/${cel3.id}`, { name: 'سلكوم 3 شهور (عرضي)', price: 99, dataGb: 400 }));
+  await ok(call(admin, 'PUT', `/api/packages/${rami.id}`, { active: false }));
+  await ok(call(admin, 'POST', '/api/art/sync'));
+  const after = (await ok(call(admin, 'GET', '/api/catalog'))).packages;
+  const cel3b = after.find((p) => p.id === cel3.id);
+  assert.deepEqual([cel3b.name, cel3b.price, cel3b.dataGb, cel3b.cost, cel3b.edited], ['سلكوم 3 شهور (عرضي)', 99, 400, 75, true]);
+  const ramib = after.find((p) => p.id === rami.id);
+  assert.equal(ramib.active, false, 'stays hidden');
+  assert.equal(ramib.edited, false, 'hiding is not an edit');
+  assert.equal(ramib.price, 34.5);
 
   // ----- automatic recharge -----
   const agent = await ok(call(admin, 'POST', '/api/agents', { name: 'وكيل', username: 'agent1', password: 'secret1', balance: 500 }));
@@ -179,6 +219,21 @@ test('art-topup: sync cards with the markup, recharge automatically, hand failur
   assert.match(cashTask.autoNote, /الرقم غير صحيح/);
   assert.deepEqual(fake.pal[1], { no2: '0591234568', id2: '27713199', price2: '10' });
   assert.equal(fake.pal.length, 2);
+
+  // ----- an invoice activation is a request for the manager (never sent automatically) and lasts its days -----
+  const sent = fake.recharges.length + fake.pal.length;
+  const ri = await ok(call(t, 'POST', '/api/lines', { packageId: cel3.id, number: '0521112233', sim: '8997202000000000110', months: 3 }));
+  assert.equal(ri.line.status, 'pending');
+  assert.equal(ri.line.price, 99, 'a fixed-duration package is sold once, whatever months says');
+  await new Promise((res) => setTimeout(res, 200));
+  const invTask = (await ok(call(admin, 'GET', '/api/tasks'))).find((x) => x.lineId === ri.line.id);
+  assert.equal(invTask.type, 'activate');
+  assert.equal(invTask.autoStatus, '');
+  assert.match(invTask.note, /90 يوماً/);
+  assert.equal(fake.recharges.length + fake.pal.length, sent);
+  await ok(call(admin, 'POST', `/api/tasks/${invTask.id}/resolve`, { status: 'done' }));
+  const invLine = (await ok(call(t, 'GET', `/api/lines/${ri.line.id}`))).line;
+  assert.ok(Math.abs(invLine.expiresAt - (Date.now() + 90 * 864e5)) < 60_000, 'expires after 90 days');
 
   // ----- a manual company is not sent -----
   await ok(call(admin, 'PUT', `/api/companies/${card.companyId}`, { activation: 'manual' }));

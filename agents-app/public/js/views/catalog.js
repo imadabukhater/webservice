@@ -2,7 +2,13 @@ import {
   S, api, esc, icon, money, fmtMoney, sheet, field, changed, loadCatalog, companyLogo, specs, fileToDataUrl, empty, fmtNum, round,
 } from '../core.js';
 
-const V = { tab: 'packages' };
+// Two separate systems, each with its own packages: invoices (activating a new line with a SIM) and
+// recharge cards (cards, bundles and cash for an existing number).
+const V = { tab: 'invoice', q: '' };
+const KINDS = {
+  invoice: { label: 'الفواتير', icon: 'sim', color: '', note: 'رزم تفعيل خط جديد بشريحة. تظهر للوكيل في «مشترك جديد».' },
+  card: { label: 'كروت الشحن', icon: 'card', color: 'green', note: 'كروت وحزم ورصيد لرقم موجود. تظهر للوكيل في «شحن كرت» و«تمديد».' },
+};
 
 export function openCompanyForm(c) {
   let logo = c?.logo || '';
@@ -50,26 +56,40 @@ export function openCompanyForm(c) {
   });
 }
 
-export function openPackageForm(p, companyId) {
+export function openPackageForm(p, companyId, kind = 'invoice') {
   const cos = S.catalog.companies;
   if (!cos.length) { openCompanyForm(null); return; }
   const amountVal = (v) => (v === -1 ? 'غير محدود' : v ?? '');
+  const k = p?.kind || kind;
   sheet({
     title: p ? 'تعديل رزمة' : 'رزمة جديدة',
+    subtitle: p?.artCode ? `رمز art-topup: <span class="mono ltr">${esc(p.artCode)}</span>` : '',
     body: `
+      ${p?.artCode ? `<div class="msg info">${icon('info')}<span>رزمة من art-topup. بعد حفظ تعديلك تبقى قيمك كما هي عند كل مزامنة، وتتحدث «التكلفة» فقط.</span></div>` : ''}
+      <div class="field"><span class="label">النظام</span><div class="segmented" id="pk-kind">
+        <button type="button" data-kind="invoice" aria-pressed="${k === 'invoice'}">${icon('sim')}فاتورة (تفعيل خط)</button>
+        <button type="button" data-kind="card" aria-pressed="${k === 'card'}">${icon('card')}كرت شحن</button></div>
+        <input type="hidden" name="kind" value="${k}"></div>
       <div class="field"><label for="pk-co">الشركة</label><select class="input" id="pk-co" name="companyId">${cos.map((c) => `<option value="${c.id}" ${c.id === (p?.companyId ?? companyId) ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select></div>
       <div class="field"><label for="pk-name">اسم الرزمة</label><input class="input" id="pk-name" name="name" value="${esc(p?.name || '')}" placeholder="مثال: 300 جيجا رزمة شهرية" required></div>
-      <div class="row2"><div class="field"><label for="pk-gb">الإنترنت (GB)</label><input class="input ltr" id="pk-gb" name="dataGb" type="number" min="0" step="1" inputmode="numeric" value="${p?.dataGb ?? ''}"></div>
-        <div class="field"><label for="pk-tag">وسم <span class="opt">(مثل RENTERS)</span></label><input class="input ltr" id="pk-tag" name="tag" value="${esc(p?.tag || '')}"></div></div>
+      <div class="row2"><div class="field"><label for="pk-gb">حجم الإنترنت (GB)</label><input class="input ltr" id="pk-gb" name="dataGb" type="number" min="0" step="1" inputmode="numeric" value="${p?.dataGb ?? ''}"></div>
+        <div class="field"><label for="pk-days">المدة بالأيام <span class="opt">(فارغ = شهرية)</span></label><input class="input ltr" id="pk-days" name="days" type="number" min="1" max="730" step="1" inputmode="numeric" value="${p?.days ?? ''}" placeholder="30، 90…"></div></div>
+      <div class="field"><label for="pk-tag">وسم <span class="opt">(مثل RENTERS)</span></label><input class="input ltr" id="pk-tag" name="tag" value="${esc(p?.tag || '')}"></div>
       <div class="row2"><div class="field"><label for="pk-min">الدقائق</label><input class="input ltr" id="pk-min" name="minutes" list="unlimited" value="${esc(amountVal(p?.minutes))}" placeholder="5000"></div>
         <div class="field"><label for="pk-sms">الرسائل</label><input class="input ltr" id="pk-sms" name="sms" list="unlimited" value="${esc(amountVal(p?.sms))}" placeholder="5000"></div></div>
       <datalist id="unlimited"><option value="غير محدود"></option></datalist>
       <div class="field"><label for="pk-desc">وصف قصير <span class="opt">(اختياري)</span></label><input class="input" id="pk-desc" name="description" value="${esc(p?.description || '')}"></div>
-      <div class="row2"><div class="field"><label for="pk-cost">التكلفة عليك (₪/شهر)</label><input class="input ltr" id="pk-cost" name="cost" type="number" min="0" step="0.01" inputmode="decimal" value="${p ? round(p.cost) : ''}"></div>
-        <div class="field"><label for="pk-price">سعر الوكيل الافتراضي (₪/شهر)</label><input class="input ltr" id="pk-price" name="price" type="number" min="0" step="0.01" inputmode="decimal" value="${p ? round(p.price) : ''}"></div></div>
+      <div class="row2"><div class="field"><label for="pk-cost">التكلفة عليك (₪)</label><input class="input ltr" id="pk-cost" name="cost" type="number" min="0" step="0.01" inputmode="decimal" value="${p ? round(p.cost) : ''}"></div>
+        <div class="field"><label for="pk-price">سعر الوكيل (₪)</label><input class="input ltr" id="pk-price" name="price" type="number" min="0" step="0.01" inputmode="decimal" value="${p ? round(p.price) : ''}"></div></div>
       <div class="hint" id="pk-margin"></div>
-      <label class="switch-row"><span class="grow"><b>متاحة للتفعيل</b><small>أوقفها لإخفائها عن الوكلاء مؤقتاً</small></span><input class="switch" type="checkbox" name="active" ${!p || p.active ? 'checked' : ''}></label>`,
+      <label class="switch-row"><span class="grow"><b>ظاهرة للوكلاء</b><small>أوقفها لإخفائها عن الوكلاء</small></span><input class="switch" type="checkbox" name="active" ${!p || p.active ? 'checked' : ''}></label>`,
     submit: p ? 'حفظ' : 'إضافة الرزمة',
+    onMount(form) {
+      form.querySelectorAll('#pk-kind [data-kind]').forEach((b) => b.addEventListener('click', () => {
+        form.elements.kind.value = b.dataset.kind;
+        form.querySelectorAll('#pk-kind [data-kind]').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+      }));
+    },
     onInput(form) {
       const cost = Number(field(form, 'cost')) || 0;
       const price = Number(field(form, 'price')) || 0;
@@ -81,6 +101,7 @@ export function openPackageForm(p, companyId) {
       const body = {
         companyId: Number(field(form, 'companyId')), name: field(form, 'name'), dataGb: field(form, 'dataGb'), minutes: field(form, 'minutes'), sms: field(form, 'sms'),
         tag: field(form, 'tag'), description: field(form, 'description'), cost: field(form, 'cost') || 0, price: field(form, 'price') || 0, active: form.elements.active.checked,
+        kind: form.elements.kind.value, days: field(form, 'days'),
       };
       await (p ? api.put(`/api/packages/${p.id}`, body) : api.post('/api/packages', body));
       await loadCatalog(true);
@@ -92,11 +113,15 @@ export function openPackageForm(p, companyId) {
 
 function packageCardAdmin(p) {
   return `<article class="pkg-card ${p.active ? '' : 'inactive'}" style="cursor:default">
-    <div class="pkg-head"><span class="pkg-name">${esc(p.name)}</span>${p.active ? '' : '<span class="pill">موقوفة</span>'}${!p.price ? '<span class="pill s-expiring">حدد السعر</span>' : ''}</div>
+    <div class="pkg-head"><span class="pkg-name">${esc(p.name)}</span>${p.active ? '' : '<span class="pill">مخفية عن الوكلاء</span>'}${!p.price ? '<span class="pill s-expiring">حدد السعر</span>' : ''}</div>
     ${p.dataGb ? `<div class="pkg-data"><b>${fmtNum(p.dataGb)}</b><span>GB</span></div>` : ''}
     ${specs(p) ? `<div class="pkg-specs">${specs(p)}</div>` : ''}
-    <div class="kv small"><div>التكلفة</div><div>${money(p.cost)}</div><div>سعر الوكيل</div><div>${money(p.price)}</div><div>ربحك</div><div class="${p.price - p.cost < 0 ? 'minus' : 'plus'}">${money(p.price - p.cost)}</div></div>
-    <div class="item-actions" style="padding-bottom:16px"><button class="btn btn-sm" data-action="edit-package" data-id="${p.id}">${icon('edit')}تعديل</button>
+    <div class="kv small"><div>المدة</div><div>${p.days ? `${p.days} يوماً` : 'شهرية'}</div>
+      <div>التكلفة</div><div>${money(p.cost)}</div><div>سعر الوكيل</div><div>${money(p.price)}</div><div>ربحك</div><div class="${p.price - p.cost < 0 ? 'minus' : 'plus'}">${money(p.price - p.cost)}</div>
+      ${p.artCode ? `<div>رمز art-topup</div><div class="mono ltr">${esc(p.artCode)}${p.edited ? ' · <span class="muted">معدّلة</span>' : ''}</div>` : ''}</div>
+    <div class="item-actions" style="padding-bottom:16px">
+      <button class="btn btn-sm ${p.active ? '' : 'btn-soft'}" data-action="toggle-package" data-id="${p.id}">${icon(p.active ? 'eyeOff' : 'eye')}${p.active ? 'إخفاء' : 'إظهار للوكلاء'}</button>
+      <button class="btn btn-sm" data-action="edit-package" data-id="${p.id}">${icon('edit')}تعديل</button>
       <button class="btn btn-sm btn-ghost" data-action="delete-package" data-id="${p.id}">${icon('trash')}حذف</button></div>
     ${p.tag ? `<div class="pkg-tag"><span>${esc(p.tag)}</span><span></span></div>` : ''}
   </article>`;
@@ -104,12 +129,24 @@ function packageCardAdmin(p) {
 
 export default {
   admin: true,
-  title: () => ({ title: 'الشركات والرزم', subtitle: 'الأسعار الافتراضية ومواصفات الرزم' }),
+  title: () => ({ title: 'الشركات والرزم', subtitle: 'الفواتير وكروت الشحن: الأسعار والأحجام وما يظهر للوكلاء' }),
   async load() { await loadCatalog(true); },
+  mount(root, ctx) {
+    const box = root.querySelector('#pkg-q');
+    box?.addEventListener('input', () => {
+      V.q = box.value;
+      const pos = box.selectionStart;
+      ctx.rerender();
+      const again = document.getElementById('pkg-q');
+      again.focus();
+      again.setSelectionRange(pos, pos);
+    });
+  },
   render() {
     const { companies, packages } = S.catalog;
-    const tabs = `<div class="segmented"><button data-action="tab" data-tab="packages" aria-pressed="${V.tab === 'packages'}">الرزم (${packages.length})</button>
-      <button data-action="tab" data-tab="companies" aria-pressed="${V.tab === 'companies'}">الشركات (${companies.length})</button></div>`;
+    const count = (k) => packages.filter((p) => p.kind === k).length;
+    const tabs = `<div class="segmented">${Object.entries(KINDS).map(([k, d]) => `<button data-action="tab" data-tab="${k}" aria-pressed="${V.tab === k}">${icon(d.icon)}${d.label} (${count(k)})</button>`).join('')}
+      <button data-action="tab" data-tab="companies" aria-pressed="${V.tab === 'companies'}">${icon('building')}الشركات (${companies.length})</button></div>`;
     if (V.tab === 'companies') {
       return `${tabs}<div class="page-head"><p>الشعار واللون وبادئات الشرائح وطريقة التفعيل لكل شركة.</p><button class="btn btn-primary" data-action="add-company">${icon('plus')}شركة جديدة</button></div>
         ${companies.length ? `<div class="grid-cards">${companies.map((c) => `<article class="item"><div class="item-top">${companyLogo(c, 'sm')}
@@ -119,14 +156,20 @@ export default {
             <button class="btn btn-sm btn-ghost" data-action="delete-company" data-id="${c.id}">${icon('trash')}حذف</button></div></article>`).join('')}</div>`
           : empty('building', 'لا توجد شركات', 'أضف أول شركة اتصالات.')}`;
     }
-    return `${tabs}<div class="page-head"><p>السعر الافتراضي يراه كل الوكلاء ما لم تحدد لأحدهم سعراً خاصاً من صفحة «الوكلاء».</p>
+    const kind = KINDS[V.tab] ? V.tab : 'invoice';
+    const term = V.q.trim().toLowerCase();
+    const mine = packages.filter((p) => p.kind === kind && (!term || `${p.name} ${p.companyName} ${p.artCode}`.toLowerCase().includes(term)));
+    const shown = mine.filter((p) => p.active).length;
+    return `${tabs}<div class="page-head"><p><b>${KINDS[kind].label}:</b> ${KINDS[kind].note} ظاهرة للوكلاء ${shown} من ${mine.length}.</p>
         <button class="btn btn-primary" data-action="add-package">${icon('plus')}رزمة جديدة</button></div>
+      <div class="search-box">${icon('search', 'i lead')}<input class="input" id="pkg-q" type="search" placeholder="ابحث باسم الرزمة أو الشركة أو رمز art-topup…" value="${esc(V.q)}" aria-label="بحث في الرزم"></div>
       ${companies.map((c) => {
-        const list = packages.filter((p) => p.companyId === c.id);
+        const list = mine.filter((p) => p.companyId === c.id);
+        if (!list.length && (term || !packages.some((p) => p.companyId === c.id && p.kind === kind))) return '';
         return `<section class="list"><div class="section-title"><h2 style="display:flex;align-items:center;gap:10px">${companyLogo(c, 'xs')}${esc(c.name)}</h2>
           <button class="btn btn-sm btn-soft" data-action="add-package" data-company="${c.id}">${icon('plus')}رزمة</button></div>
-          ${list.length ? `<div class="pkg-grid">${list.map(packageCardAdmin).join('')}</div>` : '<p class="muted small">لا توجد رزم لهذه الشركة.</p>'}</section>`;
-      }).join('') || empty('box', 'لا توجد رزم', 'أضف شركة ثم رزمها.')}`;
+          <div class="pkg-grid">${list.map(packageCardAdmin).join('')}</div></section>`;
+      }).join('') || empty(KINDS[kind].icon, term ? 'لا نتائج' : `لا توجد رزم في ${KINDS[kind].label}`, term ? '' : 'أضفها يدوياً، أو من الإعدادات ← «مزامنة الكروت والأسعار» من art-topup.')}`;
   },
   actions: {
     tab(btn, e, ctx) { V.tab = btn.dataset.tab; ctx.rerender(); },
@@ -139,7 +182,14 @@ export default {
         async onSubmit() { await api.del(`/api/companies/${c.id}`); await loadCatalog(true); changed(); return 'تم حذف الشركة'; },
       });
     },
-    'add-package': (btn) => openPackageForm(null, Number(btn.dataset.company) || undefined),
+    'add-package': (btn) => openPackageForm(null, Number(btn.dataset.company) || undefined, KINDS[V.tab] ? V.tab : 'invoice'),
+    async 'toggle-package'(btn, e, ctx) {
+      const p = S.catalog.packages.find((x) => x.id === Number(btn.dataset.id));
+      btn.disabled = true;
+      await api.put(`/api/packages/${p.id}`, { active: !p.active });
+      await loadCatalog(true);
+      ctx.rerender();
+    },
     'edit-package': (btn) => openPackageForm(S.catalog.packages.find((p) => p.id === Number(btn.dataset.id))),
     'delete-package'(btn) {
       const p = S.catalog.packages.find((x) => x.id === Number(btn.dataset.id));

@@ -30,8 +30,12 @@ const unit = () => {
   if (o) return o.offerPrice ?? priceOf(pkg());
   return pkg() ? priceOf(pkg()) : 0;
 };
+// The two systems have separate packages: a new subscriber takes an invoice, a card recharge takes a card.
+const sellable = (p) => p.active && priceOf(p) > 0 && (p.kind || 'invoice') === (external() ? 'card' : 'invoice');
 const esimFee = () => (W.esim && !external() ? Number(S.settings.esimFee) || 0 : 0);
-const total = () => round(unit() * W.months + esimFee());
+// A package with a fixed duration (days) is sold once.
+const months = () => (pkg()?.days ? 1 : W.months);
+const total = () => round(unit() * months() + esimFee());
 const available = () => (isAdmin() ? agent()?.available ?? 0 : D.me?.available ?? 0);
 const STEPS = () => (external() ? ['الشركة', 'الشحن', 'رقم الزبون'] : ['الشركة', 'الرزمة', 'الشريحة والرقم', 'التأكيد']);
 
@@ -74,7 +78,7 @@ function agentPicker() {
 }
 
 function step1() {
-  const cos = S.catalog.companies.filter((c) => S.catalog.packages.some((p) => p.companyId === c.id && p.active && priceOf(p) > 0));
+  const cos = S.catalog.companies.filter((c) => S.catalog.packages.some((p) => p.companyId === c.id && sellable(p)));
   const last = lastUsed();
   return `${agentPicker()}
     <section class="card card-pad" style="display:grid;gap:16px">
@@ -82,7 +86,7 @@ function step1() {
       ${last ? `<button class="alert-card" data-action="wz-last" style="text-align:start">${companyLogo(companyById(last.companyId), 'xs')}
         <span class="grow"><b>آخر رزمة استعملتها</b><small>${esc(last.label)}</small></span>${icon('arrowL')}</button>` : ''}
       ${cos.length ? `<div class="co-grid">${cos.map((c) => {
-        const n = S.catalog.packages.filter((p) => p.companyId === c.id && p.active && priceOf(p) > 0).length;
+        const n = S.catalog.packages.filter((p) => p.companyId === c.id && sellable(p)).length;
         return `<button class="co-tile" data-action="wz-company" data-id="${c.id}" aria-pressed="${c.id === W.companyId}">
           ${companyLogo(c)}<b>${esc(c.name)}</b><small>${n} ${n === 1 ? 'رزمة' : n === 2 ? 'رزمتان' : n <= 10 ? 'رزم' : 'رزمة'}</small></button>`;
       }).join('')}</div>` : empty('box', 'لا توجد رزم متاحة', isAdmin() ? 'حدّد أسعار الرزم من «الشركات والرزم».' : 'لم يحدد المدير أسعار الرزم بعد.')}
@@ -102,7 +106,7 @@ function packageCard({ id, offerId, name, p, price, regular, campaign, tagNote }
 }
 
 function step2() {
-  const pk = S.catalog.packages.filter((p) => p.companyId === W.companyId && p.active && priceOf(p) > 0);
+  const pk = S.catalog.packages.filter((p) => p.companyId === W.companyId && sellable(p));
   const offers = D.offers.filter((o) => pk.some((p) => p.id === o.packageId));
   const c = company();
   return `<section class="card card-pad" style="display:grid;gap:16px">
@@ -152,8 +156,9 @@ function step3() {
     <div class="field"><label for="wz-number">${W.port ? 'الرقم المراد تحويله' : 'رقم الهاتف'}</label>
       <input class="input ltr big" id="wz-number" inputmode="tel" autocomplete="off" placeholder="05X-XXX-XXXX" value="${esc(W.number)}">
       <div class="hint" id="wz-number-hint"></div></div>
-    <div class="field"><span class="label">المدة</span>
-      <div class="months">${MONTHS.map((m) => `<button type="button" data-action="wz-months" data-m="${m}" aria-pressed="${m === W.months}">${m}<small>${m === 1 ? 'شهر' : m === 2 ? 'شهران' : m <= 10 ? 'أشهر' : 'شهراً'}</small></button>`).join('')}</div></div>
+    ${pkg()?.days ? `<div class="field"><span class="label">المدة</span><div class="msg info">${icon('cal')}<span>${pkg().days} يوماً — مدة ثابتة لهذه الرزمة</span></div></div>`
+      : `<div class="field"><span class="label">المدة</span>
+      <div class="months">${MONTHS.map((m) => `<button type="button" data-action="wz-months" data-m="${m}" aria-pressed="${m === W.months}">${m}<small>${m === 1 ? 'شهر' : m === 2 ? 'شهران' : m <= 10 ? 'أشهر' : 'شهراً'}</small></button>`).join('')}</div></div>`}
     <div class="step-foot"><button class="btn" data-action="wz-back">${icon('arrowR')}السابق</button>
       <button class="btn btn-primary" data-action="wz-next" id="wz-next" ${step3Valid() ? '' : 'disabled'}>التالي${icon('arrowL')}</button></div>
   </section>`;
@@ -217,9 +222,9 @@ function rows() {
   r.push(['الرزمة', o ? `${esc(o.title)} <span class="pill campaign">حملة</span>` : p ? esc(`${p.companyName} ${p.name}`) : unset]);
   if (!external()) r.push(['الشريحة', W.esim ? 'eSIM' : W.sim.valid ? `<span class="mono ltr">${fmtIccid(W.sim.iccid)}</span>` : unset]);
   r.push([W.port ? 'الرقم المحوَّل' : 'رقم الهاتف', W.numberState === 'ok' ? phone(normalizePhone(W.number)) : unset]);
-  r.push(['مدة الخدمة', monthsText(W.months)]);
+  r.push(['مدة الخدمة', pkg()?.days ? `${pkg().days} يوماً` : monthsText(W.months)]);
   if (esimFee()) r.push(['رسوم تفعيل eSIM', fmtMoney(esimFee())]);
-  if (W.step >= 4 && p) r.push(['تنتهي في', W.esim || W.port || manualSale() ? 'بعد تنفيذ الطلب' : fmtDate(addMonths(Date.now(), W.months))]);
+  if (W.step >= 4 && p) r.push(['تنتهي في', W.esim || W.port || manualSale() ? 'بعد تنفيذ الطلب' : fmtDate(pkg()?.days ? Date.now() + pkg().days * 864e5 : addMonths(Date.now(), W.months))]);
   return r;
 }
 
@@ -281,7 +286,7 @@ function lastUsed() {
   try {
     const v = JSON.parse(localStorage.getItem(LAST_KEY()) || 'null');
     if (!v) return null;
-    const p = S.catalog.packages.find((x) => x.id === v.packageId && x.active && priceOf(x) > 0);
+    const p = S.catalog.packages.find((x) => x.id === v.packageId && sellable(x));
     return p ? { companyId: p.companyId, packageId: p.id, label: `${p.companyName} ${p.name}` } : null;
   } catch { return null; }
 }
@@ -405,7 +410,7 @@ export default {
       btn.disabled = true;
       W.error = '';
       const body = {
-        kind: W.mode, packageId: W.packageId, offerId: W.offerId || undefined, months: W.months, number: normalizePhone(W.number),
+        kind: W.mode, packageId: W.packageId, offerId: W.offerId || undefined, months: months(), number: normalizePhone(W.number),
         esim: W.esim, port: W.port, customerName: W.customerName, customerPrice: W.customerPrice, note: W.note,
       };
       if (!external() && !W.esim) Object.assign(body, W.sim.simId ? { simId: W.sim.simId } : { sim: W.sim.iccid });

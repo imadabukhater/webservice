@@ -1,12 +1,13 @@
 'use strict';
 const { q, tx, getSettings } = require('../db');
 const {
-  fail, now, round, str, num, optNum, int, isBlank, dateOrNull, normalizePhone, validPhone, addMonths,
+  fail, now, round, str, num, optNum, int, isBlank, dateOrNull, normalizePhone, validPhone, periodEnd,
 } = require('../util');
 const D = require('../domain');
 const { route, ADMIN, ANY } = require('../router');
 
 const monthsText = (m) => (m === 1 ? 'شهر' : m === 2 ? 'شهران' : m <= 10 ? `${m} أشهر` : `${m} شهراً`);
+const durationText = (months, days) => (days ? `${days} يوماً` : monthsText(months));
 
 const view = (lineId, user) => D.lineView(D.getLine(lineId, user), user.role);
 
@@ -46,7 +47,7 @@ route('POST', '/api/lines', ANY, ({ user, body }) => tx(() => {
   if (!agent.active) fail(403, 'حساب الوكيل موقوف');
   // kind 'external' = card recharge for a prepaid number activated outside the portal.
   const kind = body.kind === 'external' ? 'external' : 'new';
-  const months = int(Number(body.months ?? 1), 'المدة', 1, 24);
+  let months = int(Number(body.months ?? 1), 'المدة', 1, 24);
   const port = kind === 'new' && !!body.port;
   const esim = kind === 'new' && !!body.esim;
   const number = validPhone(normalizePhone(body.number));
@@ -62,6 +63,9 @@ route('POST', '/api/lines', ANY, ({ user, body }) => tx(() => {
   if (isAdmin && !isBlank(body.unitPrice)) unit = num(body.unitPrice, 'السعر');
   if (unit < 0) fail(400, 'السعر لا يكون سالباً');
   if (!isAdmin && !(unit > 0)) fail(400, 'لم يحدد المدير سعر هذه الباقة بعد');
+  // A package with a set duration (e.g. 90 days) is sold once, not per month.
+  const days = pkg.days || null;
+  if (days) months = 1;
   // The eSIM activation fee is passed through at cost, so it adds to the price but not to the profit.
   const esimFee = esim ? getSettings().esimFee : 0;
   const total = round(unit * months + esimFee);
@@ -83,16 +87,16 @@ route('POST', '/api/lines', ANY, ({ user, body }) => tx(() => {
   const t = now();
   const label = D.packageLabel(pkg);
   const customerName = str(body.customerName, 80);
-  const lineId = Number(q(`INSERT INTO lines (number, sim, company_id, package_id, package_label, agent_id, kind, esim, port, direct, months, price, cost,
+  const lineId = Number(q(`INSERT INTO lines (number, sim, company_id, package_id, package_label, agent_id, kind, esim, port, direct, months, days, price, cost,
                                               offer_id, status, customer_name, customer_price, note, activated_at, expires_at, updated_at)
-                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-    .run(number, sim.iccid, pkg.company_id, pkg.id, label, agent.id, kind, esim ? 1 : 0, port ? 1 : 0, direct ? 1 : 0, months, total, cost,
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    .run(number, sim.iccid, pkg.company_id, pkg.id, label, agent.id, kind, esim ? 1 : 0, port ? 1 : 0, direct ? 1 : 0, months, days, total, cost,
       offer?.id ?? null, pending ? 'pending' : 'active', customerName, customerPrice, str(body.note, 300),
-      t, pending ? null : addMonths(t, months), t).lastInsertRowid);
+      t, pending ? null : periodEnd(t, months, days), t).lastInsertRowid);
   D.markSimUsed(sim.stockId, lineId);
   if (sim.iccid) D.learnPrefix(pkg.company_id, sim.iccid);
 
-  const detail = [monthsText(months), offer ? `عرض: ${offer.title}` : '', kind === 'external' ? 'شحن كرت' : '',
+  const detail = [durationText(months, days), offer ? `عرض: ${offer.title}` : '', kind === 'external' ? 'شحن كرت' : '',
     esim ? (esimFee ? `eSIM (رسوم ${esimFee} ₪)` : 'eSIM') : '', port ? 'تحويل رقم' : ''].filter(Boolean).join(' · ');
   D.changeBalance(agent, -total, {
     type: 'activate', actor: user, lineId, number, cost, profit: total - cost, detail, package: label, customerPrice,
@@ -102,7 +106,7 @@ route('POST', '/api/lines', ANY, ({ user, body }) => tx(() => {
     const type = port ? 'port' : esim ? 'esim' : kind === 'external' ? 'recharge' : 'activate';
     const what = { port: 'تحويل رقم', esim: 'تفعيل eSIM', recharge: 'شحن كرت', activate: 'تفعيل خط' }[type];
     // Everything the manager needs to carry it out on the company's site.
-    const note = [`${what} ${number}`, label, monthsText(months), sim.iccid ? `شريحة ${sim.iccid}` : '', customerName ? `الزبون: ${customerName}` : '']
+    const note = [`${what} ${number}`, label, durationText(months, days), sim.iccid ? `شريحة ${sim.iccid}` : '', customerName ? `الزبون: ${customerName}` : '']
       .filter(Boolean).join(' — ');
     D.openSaleTask({ type, agent, lineId, amount: total, note });
   }
@@ -119,11 +123,13 @@ function renewLine(user, l, body) {
   if (l.status === 'disconnected') fail(400, 'الرقم مفصول. فعّله من جديد كمشترك جديد.');
   const agent = D.getUser(l.agent_id);
   if (!agent.active) fail(403, 'حساب الوكيل موقوف');
-  const months = int(Number(body.months ?? 1), 'المدة', 1, 24);
+  let months = int(Number(body.months ?? 1), 'المدة', 1, 24);
   const packageId = body.offerId ? null : body.packageId ?? l.package_id;
   if (!body.offerId && !packageId) fail(400, 'اختر الباقة');
   const { pkg, offer, unit: quoted } = D.quote(agent.id, { packageId, offerId: body.offerId });
   if (l.company_id && pkg.company_id !== l.company_id) fail(400, `اختر باقة من ${l.company_name}`);
+  const days = pkg.days || null;
+  if (days) months = 1;
   let unit = quoted;
   if (isAdmin && !isBlank(body.unitPrice)) unit = num(body.unitPrice, 'السعر');
   if (unit < 0) fail(400, 'السعر لا يكون سالباً');
@@ -134,16 +140,16 @@ function renewLine(user, l, body) {
 
   const label = D.packageLabel(pkg);
   const card = body.kind === 'external';
-  const renewal = { packageId: pkg.id, label, companyId: pkg.company_id, months, total, cost, offerId: offer?.id ?? null, customerPrice };
+  const renewal = { packageId: pkg.id, label, companyId: pkg.company_id, months, days, total, cost, offerId: offer?.id ?? null, customerPrice };
   // Manual companies: the agent pays now; the line is extended when the manager marks the request done.
   const manual = !isAdmin && !D.directCompany(pkg.company_id);
   if (!manual) applyRenewal(l.id, renewal);
   D.changeBalance(agent, -total, {
     type: 'renew', actor: user, lineId: l.id, number: l.number, cost, profit: total - cost, package: label, customerPrice,
-    detail: [`تمديد ${monthsText(months)}`, offer ? `عرض: ${offer.title}` : '', card ? 'شحن كرت' : '', manual ? 'بانتظار التنفيذ' : ''].filter(Boolean).join(' · '),
+    detail: [`تمديد ${durationText(months, days)}`, offer ? `عرض: ${offer.title}` : '', card ? 'شحن كرت' : '', manual ? 'بانتظار التنفيذ' : ''].filter(Boolean).join(' · '),
   }, { charge: true });
   if (manual) {
-    const note = [`${card ? 'شحن كرت' : 'تمديد رزمة'} ${l.number}`, label, monthsText(months), l.customer_name ? `الزبون: ${l.customer_name}` : '']
+    const note = [`${card ? 'شحن كرت' : 'تمديد رزمة'} ${l.number}`, label, durationText(months, days), l.customer_name ? `الزبون: ${l.customer_name}` : '']
       .filter(Boolean).join(' — ');
     D.openSaleTask({ type: 'renew', agent, lineId: l.id, amount: total, note, payload: renewal });
   }
@@ -154,10 +160,10 @@ function renewLine(user, l, body) {
 function applyRenewal(lineId, r) {
   const t = now();
   const l = q('SELECT expires_at FROM lines WHERE id = ?').get(lineId);
-  q(`UPDATE lines SET package_id = ?, package_label = ?, company_id = ?, months = ?, price = ?, cost = ?, offer_id = ?, expires_at = ?,
+  q(`UPDATE lines SET package_id = ?, package_label = ?, company_id = ?, months = ?, days = ?, price = ?, cost = ?, offer_id = ?, expires_at = ?,
        customer_price = COALESCE(?, customer_price), updated_at = ? WHERE id = ?`)
-    .run(r.packageId, r.label, r.companyId, r.months, r.total, r.cost, r.offerId, addMonths(Math.max(t, l.expires_at || t), r.months),
-      r.customerPrice, t, lineId);
+    .run(r.packageId, r.label, r.companyId, r.months, r.days || null, r.total, r.cost, r.offerId,
+      periodEnd(Math.max(t, l.expires_at || t), r.months, r.days), r.customerPrice, t, lineId);
 }
 
 // ----- freeze, unfreeze, disconnect, SIM swap -----

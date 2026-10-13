@@ -255,6 +255,14 @@ ensureColumn('lines', 'direct', 'direct INTEGER NOT NULL DEFAULT 0');
 // art-topup: the card a package stands for, and the state of a request sent there automatically
 // (auto_status: '' not sent, sending, sent, done, failed, unknown; auto_ref: last operation id seen before sending).
 ensureColumn('packages', 'art_card_id', "art_card_id TEXT NOT NULL DEFAULT ''");
+// Two separate systems: 'invoice' = activating a new line (SIM), 'card' = recharging a number (card, bundle, cash).
+// days: fixed duration of the package (e.g. a 90-day invoice); null = priced per month.
+// edited: the manager changed it by hand, so an art-topup sync only refreshes its cost.
+ensureColumn('packages', 'kind', "kind TEXT NOT NULL DEFAULT 'invoice'");
+ensureColumn('packages', 'days', 'days INTEGER');
+ensureColumn('packages', 'edited', 'edited INTEGER NOT NULL DEFAULT 0');
+ensureColumn('lines', 'days', 'days INTEGER');
+db.exec("UPDATE packages SET kind = 'card' WHERE kind != 'card' AND (art_card_id LIKE 'ic:%' OR art_card_id LIKE 'pb:%' OR art_card_id LIKE 'pc:%')");
 ensureColumn('tasks', 'auto_status', "auto_status TEXT NOT NULL DEFAULT ''");
 ensureColumn('tasks', 'auto_note', "auto_note TEXT NOT NULL DEFAULT ''");
 ensureColumn('tasks', 'auto_ref', "auto_ref TEXT NOT NULL DEFAULT ''");

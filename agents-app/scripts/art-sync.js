@@ -11,5 +11,5 @@ const { syncCards } = require('../src/routes/art');
   const creds = artCredentials();
   if (!creds.user || !creds.pass) throw new Error('art-topup sign-in is not set (ART_USER / ART_PASS)');
   const r = await syncCards(creds);
-  console.log(`cards ${r.cards}: added ${r.added}, updated ${r.updated}, switched off ${r.switchedOff}, hidden for lack of balance ${r.hidden}, markup ${r.markup}%`);
+  console.log(`${r.total} packages (${r.cards} cards, ${r.invoices} invoices): added ${r.added}, updated ${r.updated}, switched off ${r.switchedOff}, hidden for lack of balance ${r.hidden}, markup ${r.markup}%`);
 })().catch((e) => { console.error(e.message); process.exit(1); });

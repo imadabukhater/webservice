@@ -1,6 +1,6 @@
 'use strict';
 const { q } = require('../db');
-const { fail, now, round, str, num, isBlank, dateOrNull, imageOrEmpty } = require('../util');
+const { fail, now, round, str, num, int, isBlank, dateOrNull, imageOrEmpty } = require('../util');
 const { LIVE_OFFER, priceFor, notify, prefixesOf } = require('../domain');
 const { route, ADMIN, ANY } = require('../router');
 
@@ -20,7 +20,10 @@ function amount(v, label) {
 
 const packageAttrs = (p) => ({
   dataGb: p.data_gb, minutes: p.minutes, sms: p.sms, tag: p.tag, description: p.description, art: !!p.art_card_id,
+  kind: p.kind === 'card' ? 'card' : 'invoice', days: p.days ?? null,
 });
+// The art-topup code of a package, shown to the manager: the number after the last ":" of the ref.
+const artCode = (ref) => (ref ? String(ref).split(':').filter(Boolean).slice(-1)[0] || '' : '');
 
 // Agents see their own price (and never the cost); packages without a price are hidden from them.
 function catalogFor(user) {
@@ -37,7 +40,8 @@ function catalogFor(user) {
   }
   const packages = q(`SELECT p.*, c.name AS company_name FROM packages p JOIN companies c ON c.id = p.company_id
                       ORDER BY c.sort, c.id, p.sort, p.id`).all()
-    .map((p) => ({ id: p.id, name: p.name, companyId: p.company_id, companyName: p.company_name, cost: round(p.cost), price: round(p.price), active: !!p.active, sort: p.sort, ...packageAttrs(p) }));
+    .map((p) => ({ id: p.id, name: p.name, companyId: p.company_id, companyName: p.company_name, cost: round(p.cost), price: round(p.price), active: !!p.active, sort: p.sort,
+      artCode: artCode(p.art_card_id), edited: !!p.edited, ...packageAttrs(p) }));
   return { companies: companies.map((c) => companyView(c, true)), packages };
 }
 
@@ -92,8 +96,11 @@ function packageFields(body, existing = {}) {
   if (cost < 0 || price < 0) fail(400, 'الأسعار لا تكون سالبة');
   const dataRaw = pick('dataGb', 'data_gb');
   const dataGb = isBlank(dataRaw) ? null : num(dataRaw, 'حجم الإنترنت');
+  const kind = pick('kind') === 'card' ? 'card' : 'invoice';
+  const daysRaw = pick('days');
+  const days = isBlank(daysRaw) ? null : int(Number(daysRaw), 'عدد الأيام', 1, 730);
   return {
-    companyId, name, cost, price, dataGb,
+    companyId, name, cost, price, dataGb, kind, days,
     minutes: body.minutes === undefined ? existing.minutes ?? null : amount(body.minutes, 'الدقائق'),
     sms: body.sms === undefined ? existing.sms ?? null : amount(body.sms, 'الرسائل'),
     tag: str(pick('tag') ?? '', 30),
@@ -105,17 +112,21 @@ function packageFields(body, existing = {}) {
 route('POST', '/api/packages', ADMIN, ({ body }) => {
   const f = packageFields(body);
   const sort = q('SELECT COALESCE(MAX(sort), 0) + 1 AS s FROM packages WHERE company_id = ?').get(f.companyId).s;
-  return { id: Number(q(`INSERT INTO packages (company_id, name, cost, price, active, sort, data_gb, minutes, sms, tag, description)
-                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-    .run(f.companyId, f.name, f.cost, f.price, f.active, sort, f.dataGb, f.minutes, f.sms, f.tag, f.description).lastInsertRowid) };
+  return { id: Number(q(`INSERT INTO packages (company_id, name, cost, price, active, sort, data_gb, minutes, sms, tag, description, kind, days, edited)
+                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`)
+    .run(f.companyId, f.name, f.cost, f.price, f.active, sort, f.dataGb, f.minutes, f.sms, f.tag, f.description, f.kind, f.days).lastInsertRowid) };
 });
 
+// Changing what agents see or pay marks the package as edited, so an art-topup sync keeps the manager's version.
+// Showing or hiding it alone does not.
 route('PUT', '/api/packages/:id', ADMIN, ({ params, body }) => {
   const p = q('SELECT * FROM packages WHERE id = ?').get(Number(params.id));
   if (!p) fail(404, 'الباقة غير موجودة');
   const f = packageFields(body, p);
-  q(`UPDATE packages SET company_id = ?, name = ?, cost = ?, price = ?, active = ?, data_gb = ?, minutes = ?, sms = ?, tag = ?, description = ?
-     WHERE id = ?`).run(f.companyId, f.name, f.cost, f.price, f.active, f.dataGb, f.minutes, f.sms, f.tag, f.description, p.id);
+  const edited = p.edited || ['name', 'price', 'dataGb', 'description', 'days', 'minutes', 'sms', 'kind'].some((k) => body[k] !== undefined);
+  q(`UPDATE packages SET company_id = ?, name = ?, cost = ?, price = ?, active = ?, data_gb = ?, minutes = ?, sms = ?, tag = ?, description = ?,
+       kind = ?, days = ?, edited = ? WHERE id = ?`)
+    .run(f.companyId, f.name, f.cost, f.price, f.active, f.dataGb, f.minutes, f.sms, f.tag, f.description, f.kind, f.days, edited ? 1 : 0, p.id);
   return { ok: true };
 });
 

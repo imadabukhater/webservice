@@ -32,13 +32,16 @@ export async function openRenew(line) {
     priceOf = (p) => p.price;
     available = extra.user.available;
   }
-  const pkgs = cat.packages.filter((p) => p.companyId === line.companyId && p.active && priceOf(p) > 0);
+  // Extending a number means recharging it: offer the company's recharge cards, or its invoices when it has no cards.
+  const sellable = cat.packages.filter((p) => p.companyId === line.companyId && p.active && priceOf(p) > 0);
+  const cards = sellable.filter((p) => p.kind === 'card');
+  const pkgs = cards.length ? cards : sellable;
   const options = [
     ...offers.filter((o) => o.live && o.packageId && pkgs.some((p) => p.id === o.packageId)).map((o) => {
       const p = pkgs.find((x) => x.id === o.packageId);
       return { key: `o${o.id}`, offerId: o.id, packageId: p.id, title: o.title, sub: `${p.companyName} ${p.name}`, unit: o.offerPrice ?? priceOf(p), regular: priceOf(p), campaign: true };
     }),
-    ...pkgs.map((p) => ({ key: `p${p.id}`, packageId: p.id, title: `${p.companyName} ${p.name}`, sub: p.dataGb ? `${fmtNum(p.dataGb)} GB` : '', unit: priceOf(p) })),
+    ...pkgs.map((p) => ({ key: `p${p.id}`, packageId: p.id, title: `${p.companyName} ${p.name}`, sub: [p.dataGb ? `${fmtNum(p.dataGb)} GB` : '', p.days ? `${p.days} يوماً` : ''].filter(Boolean).join(' · '), unit: priceOf(p), days: p.days })),
   ];
   if (!options.length) {
     sheet({ title: `تمديد ${line.number}`, body: empty('box', 'لا توجد رزم متاحة لهذه الشركة', 'اطلب من المدير تحديد سعر رزم الشركة.') });
@@ -75,14 +78,14 @@ export async function openRenew(line) {
       st.key = form.querySelector('input[name=opt]:checked')?.value || st.key;
       const o = options.find((x) => x.key === st.key);
       const unit = admin && field(form, 'unitPrice') !== '' ? Number(field(form, 'unitPrice')) : o.unit;
-      const total = round(unit * st.months);
+      const total = round(unit * (o.days ? 1 : st.months));
       const after = round(available - total);
       const cp = field(form, 'customerPrice');
       const box = form.querySelector('#rn-preview');
       box.innerHTML = `
-        <div class="total-row"><span>الإجمالي · ${monthsText(st.months)}</span><b>${fmtMoney(total)}</b></div>
+        <div class="total-row"><span>الإجمالي · ${o.days ? `${o.days} يوماً` : monthsText(st.months)}</span><b>${fmtMoney(total)}</b></div>
         <div class="balance-preview" style="margin-top:10px">
-          <div><span>تنتهي في</span><b>${fmtDate(addMonths(base, st.months))}</b></div>
+          <div><span>تنتهي في</span><b>${fmtDate(o.days ? base + o.days * 864e5 : addMonths(base, st.months))}</b></div>
           <div><span>المتاح قبل</span><b>${fmtMoney(available)}</b></div>
           <div><span>المتاح بعد</span><b class="${after < 0 ? 'minus' : ''}">${fmtMoney(after)}</b></div></div>
         ${!admin && companyById(line.companyId)?.activation !== 'direct' ? `<div class="msg info" style="margin-top:10px">${icon('tasks')}<span>يُرسَل التمديد إلى المدير لتنفيذه، ويُمدَّد الخط عند التنفيذ.</span></div>` : ''}

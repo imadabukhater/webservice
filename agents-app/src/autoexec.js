@@ -26,7 +26,8 @@ function job(taskId) {
   if (!line) return null;
   const packageId = t.type === 'renew' ? JSON.parse(t.payload || '{}').packageId : line.package_id;
   const p = q(`SELECT p.art_card_id, p.cost, c.activation FROM packages p JOIN companies c ON c.id = p.company_id WHERE p.id = ?`).get(packageId);
-  if (!p || !p.art_card_id || p.activation !== 'auto') return null;
+  // Only recharge cards are carried out automatically; invoice packages (inv:) stay requests for the manager.
+  if (!p || !/^(ic|pb|pc):/.test(p.art_card_id) || p.activation !== 'auto') return null;
   return { t, number: line.number, ref: p.art_card_id, price: p.cost };
 }
 

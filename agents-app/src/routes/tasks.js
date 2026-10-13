@@ -1,6 +1,6 @@
 'use strict';
 const { q, tx } = require('../db');
-const { fail, now, round, str, num, isBlank, addMonths, imageOrEmpty } = require('../util');
+const { fail, now, round, str, num, isBlank, periodEnd, imageOrEmpty } = require('../util');
 const D = require('../domain');
 const { route, ADMIN, ANY } = require('../router');
 
@@ -120,7 +120,7 @@ function resolveTask(t, user, body) {
         const esimQr = t.type === 'esim' ? imageOrEmpty(body.attachment, { maxKb: 600, label: 'رمز QR' }) : '';
         const esimCode = t.type === 'esim' ? str(body.esimCode, 500) : '';
         q("UPDATE lines SET status = 'active', activated_at = ?, expires_at = ?, esim_code = ?, esim_qr = ?, updated_at = ? WHERE id = ?")
-          .run(ts, addMonths(ts, l.months), esimCode, esimQr, ts, l.id);
+          .run(ts, periodEnd(ts, l.months, l.days), esimCode, esimQr, ts, l.id);
         D.logLineOp(DONE_OP[t.type], l, agent, user, response || `تم ${what}`, { package: l.package_label });
       } else {
         D.changeBalance(agent, l.price, {
