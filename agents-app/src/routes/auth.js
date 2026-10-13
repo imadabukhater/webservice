@@ -85,7 +85,10 @@ route('PUT', '/api/settings', ADMIN, ({ body }) => {
   if (body.artUser !== undefined) setSetting('art_user', str(body.artUser, 80));
   // Write-only: an empty password keeps the saved one.
   if (body.artPass) setSetting('art_pass', String(body.artPass).slice(0, 200));
-  for (const [field, key] of [['artMarkupCard', 'art_markup_card'], ['artMarkupInvoice', 'art_markup_invoice']]) {
+  if (body.qlUser !== undefined) setSetting('ql_user', str(body.qlUser, 120));
+  if (body.qlPass) setSetting('ql_pass', String(body.qlPass).slice(0, 200));
+  for (const [field, key] of [['artMarkupCard', 'art_markup_card'], ['artMarkupInvoice', 'art_markup_invoice'],
+    ['qlMarkupCard', 'ql_markup_card'], ['qlMarkupInvoice', 'ql_markup_invoice']]) {
     if (body[field] === undefined) continue;
     const m = num(body[field], 'نسبة الربح');
     if (m < 0 || m > 200) fail(400, 'نسبة الربح بين 0 و200%');

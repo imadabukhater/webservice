@@ -42,6 +42,21 @@ export default {
             <a class="btn" href="#/catalog">${icon('box')}الشركات والرزم</a>
           </div>
         </form>
+        <form class="card card-pad form" id="ql-form" novalidate autocomplete="off">
+          <h2 class="dot-title">التمديد التلقائي عبر QuickLine</h2>
+          <p class="muted small">يمدّد السيرفر خطوط الشركات المضبوطة على «تلقائي» من حسابك في QuickLine، ويُكمل الطلب بنفسه. التمديد يحتاج أن يكون الرقم موجوداً في QuickLine تحت وكالتك؛ تفعيل خط جديد يبقى طلباً عندك.</p>
+          <div class="row2 stack-xs">
+            <div class="field"><label for="ql-user">البريد في QuickLine</label><input class="input ltr" id="ql-user" name="qlUser" type="email" value="${esc(s.qlUser || '')}" autocomplete="off"></div>
+            <div class="field"><label for="ql-pass">كلمة المرور</label><input class="input ltr" id="ql-pass" name="qlPass" type="password" autocomplete="new-password" placeholder="${s.qlConfigured ? 'محفوظة — اتركها فارغة للإبقاء' : ''}"></div>
+          </div>
+          <div class="msg info">${icon('info')}<span>المزامنة ونسبة الربح منفصلتان لكل نظام: افتح «الشركات والرزم» ← تبويب «تمديد QuickLine» أو «خطوط QuickLine».</span></div>
+          <div id="ql-msg"></div>
+          <div class="btn-row">
+            <button class="btn btn-primary" type="submit">${icon('check')}حفظ</button>
+            <button class="btn" type="button" data-action="ql-check" ${s.qlConfigured ? '' : 'disabled'}>${icon('wallet')}اختبار الاتصال والرصيد</button>
+            <a class="btn" href="#/catalog">${icon('box')}الشركات والرزم</a>
+          </div>
+        </form>
         <section class="card card-pad form">
           <h2 class="dot-title">النسخ الاحتياطي</h2>
           <p class="muted">كل البيانات (الوكلاء، الأرصدة، الأرقام، السجل) في ملف واحد. نزّل نسخة بانتظام واحفظها في مكان آمن.</p>
@@ -60,6 +75,18 @@ export default {
       try {
         S.settings = await api.put('/api/settings', { artUser: field(form, 'artUser'), artPass: form.elements.artPass.value });
         toast('تم حفظ إعدادات art-topup');
+        changed();
+      } catch (err) {
+        msg.innerHTML = `<div class="msg">${icon('alert')}<span>${esc(err.message)}</span></div>`;
+      }
+    });
+    root.querySelector('#ql-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const form = e.currentTarget;
+      const msg = root.querySelector('#ql-msg');
+      try {
+        S.settings = await api.put('/api/settings', { qlUser: field(form, 'qlUser'), qlPass: form.elements.qlPass.value });
+        toast('تم حفظ إعدادات QuickLine');
         changed();
       } catch (err) {
         msg.innerHTML = `<div class="msg">${icon('alert')}<span>${esc(err.message)}</span></div>`;
@@ -90,6 +117,16 @@ export default {
       try {
         const r = await api.post('/api/art/check');
         box.innerHTML = `<div class="msg info">${icon('checkCircle')}<span>تم الاتصال بـ art-topup. الرصيد: ${r.balance === null ? 'غير معروف' : `${r.balance} ₪`}</span></div>`;
+      } catch (err) {
+        box.innerHTML = `<div class="msg">${icon('alert')}<span>${esc(err.message)}</span></div>`;
+      } finally { btn.disabled = false; }
+    },
+    async 'ql-check'(btn) {
+      const box = document.getElementById('ql-msg');
+      btn.disabled = true;
+      try {
+        const r = await api.post('/api/quickline/check');
+        box.innerHTML = `<div class="msg info">${icon('checkCircle')}<span>تم الاتصال بـ QuickLine باسم ${esc(r.name || '')}. الرصيد: ${r.credit === null ? 'غير معروف' : `${r.credit} ₪`} · خطوط فعّالة: ${r.active ?? '—'} · مدفوعات مفتوحة: ${r.openPayments ?? '—'} ₪</span></div>`;
       } catch (err) {
         box.innerHTML = `<div class="msg">${icon('alert')}<span>${esc(err.message)}</span></div>`;
       } finally { btn.disabled = false; }

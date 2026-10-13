@@ -12,6 +12,9 @@ const markupFor = (kind) => (kind === 'card' ? getSettings().artMarkupCard : get
 const withMarkup = (cost, kind) => round(cost * (1 + markupFor(kind) / 100));
 // Packages of one system that came from art-topup (cards: ic/pb/pc refs, invoices: inv refs).
 const REF = { card: "(art_card_id LIKE 'ic:%' OR art_card_id LIKE 'pb:%' OR art_card_id LIKE 'pc:%')", invoice: "art_card_id LIKE 'inv:%'" };
+// Packages of either art-topup system. Other suppliers (QuickLine's ql:/qln:) share these columns and the same
+// 'card'/'invoice' kinds, so every query below filters on the refs rather than on kind alone.
+const ART_REF = `(${REF.card} OR ${REF.invoice})`;
 
 // Our company for an art-topup page title, invoice company or (in "شركات مشتركة") package name.
 const COMPANIES = [
@@ -96,7 +99,7 @@ route('POST', '/api/art/approve', ADMIN, ({ body }) => tx(() => {
   if (!ids.length) fail(400, 'اختر الرزم');
   let done = 0;
   for (const id of ids) {
-    const p = q(`SELECT * FROM packages WHERE id = ? AND art_card_id != '' AND ${PENDING}`).get(id);
+    const p = q(`SELECT * FROM packages WHERE id = ? AND ${ART_REF} AND ${PENDING}`).get(id);
     if (!p) continue;
     if (mode === 'ignore') q('UPDATE packages SET art_ack = art_price WHERE id = ?').run(id);
     else if (mode === 'cost') q('UPDATE packages SET cost = art_price, art_ack = NULL WHERE id = ?').run(id);
@@ -112,7 +115,7 @@ route('POST', '/api/art/reprice', ADMIN, ({ body }) => tx(() => {
   const kind = kindOf(body.kind);
   const all = body.scope === 'all';
   // A package without a cost cannot take a percentage (its price would become 0 and hide it from agents).
-  const rows = q(`SELECT id, cost FROM packages WHERE kind = ? AND cost > 0 ${all ? '' : 'AND edited = 0'}`).all(kind);
+  const rows = q(`SELECT id, cost FROM packages WHERE ${REF[kind]} AND cost > 0 ${all ? '' : 'AND edited = 0'}`).all();
   for (const r of rows) q(`UPDATE packages SET price = ?${all ? ', edited = 0' : ''} WHERE id = ?`).run(withMarkup(r.cost, kind), r.id);
   return { changed: rows.length, markup: markupFor(kind) };
 }));
@@ -120,7 +123,7 @@ route('POST', '/api/art/reprice', ADMIN, ({ body }) => tx(() => {
 // How many packages a percentage change would touch, for the manager's choice.
 route('GET', '/api/art/reprice', ADMIN, ({ query }) => {
   const kind = kindOf(query.kind);
-  const r = q('SELECT COUNT(*) AS total, SUM(edited) AS edited FROM packages WHERE kind = ? AND cost > 0').get(kind);
+  const r = q(`SELECT COUNT(*) AS total, SUM(edited) AS edited FROM packages WHERE ${REF[kind]} AND cost > 0`).get();
   return { total: r.total, edited: r.edited || 0, pending: pendingCount(kind), markup: markupFor(kind) };
 });
 

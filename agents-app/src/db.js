@@ -263,8 +263,11 @@ ensureColumn('packages', 'days', 'days INTEGER');
 ensureColumn('packages', 'edited', 'edited INTEGER NOT NULL DEFAULT 0');
 ensureColumn('lines', 'days', 'days INTEGER');
 db.exec("UPDATE packages SET kind = 'card' WHERE kind != 'card' AND (art_card_id LIKE 'ic:%' OR art_card_id LIKE 'pb:%' OR art_card_id LIKE 'pc:%')");
-// art_price: art-topup's current price, refreshed by every sync and used when buying there. cost and price change
-// only with the manager's approval; art_ack is an art-topup price the manager chose to ignore.
+// art_price: the portal's current price, refreshed by every sync and used when buying there. cost and price change
+// only with the manager's approval; art_ack is a portal price the manager chose to ignore.
+// These three columns serve every supplier, not only art-topup: art_card_id says which one and how to buy.
+//   ic:/pb:/pc: art-topup card, bundle or cash · inv: art-topup invoice
+//   ql:<package>:<days> QuickLine extension · qln:<package>:<days> QuickLine new line
 ensureColumn('packages', 'art_price', 'art_price REAL');
 ensureColumn('packages', 'art_ack', 'art_ack REAL');
 db.exec("UPDATE packages SET art_price = cost WHERE art_card_id != '' AND art_price IS NULL");
@@ -291,6 +294,7 @@ function tx(fn) {
 const DEFAULT_SETTINGS = {
   app_name: 'بوابة الوكلاء', warn_days: '7', low_balance: '50', esim_fee: '7', support_whatsapp: '972567725080',
   art_user: '', art_pass: '', art_markup: '15',
+  ql_user: '', ql_pass: '', ql_markup: '15',
 };
 function getSettings() {
   const out = { ...DEFAULT_SETTINGS };
@@ -310,11 +314,23 @@ function getSettings() {
     artMarkupInvoice: Math.max(0, Number(out.art_markup_invoice ?? out.art_markup) || 0),
     artSyncedCard: Number(out.art_synced_card) || null,
     artSyncedInvoice: Number(out.art_synced_invoice) || null,
+    // QuickLine sign-in: the password never leaves the server (see qlCredentials).
+    qlUser: out.ql_user,
+    qlConfigured: !!(out.ql_user && out.ql_pass),
+    // The manager's profit on top of QuickLine's price, separately for extensions ('card') and new lines ('invoice').
+    qlMarkupCard: Math.max(0, Number(out.ql_markup_card ?? out.ql_markup) || 0),
+    qlMarkupInvoice: Math.max(0, Number(out.ql_markup_invoice ?? out.ql_markup) || 0),
+    qlSyncedCard: Number(out.ql_synced_card) || null,
+    qlSyncedInvoice: Number(out.ql_synced_invoice) || null,
   };
 }
 function artCredentials() {
   const get = (k) => q('SELECT value FROM settings WHERE key = ?').get(k)?.value || '';
   return { user: get('art_user'), pass: get('art_pass') };
+}
+function qlCredentials() {
+  const get = (k) => q('SELECT value FROM settings WHERE key = ?').get(k)?.value || '';
+  return { user: get('ql_user'), pass: get('ql_pass') };
 }
 function setSetting(key, value) {
   q('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').run(key, String(value));
@@ -348,4 +364,4 @@ function bootstrap() {
 }
 bootstrap();
 
-module.exports = { db, q, tx, getSettings, setSetting, artCredentials, DB_FILE };
+module.exports = { db, q, tx, getSettings, setSetting, artCredentials, qlCredentials, DB_FILE };

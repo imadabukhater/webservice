@@ -2,13 +2,36 @@ import {
   S, api, esc, icon, money, fmtMoney, sheet, field, changed, loadCatalog, companyLogo, specs, fileToDataUrl, empty, fmtNum, round, relTime, toast,
 } from '../core.js';
 
-// Two separate systems, each with its own packages: invoices (activating a new line with a SIM) and
-// recharge cards (cards, bundles and cash for an existing number).
+// A tab is one supplier's one system. Each has its own packages, its own profit percentage, its own sync and its own
+// list of price changes awaiting the manager. Packages the manager typed by hand belong to no supplier and are shown
+// with art-topup's two tabs, the ones that existed before any supplier.
 const V = { tab: 'invoice', q: '', msg: {} };
-const KINDS = {
-  invoice: { label: 'الفواتير', icon: 'sim', color: '', note: 'رزم تفعيل خط جديد بشريحة. تظهر للوكيل في «مشترك جديد».' },
-  card: { label: 'كروت الشحن', icon: 'card', color: 'green', note: 'كروت وحزم ورصيد لرقم موجود. تظهر للوكيل في «شحن كرت» و«تمديد».' },
+const TABS = {
+  invoice: { label: 'الفواتير', icon: 'sim', color: '', supplier: 'art', kind: 'invoice', note: 'رزم تفعيل خط جديد بشريحة. تظهر للوكيل في «مشترك جديد».' },
+  card: { label: 'كروت الشحن', icon: 'card', color: 'green', supplier: 'art', kind: 'card', note: 'كروت وحزم ورصيد لرقم موجود. تظهر للوكيل في «شحن كرت» و«تمديد».' },
+  qlcard: { label: 'تمديد QuickLine', icon: 'refresh', color: 'green', supplier: 'ql', kind: 'card', note: 'تمديد خط موجود في QuickLine تحت وكالتك. يُنفَّذ تلقائياً. تظهر للوكيل في «تمديد».' },
+  qlinvoice: { label: 'خطوط QuickLine', icon: 'sim', color: '', supplier: 'ql', kind: 'invoice', note: 'تفعيل خط جديد في QuickLine. يبقى طلباً لك لأنه يحتاج زبوناً وشريحة.' },
 };
+const SUPPLIERS = {
+  art: {
+    name: 'art-topup', api: 'art', configured: () => S.settings.artConfigured,
+    markup: (k) => (k === 'card' ? S.settings.artMarkupCard : S.settings.artMarkupInvoice) ?? 0,
+    synced: (k) => (k === 'card' ? S.settings.artSyncedCard : S.settings.artSyncedInvoice),
+    markupField: (k) => (k === 'card' ? 'artMarkupCard' : 'artMarkupInvoice'),
+  },
+  ql: {
+    name: 'QuickLine', api: 'quickline', configured: () => S.settings.qlConfigured,
+    markup: (k) => (k === 'card' ? S.settings.qlMarkupCard : S.settings.qlMarkupInvoice) ?? 0,
+    synced: (k) => (k === 'card' ? S.settings.qlSyncedCard : S.settings.qlSyncedInvoice),
+    markupField: (k) => (k === 'card' ? 'qlMarkupCard' : 'qlMarkupInvoice'),
+  },
+};
+const tabOf = (key) => TABS[key] || TABS.invoice;
+// The supplier a package came from, for the labels on its card and form.
+const supplierName = (p) => SUPPLIERS[p?.supplier]?.name || 'المورّد';
+const tabKey = () => (TABS[V.tab] ? V.tab : 'invoice');
+// Packages shown under one tab: its supplier's, plus the hand-typed ones under art-topup's original tabs.
+const inTab = (p, t) => p.kind === t.kind && (p.supplier === t.supplier || (!p.supplier && t.supplier === 'art'));
 
 export function openCompanyForm(c) {
   let logo = c?.logo || '';
@@ -28,7 +51,7 @@ export function openCompanyForm(c) {
         <div class="switches">
           <label class="switch-row"><span class="tile sm">${icon('tasks')}</span><span class="grow"><b>طلب للمدير</b><small>يُخصم المبلغ ويصلك طلب، تفعّل الخط على موقع الشركة ثم تضغط «تنفيذ». يُسترد المبلغ إن رفضت.</small></span>
             <input type="radio" name="activation" value="manual" ${!['direct', 'auto'].includes(c?.activation) ? 'checked' : ''}></label>
-          <label class="switch-row"><span class="tile sm green">${icon('refresh')}</span><span class="grow"><b>تلقائي عبر art-topup</b><small>شحن الكروت والتمديد يُنفَّذ تلقائياً من حسابك في art-topup (للكروت المستوردة منه). التفعيل بشريحة يبقى طلباً لك.</small></span>
+          <label class="switch-row"><span class="tile sm green">${icon('refresh')}</span><span class="grow"><b>تلقائي عبر المورّد</b><small>شحن الكروت (art-topup) وتمديد الخطوط (QuickLine) يُنفَّذ تلقائياً من حسابك هناك، للرزم المستوردة منه. التفعيل بشريحة يبقى طلباً لك.</small></span>
             <input type="radio" name="activation" value="auto" ${c?.activation === 'auto' ? 'checked' : ''}></label>
           <label class="switch-row"><span class="tile sm amber">${icon('bolt')}</span><span class="grow"><b>تفعيل مباشر</b><small>الخط فعّال فوراً. لا يستطيع الوكيل فصله ولا يُسترد المبلغ.</small></span>
             <input type="radio" name="activation" value="direct" ${c?.activation === 'direct' ? 'checked' : ''}></label>
@@ -63,9 +86,9 @@ export function openPackageForm(p, companyId, kind = 'invoice') {
   const k = p?.kind || kind;
   sheet({
     title: p ? 'تعديل رزمة' : 'رزمة جديدة',
-    subtitle: p?.artCode ? `رمز art-topup: <span class="mono ltr">${esc(p.artCode)}</span>` : '',
+    subtitle: p?.artCode ? `رمز ${supplierName(p)}: <span class="mono ltr">${esc(p.artCode)}</span>` : '',
     body: `
-      ${p?.artCode ? `<div class="msg info">${icon('info')}<span>رزمة من art-topup. بعد حفظ تعديلك تبقى قيمك كما هي عند كل مزامنة، وتتحدث «التكلفة» فقط.</span></div>` : ''}
+      ${p?.artCode ? `<div class="msg info">${icon('info')}<span>رزمة من ${supplierName(p)}. بعد حفظ تعديلك تبقى قيمك كما هي عند كل مزامنة، وتتحدث «التكلفة» فقط.</span></div>` : ''}
       <div class="field"><span class="label">النظام</span><div class="segmented" id="pk-kind">
         <button type="button" data-kind="invoice" aria-pressed="${k === 'invoice'}">${icon('sim')}فاتورة (تفعيل خط)</button>
         <button type="button" data-kind="card" aria-pressed="${k === 'card'}">${icon('card')}كرت شحن</button></div>
@@ -111,24 +134,25 @@ export function openPackageForm(p, companyId, kind = 'invoice') {
   });
 }
 
-// ---------- one system's controls: profit percentage, art-topup sync, price changes awaiting approval ----------
-const markupOf = (kind) => (kind === 'card' ? S.settings.artMarkupCard : S.settings.artMarkupInvoice) ?? 0;
-const syncedOf = (kind) => (kind === 'card' ? S.settings.artSyncedCard : S.settings.artSyncedInvoice);
+// ---------- one tab's controls: profit percentage, the supplier's sync, price changes awaiting approval ----------
+const markupOf = (key) => { const t = tabOf(key); return SUPPLIERS[t.supplier].markup(t.kind); };
 
-function systemBar(kind) {
-  const d = KINDS[kind];
-  const pending = S.catalog.packages.filter((p) => p.kind === kind && p.artPending).length;
-  const synced = syncedOf(kind);
-  const msg = V.msg[kind];
+function systemBar(key) {
+  const t = tabOf(key);
+  const sup = SUPPLIERS[t.supplier];
+  const pending = S.catalog.packages.filter((p) => inTab(p, t) && p.artPending).length;
+  const synced = sup.synced(t.kind);
+  const msg = V.msg[key];
+  const other = Object.entries(TABS).filter(([k]) => k !== key).map(([, x]) => x.label).join(' و');
   return `<section class="card card-pad sys-bar">
-    <div class="sys-row"><span class="tile sm ${d.color}">${icon('percent')}</span>
-      <div class="grow"><b>نسبة ربحك على ${d.label}: <span class="ltr">${markupOf(kind)}%</span></b><small>سعر الوكيل = التكلفة + ${markupOf(kind)}%. منفصلة عن ${kind === 'card' ? 'الفواتير' : 'كروت الشحن'}.</small></div>
-      <button class="btn btn-sm" data-action="set-markup" data-kind="${kind}">${icon('edit')}تغيير</button></div>
+    <div class="sys-row"><span class="tile sm ${t.color}">${icon('percent')}</span>
+      <div class="grow"><b>نسبة ربحك على ${t.label}: <span class="ltr">${markupOf(key)}%</span></b><small>سعر الوكيل = التكلفة + ${markupOf(key)}%. منفصلة عن ${other}.</small></div>
+      <button class="btn btn-sm" data-action="set-markup" data-tab="${key}">${icon('edit')}تغيير</button></div>
     <div class="sys-row"><span class="tile sm">${icon('refresh')}</span>
-      <div class="grow"><b>المزامنة من art-topup</b><small>${synced ? `آخر مزامنة ${relTime(synced)}` : 'لم تتم بعد'} · تضيف الجديد ولا تغيّر أسعارك الحالية</small></div>
-      <button class="btn btn-sm" data-action="art-sync" data-kind="${kind}" ${S.settings.artConfigured ? '' : 'disabled title="أدخل بيانات art-topup في الإعدادات"'}>${icon('refresh')}مزامنة ${d.label}</button></div>
-    ${pending ? `<div class="msg warn" style="align-items:center">${icon('alert')}<span class="grow"><b>${pending} رزمة تغيّر سعرها في art-topup</b> — لن تتغيّر أسعارك إلا بموافقتك.</span>
-      <button class="btn btn-sm" data-action="art-pending" data-kind="${kind}">مراجعة</button></div>` : ''}
+      <div class="grow"><b>المزامنة من ${sup.name}</b><small>${synced ? `آخر مزامنة ${relTime(synced)}` : 'لم تتم بعد'} · تضيف الجديد ولا تغيّر أسعارك الحالية</small></div>
+      <button class="btn btn-sm" data-action="sync" data-tab="${key}" ${sup.configured() ? '' : `disabled title="أدخل بيانات ${sup.name} في الإعدادات"`}>${icon('refresh')}مزامنة ${t.label}</button></div>
+    ${pending ? `<div class="msg warn" style="align-items:center">${icon('alert')}<span class="grow"><b>${pending} رزمة تغيّر سعرها في ${sup.name}</b> — لن تتغيّر أسعارك إلا بموافقتك.</span>
+      <button class="btn btn-sm" data-action="pending" data-tab="${key}">مراجعة</button></div>` : ''}
     ${msg ? `<div class="msg ${msg.error ? '' : 'info'}">${icon(msg.error ? 'alert' : 'checkCircle')}<span>${esc(msg.text)}</span></div>` : ''}
   </section>`;
 }
@@ -139,9 +163,10 @@ async function refreshAll(ctx) {
   ctx.rerender();
 }
 
-function openMarkup(kind, ctx) {
-  const d = KINDS[kind];
-  api.get(`/api/art/reprice?kind=${kind}`).then((info) => sheet({
+function openMarkup(key, ctx) {
+  const d = tabOf(key);
+  const sup = SUPPLIERS[d.supplier];
+  api.get(`/api/${sup.api}/reprice?kind=${d.kind}`).then((info) => sheet({
     title: `نسبة ربحك على ${d.label}`,
     subtitle: 'سعر الوكيل = التكلفة + النسبة',
     body: `<div class="field"><label for="mk-val">النسبة (%)</label><input class="input ltr big" id="mk-val" name="markup" type="number" min="0" max="200" step="0.5" inputmode="decimal" value="${info.markup}"></div>
@@ -158,33 +183,34 @@ function openMarkup(kind, ctx) {
     },
     async onSubmit(form) {
       const markup = field(form, 'markup');
-      await api.put('/api/settings', kind === 'card' ? { artMarkupCard: markup } : { artMarkupInvoice: markup });
+      await api.put('/api/settings', { [sup.markupField(d.kind)]: markup });
       const scope = form.elements.scope.value;
       let text = `حُفظت نسبة ${d.label}: ${Number(markup)}%`;
       if (scope !== 'none') {
-        const r = await api.post('/api/art/reprice', { kind, scope });
+        const r = await api.post(`/api/${sup.api}/reprice`, { kind: d.kind, scope });
         text += ` — تحدّث سعر ${r.changed} رزمة`;
       }
-      V.msg[kind] = { text };
+      V.msg[key] = { text };
       await refreshAll(ctx);
       return text;
     },
   }));
 }
 
-function openPending(kind, ctx) {
-  const d = KINDS[kind];
-  api.get(`/api/art/pending?kind=${kind}`).then((rows) => {
+function openPending(key, ctx) {
+  const d = tabOf(key);
+  const sup = SUPPLIERS[d.supplier];
+  api.get(`/api/${sup.api}/pending?kind=${d.kind}`).then((rows) => {
     if (!rows.length) { toast('لا توجد تغييرات بانتظارك'); return; }
     const row = (p) => `<article class="item pend-row" data-id="${p.id}">
       <div class="item-top"><div class="grow"><b class="item-title">${esc(p.name)}</b><div class="item-sub"><span>${esc(p.companyName)}</span>${p.active ? '' : '<span>مخفية</span>'}${p.edited ? '<span>سعرها معدّل يدوياً</span>' : ''}</div></div></div>
       <div class="kv small"><div>التكلفة</div><div>${money(p.cost)} ← <b>${money(p.artPrice)}</b></div>
-        <div>سعر الوكيل</div><div>${money(p.price)} ← <b>${money(p.suggested)}</b> <span class="muted">(+${markupOf(kind)}%)</span></div></div>
+        <div>سعر الوكيل</div><div>${money(p.price)} ← <b>${money(p.suggested)}</b> <span class="muted">(+${markupOf(key)}%)</span></div></div>
       <div class="item-actions"><button type="button" class="btn btn-sm btn-good" data-mode="all">${icon('check')}اعتماد</button>
         <button type="button" class="btn btn-sm" data-mode="cost">التكلفة فقط</button>
         <button type="button" class="btn btn-sm btn-ghost" data-mode="ignore">تجاهل</button></div></article>`;
     sheet({
-      title: `تغييرات أسعار art-topup — ${d.label}`,
+      title: `تغييرات أسعار ${sup.name} — ${d.label}`,
       subtitle: '«اعتماد»: التكلفة والسعر الجديدان · «التكلفة فقط»: يبقى سعر الوكيل · «تجاهل»: يبقى كل شيء',
       wide: true,
       body: `<div class="list" id="pend-list">${rows.map(row).join('')}</div>`,
@@ -193,7 +219,7 @@ function openPending(kind, ctx) {
       onMount(form, el) {
         const left = () => form.querySelectorAll('.pend-row').length;
         const act = async (ids, mode) => {
-          await api.post('/api/art/approve', { ids, mode });
+          await api.post(`/api/${sup.api}/approve`, { ids, mode });
           await loadCatalog(true);
           ctx.rerender();
         };
@@ -224,12 +250,12 @@ function openPending(kind, ctx) {
 
 function packageCardAdmin(p) {
   return `<article class="pkg-card ${p.active ? '' : 'inactive'}" style="cursor:default">
-    <div class="pkg-head"><span class="pkg-name">${esc(p.name)}</span>${p.active ? '' : '<span class="pill">مخفية عن الوكلاء</span>'}${!p.price ? '<span class="pill s-expiring">حدد السعر</span>' : ''}${p.artPending ? `<span class="pill s-expiring">سعر art-topup الجديد: ${fmtMoney(p.artPrice)}</span>` : ''}</div>
+    <div class="pkg-head"><span class="pkg-name">${esc(p.name)}</span>${p.active ? '' : '<span class="pill">مخفية عن الوكلاء</span>'}${!p.price ? '<span class="pill s-expiring">حدد السعر</span>' : ''}${p.artPending ? `<span class="pill s-expiring">سعر ${supplierName(p)} الجديد: ${fmtMoney(p.artPrice)}</span>` : ''}</div>
     ${p.dataGb ? `<div class="pkg-data"><b>${fmtNum(p.dataGb)}</b><span>GB</span></div>` : ''}
     ${specs(p) ? `<div class="pkg-specs">${specs(p)}</div>` : ''}
     <div class="kv small"><div>المدة</div><div>${p.days ? `${p.days} يوماً` : 'شهرية'}</div>
       <div>التكلفة</div><div>${money(p.cost)}</div><div>سعر الوكيل</div><div>${money(p.price)}</div><div>ربحك</div><div class="${p.price - p.cost < 0 ? 'minus' : 'plus'}">${money(p.price - p.cost)}</div>
-      ${p.artCode ? `<div>رمز art-topup</div><div class="mono ltr">${esc(p.artCode)}${p.edited ? ' · <span class="muted">معدّلة</span>' : ''}</div>` : ''}</div>
+      ${p.artCode ? `<div>رمز ${supplierName(p)}</div><div class="mono ltr">${esc(p.artCode)}${p.edited ? ' · <span class="muted">معدّلة</span>' : ''}</div>` : ''}</div>
     <div class="item-actions" style="padding-bottom:16px">
       <button class="btn btn-sm ${p.active ? '' : 'btn-soft'}" data-action="toggle-package" data-id="${p.id}">${icon(p.active ? 'eyeOff' : 'eye')}${p.active ? 'إخفاء' : 'إظهار للوكلاء'}</button>
       <button class="btn btn-sm" data-action="edit-package" data-id="${p.id}">${icon('edit')}تعديل</button>
@@ -255,32 +281,33 @@ export default {
   },
   render() {
     const { companies, packages } = S.catalog;
-    const count = (k) => packages.filter((p) => p.kind === k).length;
-    const tabs = `<div class="segmented">${Object.entries(KINDS).map(([k, d]) => `<button data-action="tab" data-tab="${k}" aria-pressed="${V.tab === k}">${icon(d.icon)}${d.label} (${count(k)})</button>`).join('')}
+    const count = (t) => packages.filter((p) => inTab(p, t)).length;
+    const tabs = `<div class="segmented">${Object.entries(TABS).map(([k, d]) => `<button data-action="tab" data-tab="${k}" aria-pressed="${V.tab === k}">${icon(d.icon)}${d.label} (${count(d)})</button>`).join('')}
       <button data-action="tab" data-tab="companies" aria-pressed="${V.tab === 'companies'}">${icon('building')}الشركات (${companies.length})</button></div>`;
     if (V.tab === 'companies') {
       return `${tabs}<div class="page-head"><p>الشعار واللون وبادئات الشرائح وطريقة التفعيل لكل شركة.</p><button class="btn btn-primary" data-action="add-company">${icon('plus')}شركة جديدة</button></div>
         ${companies.length ? `<div class="grid-cards">${companies.map((c) => `<article class="item"><div class="item-top">${companyLogo(c, 'sm')}
           <div class="grow"><b class="item-title">${esc(c.name)}</b><div class="item-sub"><span>${c.packageCount} رزمة</span><span class="mono ltr">${esc((c.prefixes || []).join(', ') || 'بدون بادئة')}</span></div></div>
-            <span class="pill ${c.activation === 'direct' ? 's-expiring' : c.activation === 'auto' ? 's-active' : 'plain'}">${{ direct: 'تفعيل مباشر', auto: 'تلقائي art-topup' }[c.activation] || 'طلب للمدير'}</span></div>
+            <span class="pill ${c.activation === 'direct' ? 's-expiring' : c.activation === 'auto' ? 's-active' : 'plain'}">${{ direct: 'تفعيل مباشر', auto: 'تلقائي' }[c.activation] || 'طلب للمدير'}</span></div>
           <div class="item-actions"><button class="btn btn-sm" data-action="edit-company" data-id="${c.id}">${icon('edit')}تعديل</button>
             <button class="btn btn-sm btn-ghost" data-action="delete-company" data-id="${c.id}">${icon('trash')}حذف</button></div></article>`).join('')}</div>`
           : empty('building', 'لا توجد شركات', 'أضف أول شركة اتصالات.')}`;
     }
-    const kind = KINDS[V.tab] ? V.tab : 'invoice';
+    const key = tabKey();
+    const t = TABS[key];
     const term = V.q.trim().toLowerCase();
-    const mine = packages.filter((p) => p.kind === kind && (!term || `${p.name} ${p.companyName} ${p.artCode}`.toLowerCase().includes(term)));
+    const mine = packages.filter((p) => inTab(p, t) && (!term || `${p.name} ${p.companyName} ${p.artCode}`.toLowerCase().includes(term)));
     const shown = mine.filter((p) => p.active).length;
-    return `${tabs}${systemBar(kind)}<div class="page-head"><p><b>${KINDS[kind].label}:</b> ${KINDS[kind].note} ظاهرة للوكلاء ${shown} من ${mine.length}.</p>
+    return `${tabs}${systemBar(key)}<div class="page-head"><p><b>${t.label}:</b> ${t.note} ظاهرة للوكلاء ${shown} من ${mine.length}.</p>
         <button class="btn btn-primary" data-action="add-package">${icon('plus')}رزمة جديدة</button></div>
-      <div class="search-box">${icon('search', 'i lead')}<input class="input" id="pkg-q" type="search" placeholder="ابحث باسم الرزمة أو الشركة أو رمز art-topup…" value="${esc(V.q)}" aria-label="بحث في الرزم"></div>
+      <div class="search-box">${icon('search', 'i lead')}<input class="input" id="pkg-q" type="search" placeholder="ابحث باسم الرزمة أو الشركة أو رمز المورّد…" value="${esc(V.q)}" aria-label="بحث في الرزم"></div>
       ${companies.map((c) => {
         const list = mine.filter((p) => p.companyId === c.id);
-        if (!list.length && (term || !packages.some((p) => p.companyId === c.id && p.kind === kind))) return '';
+        if (!list.length && (term || !packages.some((p) => p.companyId === c.id && inTab(p, t)))) return '';
         return `<section class="list"><div class="section-title"><h2 style="display:flex;align-items:center;gap:10px">${companyLogo(c, 'xs')}${esc(c.name)}</h2>
           <button class="btn btn-sm btn-soft" data-action="add-package" data-company="${c.id}">${icon('plus')}رزمة</button></div>
           <div class="pkg-grid">${list.map(packageCardAdmin).join('')}</div></section>`;
-      }).join('') || empty(KINDS[kind].icon, term ? 'لا نتائج' : `لا توجد رزم في ${KINDS[kind].label}`, term ? '' : 'أضفها يدوياً، أو من الإعدادات ← «مزامنة الكروت والأسعار» من art-topup.')}`;
+      }).join('') || empty(t.icon, term ? 'لا نتائج' : `لا توجد رزم في ${t.label}`, term ? '' : `أضفها يدوياً، أو اضغط «مزامنة ${t.label}» أعلى الصفحة.`)}`;
   },
   actions: {
     tab(btn, e, ctx) { V.tab = btn.dataset.tab; ctx.rerender(); },
@@ -293,18 +320,20 @@ export default {
         async onSubmit() { await api.del(`/api/companies/${c.id}`); await loadCatalog(true); changed(); return 'تم حذف الشركة'; },
       });
     },
-    'add-package': (btn) => openPackageForm(null, Number(btn.dataset.company) || undefined, KINDS[V.tab] ? V.tab : 'invoice'),
-    'set-markup': (btn, e, ctx) => openMarkup(btn.dataset.kind, ctx),
-    'art-pending': (btn, e, ctx) => openPending(btn.dataset.kind, ctx),
-    async 'art-sync'(btn, e, ctx) {
-      const kind = btn.dataset.kind;
+    'add-package': (btn) => openPackageForm(null, Number(btn.dataset.company) || undefined, tabOf(tabKey()).kind),
+    'set-markup': (btn, e, ctx) => openMarkup(btn.dataset.tab, ctx),
+    pending: (btn, e, ctx) => openPending(btn.dataset.tab, ctx),
+    async sync(btn, e, ctx) {
+      const key = btn.dataset.tab;
+      const t = tabOf(key);
+      const sup = SUPPLIERS[t.supplier];
       btn.disabled = true;
-      btn.innerHTML = `${icon('clock')}جاري القراءة من art-topup…`;
+      btn.innerHTML = `${icon('clock')}جاري القراءة من ${sup.name}…`;
       try {
-        const r = await api.post('/api/art/sync', { kind });
-        V.msg[kind] = { text: `${r.total} من art-topup: أُضيف ${r.added} جديدة بسعر التكلفة + ${r.markup}%${r.switchedOff ? `، أُخفيت ${r.switchedOff} لم تعد موجودة` : ''}. أسعارك الحالية لم تتغيّر${r.pending ? `، و${r.pending} تغيّر سعرها بانتظار موافقتك` : ''}.${r.hidden ? ` ${r.hidden} حزمة لم تظهر لأن رصيد art-topup أقل من سعرها.` : ''}` };
+        const r = await api.post(`/api/${sup.api}/sync`, { kind: t.kind });
+        V.msg[key] = { text: `${r.total} من ${sup.name}: أُضيف ${r.added} جديدة بسعر التكلفة + ${r.markup}%${r.switchedOff ? `، أُخفيت ${r.switchedOff} لم تعد موجودة` : ''}. أسعارك الحالية لم تتغيّر${r.pending ? `، و${r.pending} تغيّر سعرها بانتظار موافقتك` : ''}.${r.hidden ? ` ${r.hidden} حزمة لم تظهر لأن رصيد ${sup.name} أقل من سعرها.` : ''}` };
       } catch (err) {
-        V.msg[kind] = { text: err.message, error: true };
+        V.msg[key] = { text: err.message, error: true };
       }
       await refreshAll(ctx);
     },
