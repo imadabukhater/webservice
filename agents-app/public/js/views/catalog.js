@@ -10,7 +10,7 @@ const TABS = {
   invoice: { label: 'الفواتير', icon: 'sim', color: '', supplier: 'art', kind: 'invoice', note: 'رزم تفعيل خط جديد بشريحة. تظهر للوكيل في «مشترك جديد».' },
   card: { label: 'كروت الشحن', icon: 'card', color: 'green', supplier: 'art', kind: 'card', note: 'كروت وحزم ورصيد لرقم موجود. تظهر للوكيل في «شحن كرت» و«تمديد».' },
   qlcard: { label: 'تمديد QuickLine', icon: 'refresh', color: 'green', supplier: 'ql', kind: 'card', note: 'تمديد خط موجود في QuickLine تحت وكالتك. يُنفَّذ تلقائياً. تظهر للوكيل في «تمديد».' },
-  qlinvoice: { label: 'خطوط QuickLine', icon: 'sim', color: '', supplier: 'ql', kind: 'invoice', note: 'تفعيل خط جديد في QuickLine. يبقى طلباً لك لأنه يحتاج زبوناً وشريحة.' },
+  qlinvoice: { label: 'خطوط QuickLine', icon: 'sim', color: '', supplier: 'ql', kind: 'invoice', note: 'تفعيل خط جديد في QuickLine: رقم من أرقامهم المتاحة، eSIM، أو تحويل رقم. يُنفَّذ تلقائياً. تظهر للوكيل في «مشترك جديد».' },
 };
 const SUPPLIERS = {
   art: {
@@ -51,7 +51,7 @@ export function openCompanyForm(c) {
         <div class="switches">
           <label class="switch-row"><span class="tile sm">${icon('tasks')}</span><span class="grow"><b>طلب للمدير</b><small>يُخصم المبلغ ويصلك طلب، تفعّل الخط على موقع الشركة ثم تضغط «تنفيذ». يُسترد المبلغ إن رفضت.</small></span>
             <input type="radio" name="activation" value="manual" ${!['direct', 'auto'].includes(c?.activation) ? 'checked' : ''}></label>
-          <label class="switch-row"><span class="tile sm green">${icon('refresh')}</span><span class="grow"><b>تلقائي عبر المورّد</b><small>شحن الكروت (art-topup) وتمديد الخطوط (QuickLine) يُنفَّذ تلقائياً من حسابك هناك، للرزم المستوردة منه. التفعيل بشريحة يبقى طلباً لك.</small></span>
+          <label class="switch-row"><span class="tile sm green">${icon('refresh')}</span><span class="grow"><b>تلقائي عبر المورّد</b><small>شحن الكروت (art-topup) وتمديد الخطوط (QuickLine) يُنفَّذ تلقائياً من حسابك هناك، للرزم المستوردة منه. وتفعيل خطوط QuickLine الجديدة (شريحة، eSIM، تحويل رقم) تلقائي أيضاً. تفعيل فواتير art-topup يبقى طلباً لك.</small></span>
             <input type="radio" name="activation" value="auto" ${c?.activation === 'auto' ? 'checked' : ''}></label>
           <label class="switch-row"><span class="tile sm amber">${icon('bolt')}</span><span class="grow"><b>تفعيل مباشر</b><small>الخط فعّال فوراً. لا يستطيع الوكيل فصله ولا يُسترد المبلغ.</small></span>
             <input type="radio" name="activation" value="direct" ${c?.activation === 'direct' ? 'checked' : ''}></label>

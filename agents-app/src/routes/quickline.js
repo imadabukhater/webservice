@@ -5,7 +5,7 @@
 const { q, tx, getSettings, setSetting, qlCredentials } = require('../db');
 const { fail, round, now } = require('../util');
 const ql = require('../quickline');
-const { route, ADMIN } = require('../router');
+const { route, ADMIN, ANY } = require('../router');
 
 const KINDS = ['card', 'invoice'];
 const kindOf = (v) => (KINDS.includes(v) ? v : fail(400, 'اختر النظام: تمديد الخطوط أو خطوط جديدة'));
@@ -51,16 +51,20 @@ route('POST', '/api/quickline/check', ADMIN, () => wrap(async (creds) => {
 route('POST', '/api/quickline/sync', ADMIN, ({ body }) => { const kind = kindOf(body.kind); return wrap((creds) => syncKind(creds, kind)); });
 
 async function syncKind(creds, kind) {
-  const items = await ql.catalog(creds);
+  const items = await ql.catalog(creds, kind);
   if (!items.length) fail(502, 'QuickLine: لم أجد باقات');
   return tx(() => {
     let added = 0;
     let updated = 0;
     const companyIds = new Set();
     const refs = [];
+    // Each package's SIM rule, so a sale can be checked at once, before the agent pays.
+    const rules = simRules();
+    for (const c of items) rules[c.packageId] = { company: c.company, postalCode: c.postalCode, simLength: c.simLength, qlCompanyId: c.companyId };
+    setSetting('ql_sim_rules', JSON.stringify(rules));
     for (const c of items) {
       // The same QuickLine package is sold two ways: as an extension (ql:) and as a new line (qln:).
-      const ref = kind === 'card' ? c.ref : c.newRef;
+      const { ref } = c;
       refs.push(ref);
       const companyId = companyFor(c.company);
       companyIds.add(companyId);
@@ -79,8 +83,8 @@ async function syncKind(creds, kind) {
     }
     const off = q(`UPDATE packages SET active = 0 WHERE ${REF[kind]} AND active = 1 AND art_card_id NOT IN (${refs.map(() => '?').join(',')})`)
       .run(...refs).changes;
-    // Extensions are carried out automatically; new lines stay requests for the manager.
-    if (kind === 'card') for (const id of companyIds) q("UPDATE companies SET activation = 'auto' WHERE id = ? AND activation = 'manual'").run(id);
+    // Extensions and new lines are both carried out automatically for "auto" companies.
+    for (const id of companyIds) q("UPDATE companies SET activation = 'auto' WHERE id = ? AND activation = 'manual'").run(id);
     setSetting(`ql_synced_${kind}`, now());
     return { kind, total: items.length, added, updated, switchedOff: off, pending: pendingCount(kind), markup: markupFor(kind) };
   });
@@ -131,10 +135,56 @@ route('GET', '/api/quickline/reprice', ADMIN, ({ query }) => {
   return { total: r.total, edited: r.edited || 0, pending: pendingCount(kind), markup: markupFor(kind) };
 });
 
+// ---------- what an agent needs to sell a new line ----------
+function simRules() {
+  try { return JSON.parse(q("SELECT value FROM settings WHERE key = 'ql_sim_rules'").get()?.value || '{}'); } catch { return {}; }
+}
+const simRuleFor = (qlPackageId) => simRules()[qlPackageId] || null;
+
+// Numbers shown to agents, remembered for a while so a sale can be checked to use one of them (in this process only:
+// after a restart the agent simply loads the numbers again).
+const SERVED_MS = 2 * 60 * 60_000;
+const served = new Map();
+function remember(qlPackageId, esim, list) {
+  const t = now();
+  for (const [k, v] of served) if (t - v.at > SERVED_MS) served.delete(k);
+  for (const n of list) served.set(`${qlPackageId}:${esim ? 'e' : 's'}:${n.id}`, { phone: n.phone, sim: n.sim, qr: n.qr, at: t });
+}
+function servedNumber(qlPackageId, esim, numberId) {
+  const v = served.get(`${qlPackageId}:${esim ? 'e' : 's'}:${numberId}`);
+  return v && now() - v.at < SERVED_MS ? v : null;
+}
+
+const agentWrap = async (fn) => {
+  if (!getSettings().qlConfigured) fail(503, 'أرقام QuickLine غير متاحة الآن. تواصل مع المدير.');
+  try { return await fn(qlCredentials()); } catch (e) { if (e instanceof ql.QuickLineError) fail(502, e.message); throw e; }
+};
+function newLinePackage(id) {
+  const p = q('SELECT id, art_card_id, active FROM packages WHERE id = ?').get(Number(id));
+  const ref = p && ql.parseRef(p.art_card_id);
+  if (!p || !p.active || !ref || ref.system !== 'qln') fail(404, 'هذه الرزمة ليست خطاً جديداً من QuickLine');
+  return ref;
+}
+
+// Free numbers of a QuickLine new-line package (esim=1 for eSIM numbers). exclude: ids already shown.
+route('GET', '/api/quickline/numbers', ANY, ({ query }) => {
+  const ref = newLinePackage(query.packageId);
+  const esim = query.esim === '1';
+  const exclude = String(query.exclude || '').split(',').map(Number).filter(Boolean).slice(0, 500);
+  return agentWrap(async (creds) => {
+    const list = await ql.freeNumbers(creds, { packageId: ref.packageId, exclude, esim });
+    remember(ref.packageId, esim, list);
+    return list.map((n) => ({ id: n.id, phone: n.phone }));
+  });
+});
+
+// Companies a number can be ported from (QuickLine's list).
+route('GET', '/api/quickline/port-companies', ANY, () => agentWrap(async (creds) => (await ql.companies(creds)).map((c) => ({ id: c.id, name: c.name }))));
+
 // The dealer's lines at QuickLine, so the manager can see which numbers an extension can be sold for.
 route('GET', '/api/quickline/lines', ADMIN, () => wrap(async (creds) => {
   const subs = await ql.subscriptions(creds);
   return { total: subs.length, extendable: subs.filter((s) => s.canExtend).length, lines: subs.slice(0, 500) };
 }));
 
-module.exports = { syncKind, REF };
+module.exports = { syncKind, REF, simRuleFor, servedNumber };

@@ -71,18 +71,46 @@ route('POST', '/api/lines', ANY, ({ user, body }) => tx(() => {
   const total = round(unit * months + esimFee);
   const cost = round(pkg.cost * months + esimFee);
 
+  // A QuickLine new line (an agent's sale) is activated there automatically, so everything QuickLine checks is
+  // checked here first, before the agent pays: the number comes from QuickLine's free numbers (eSIM: with its own
+  // eSIM), a ported number names the company it leaves, the SIM fits the company's rule, and the customer has a name.
+  const qlRef = kind === 'new' && !isAdmin && /^qln:/.test(pkg.art_card_id || '') ? require('../quickline').parseRef(pkg.art_card_id) : null;
+  let qlJob = null;
   let sim = { iccid: '', stockId: null };
+  if (qlRef) {
+    const QL = require('./quickline');
+    if (!str(body.customerName, 80)) fail(400, 'اكتب اسم الزبون — QuickLine يطلبه لتفعيل الخط');
+    if (port) {
+      const oldCompany = Number(body.qlOldCompany) || 0;
+      if (!oldCompany) fail(400, 'اختر الشركة التي يُحوَّل منها الرقم');
+      qlJob = { type: 'neyod', oldCompany };
+    } else {
+      const picked = QL.servedNumber(qlRef.packageId, esim, Number(body.qlNumberId) || 0);
+      if (!picked || picked.phone !== number) fail(400, 'اختر رقم الهاتف من قائمة أرقام QuickLine');
+      qlJob = { type: esim ? 'newEsimSubscription' : 'newSubscription', numberId: Number(body.qlNumberId) };
+      // An eSIM number brings its own eSIM, and the QR code to install it.
+      if (esim) { sim = { iccid: picked.sim.replace(/\D/g, ''), stockId: null }; qlJob.qr = picked.qr; }
+    }
+  }
   if (kind === 'new' && !esim) {
     if (isBlank(body.sim) && !body.simId) fail(400, 'أدخل رقم الشريحة أو اخترها من المخزون');
     sim = D.takeSim({ iccid: body.sim, simId: body.simId }, { agentId: agent.id, isAdmin, companyId: pkg.company_id, companyName: pkg.company_name });
+  }
+  if (qlRef) {
+    const rule = require('./quickline').simRuleFor(qlRef.packageId);
+    const problem = rule && require('../quickline').simProblem(sim.iccid, rule);
+    if (problem) fail(400, problem);
   }
   const customerPrice = optNum(body.customerPrice, 'سعر الزبون');
   if (customerPrice !== null && customerPrice < 0) fail(400, 'سعر الزبون لا يكون سالباً');
 
   // Direct companies: active at once and final. Manual companies: a request the manager carries out
-  // (the manager's own sales count as already done). eSIM and number porting always go through the manager.
-  const direct = D.directCompany(pkg.company_id) && !port && !esim;
+  // (the manager's own sales count as already done). eSIM and number porting always go through the manager,
+  // or through QuickLine for its packages. A QuickLine new line is never "direct": it must be activated there.
+  const direct = D.directCompany(pkg.company_id) && !port && !esim && !qlRef;
   const manual = !direct && !port && !esim && !isAdmin;
+  // The eSIM's QR code is kept with the task; it is shown on the line once QuickLine has activated it.
+  const taskPayload = qlJob ? { ql: qlJob } : null;
   const pending = port || esim || manual;
   const t = now();
   const label = D.packageLabel(pkg);
@@ -108,7 +136,7 @@ route('POST', '/api/lines', ANY, ({ user, body }) => tx(() => {
     // Everything the manager needs to carry it out on the company's site.
     const note = [`${what} ${number}`, label, durationText(months, days), sim.iccid ? `شريحة ${sim.iccid}` : '', customerName ? `الزبون: ${customerName}` : '']
       .filter(Boolean).join(' — ');
-    D.openSaleTask({ type, agent, lineId, amount: total, note });
+    D.openSaleTask({ type, agent, lineId, amount: total, note, payload: taskPayload });
   }
   return { line: view(lineId, user), balance: round(agent.balance), available: round(agent.balance + agent.credit_limit) };
 }));

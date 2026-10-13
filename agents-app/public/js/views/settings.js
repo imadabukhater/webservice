@@ -43,8 +43,8 @@ export default {
           </div>
         </form>
         <form class="card card-pad form" id="ql-form" novalidate autocomplete="off">
-          <h2 class="dot-title">التمديد التلقائي عبر QuickLine</h2>
-          <p class="muted small">يمدّد السيرفر خطوط الشركات المضبوطة على «تلقائي» من حسابك في QuickLine، ويُكمل الطلب بنفسه. التمديد يحتاج أن يكون الرقم موجوداً في QuickLine تحت وكالتك؛ تفعيل خط جديد يبقى طلباً عندك.</p>
+          <h2 class="dot-title">البيع التلقائي عبر QuickLine</h2>
+          <p class="muted small">يمدّد السيرفر خطوط الشركات المضبوطة على «تلقائي» من حسابك في QuickLine، ويُكمل الطلب بنفسه. ويفعّل الخطوط الجديدة هناك (رقم من أرقامهم المتاحة، eSIM، أو تحويل رقم). التمديد يحتاج أن يكون الرقم موجوداً في QuickLine تحت وكالتك.</p>
           <div class="row2 stack-xs">
             <div class="field"><label for="ql-user">البريد في QuickLine</label><input class="input ltr" id="ql-user" name="qlUser" type="email" value="${esc(s.qlUser || '')}" autocomplete="off"></div>
             <div class="field"><label for="ql-pass">كلمة المرور</label><input class="input ltr" id="ql-pass" name="qlPass" type="password" autocomplete="new-password" placeholder="${s.qlConfigured ? 'محفوظة — اتركها فارغة للإبقاء' : ''}"></div>

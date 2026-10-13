@@ -25,28 +25,31 @@ const tellManager = (title, body) => D.notify({ role: 'admin', kind: 'task', tit
 
 // The package and number behind an open recharge/renewal task, or null when no supplier carries it out.
 function job(taskId) {
-  const t = q("SELECT * FROM tasks WHERE id = ? AND status = 'open' AND type IN ('recharge','renew')").get(taskId);
+  const t = q("SELECT * FROM tasks WHERE id = ? AND status = 'open' AND type IN ('recharge','renew','activate','esim','port')").get(taskId);
   if (!t || !t.line_id) return null;
-  const line = q('SELECT number, package_id FROM lines WHERE id = ?').get(t.line_id);
+  const line = q('SELECT number, package_id, sim, customer_name, customer_price FROM lines WHERE id = ?').get(t.line_id);
   if (!line) return null;
   const packageId = t.type === 'renew' ? JSON.parse(t.payload || '{}').packageId : line.package_id;
   const p = q(`SELECT p.art_card_id, p.cost, p.art_price, c.activation FROM packages p JOIN companies c ON c.id = p.company_id WHERE p.id = ?`).get(packageId);
   if (!p || p.activation !== 'auto') return null;
-  // Only recharge cards (art-topup) and extensions (QuickLine) are carried out automatically. Activating a new line
-  // — art-topup's invoices (inv:) and QuickLine's new subscriptions (qln:) — stays a request for the manager.
-  const supplier = /^(ic|pb|pc):/.test(p.art_card_id) ? 'art' : /^ql:/.test(p.art_card_id) ? 'ql' : null;
+  // Recharges and renewals: art-topup cards and QuickLine extensions. Activations (a new line, an eSIM, a ported
+  // number): QuickLine new lines only — art-topup's invoices (inv:) stay requests for the manager.
+  const ref = p.art_card_id;
+  const supplier = ['recharge', 'renew'].includes(t.type)
+    ? (/^(ic|pb|pc):/.test(ref) ? 'art' : /^ql:/.test(ref) ? 'ql' : null)
+    : (/^qln:/.test(ref) ? 'qln' : null);
   if (!supplier) return null;
   // The supplier is paid its own current price, never the cost the manager may have typed.
-  return { t, supplier, number: line.number, ref: p.art_card_id, price: p.art_price ?? p.cost };
+  return { t, supplier, line, number: line.number, ref, price: p.art_price ?? p.cost };
 }
 
 // Finishes a task as carried out by a supplier.
-function finish(taskId, note, reply, actor = ACTOR) {
+function finish(taskId, note, reply, actor = ACTOR, extra = {}) {
   tx(() => {
     // Another check may have finished it meanwhile.
     const fresh = q("SELECT * FROM tasks WHERE id = ? AND status = 'open' AND auto_status IN ('sending','sent')").get(taskId);
     if (!fresh) return;
-    resolveTask(fresh, actor, { status: 'done', response: reply || `نُفّذ تلقائياً عبر ${actor === QL_ACTOR ? 'QuickLine' : 'art-topup'}` });
+    resolveTask(fresh, actor, { ...extra, status: 'done', response: reply || `نُفّذ تلقائياً عبر ${actor === QL_ACTOR ? 'QuickLine' : 'art-topup'}` });
     setAuto(taskId, 'done', note);
   });
 }
@@ -59,7 +62,80 @@ async function send(taskId) {
   // Claim it: only one sender, only once.
   if (!q("UPDATE tasks SET auto_status = 'sending', auto_at = ? WHERE id = ? AND status = 'open' AND auto_status = ''").run(now(), taskId).changes) return;
   if (j.supplier === 'ql') return sendQl(taskId, j);
+  if (j.supplier === 'qln') return sendQlNew(taskId, j);
   return sendArt(taskId, j);
+}
+
+// ---------- QuickLine: activate a new line (pool number, eSIM, or a ported number) ----------
+// What proves it went through is a subscription for the number that did not exist before sending, so the ids of
+// any older (disconnected) subscriptions of that number are kept and ignored.
+async function sendQlNew(taskId, j) {
+  const fail = (note, title) => { setAuto(taskId, 'failed', note); if (title) tellManager(title, `${j.number}: ${note}`); };
+  const number = ql.localNumber(j.number);
+  const ref = ql.parseRef(j.ref);
+  const job = JSON.parse(j.t.payload || '{}').ql;
+  if (!number || !ref || !job) return fail('ناقصة بيانات QuickLine لهذا الخط — نفّذه يدوياً');
+  const creds = qlCredentials();
+  let pkg;
+  let known;
+  try {
+    pkg = (await ql.catalog(creds, 'invoice')).find((x) => x.packageId === ref.packageId);
+    known = (await ql.subscriptions(creds)).filter((s) => s.number === number);
+  } catch (e) {
+    // Nothing was sent yet.
+    return fail(`لم يُرسل: ${e.message}`, 'تعذّر التفعيل التلقائي');
+  }
+  if (!pkg) return fail('الرزمة لم تعد موجودة في QuickLine — نفّذه يدوياً أو ارفضه', 'تعذّر التفعيل التلقائي');
+  // An offer's duration is fixed by QuickLine; if it changed since the sale, the agent paid for something else.
+  if (pkg.ref !== j.ref) return fail(`تغيّرت مدة هذه الرزمة في QuickLine (${pkg.days} يوماً) — زامن «خطوط QuickLine» ثم نفّذه يدوياً`, 'تعذّر التفعيل التلقائي');
+  // Never activate a number twice: a live subscription for it means someone already did.
+  const live = known.find((s) => s.statusValue !== 4);
+  if (live) {
+    setAuto(taskId, 'unknown', `الرقم ${number} موجود في QuickLine (${live.status}، اشتراك #${live.id}). افحصه هناك قبل أي تنفيذ يدوي.`);
+    tellManager('تفعيل تلقائي غير مؤكد', `${number}: موجود مسبقاً في QuickLine`);
+    return undefined;
+  }
+  const problem = ql.simProblem(j.line.sim, pkg);
+  if (problem) return fail(problem, 'تعذّر التفعيل التلقائي');
+  const before = JSON.stringify({ new: true, number, known: known.map((s) => s.id) });
+  try {
+    await ql.newSubscription(creds, {
+      type: job.type, packageId: ref.packageId, days: ref.days, numberId: job.numberId, phone: number, oldCompany: job.oldCompany,
+      sim: j.line.sim, rule: pkg, customerName: j.line.customer_name, customerPrice: j.line.customer_price ?? pkg.customerPrice,
+    });
+  } catch (e) {
+    if (e.refused) {
+      // QuickLine answered and declined: nothing was activated and nothing was charged.
+      setAuto(taskId, 'failed', `رفض QuickLine التفعيل: ${e.message}`, { ref: before });
+      tellManager('رفض QuickLine التفعيل', `${number}: ${e.message}. ارفض الطلب ليُسترد المبلغ أو نفّذه يدوياً.`);
+      return undefined;
+    }
+    setAuto(taskId, 'unknown', `انقطع الاتصال أثناء الإرسال (${e.message}). افحص QuickLine قبل أي تنفيذ يدوي.`, { ref: before });
+    tellManager('تفعيل تلقائي غير مؤكد', `${number}: افحص QuickLine قبل التنفيذ`);
+    return undefined;
+  }
+  setAuto(taskId, 'sent', `أُرسل التفعيل إلى QuickLine (${{ newSubscription: 'خط جديد', newEsimSubscription: 'eSIM', neyod: 'تحويل رقم' }[job.type]})`, { ref: before });
+  later(taskId);
+  return undefined;
+}
+
+// Finishes the activation once QuickLine shows a new subscription for the number. An eSIM gets its QR code.
+async function checkQlNew(t, before) {
+  const line = q('SELECT number FROM lines WHERE id = ?').get(t.line_id);
+  const subs = await ql.subscriptions(qlCredentials());
+  const sub = subs.find((s) => s.number === before.number && !(before.known || []).includes(s.id));
+  if (sub) {
+    const job = JSON.parse(t.payload || '{}').ql || {};
+    const extra = t.type === 'esim' && job.qr ? { attachment: `data:image/png;base64,${job.qr}` } : {};
+    finish(t.id, `QuickLine: تم التفعيل — اشتراك #${sub.id} (${sub.status})`, `تم التفعيل عبر QuickLine`, QL_ACTOR, extra);
+    return;
+  }
+  if (now() - t.auto_at > GIVE_UP_MS) {
+    setAuto(t.id, 'unknown', 'لم يظهر الخط في QuickLine بعد 30 دقيقة. افحص هناك قبل أي تنفيذ يدوي.');
+    tellManager('تفعيل تلقائي غير مؤكد', `${line?.number}: لم يظهر الخط في QuickLine`);
+  } else {
+    later(t.id);
+  }
 }
 
 // ---------- QuickLine: extend a line the dealer already has ----------
@@ -73,7 +149,7 @@ async function sendQl(taskId, j) {
     setAuto(taskId, 'failed', 'الرقم ليس رقماً محلياً من 10 أرقام — نفّذه يدوياً');
     return;
   }
-  const { days } = ql.parseRef(j.ref) || {};
+  const { days, packageId } = ql.parseRef(j.ref) || {};
   if (!days) {
     setAuto(taskId, 'failed', 'الرزمة غير مرتبطة بمدة في QuickLine — نفّذها يدوياً');
     return;
@@ -96,6 +172,12 @@ async function sendQl(taskId, j) {
   if (!sub.canExtend) {
     setAuto(taskId, 'failed', `QuickLine لا يسمح بتمديد ${number} (${sub.status}) — نفّذه يدوياً`);
     tellManager('تعذّر التمديد التلقائي', `${number}: ${sub.status}`);
+    return;
+  }
+  // QuickLine extends a line on its own package and charges that package's price: the sold one must be it.
+  if (sub.packageId && sub.packageId !== packageId) {
+    setAuto(taskId, 'failed', `الخط في QuickLine على رزمة «${sub.packageName}» وليس الرزمة المبيعة — نفّذه يدوياً أو ارفضه`);
+    tellManager('تعذّر التمديد التلقائي', `${number}: رزمة الخط في QuickLine مختلفة`);
     return;
   }
   const before = subState(sub);
@@ -198,7 +280,11 @@ async function check(taskId) {
   const t = q("SELECT * FROM tasks WHERE id = ? AND status = 'open' AND auto_status = 'sent'").get(taskId);
   if (!t) return;
   // auto_ref holds JSON for QuickLine (the subscription before the extension) and an operation id for art-topup.
-  if (t.auto_ref.startsWith('{')) return checkQl(t);
+  if (t.auto_ref.startsWith('{')) {
+    let before;
+    try { before = JSON.parse(t.auto_ref); } catch { before = {}; }
+    return before.new ? checkQlNew(t, before) : checkQl(t);
+  }
   const line = q('SELECT number FROM lines WHERE id = ?').get(t.line_id);
   const number = art.localNumber(line?.number);
   const ops = await art.operations(artCredentials());
@@ -236,7 +322,7 @@ async function sweep() {
   busy = true;
   try {
     for (const { id } of q("SELECT id FROM tasks WHERE status = 'open' AND auto_status = 'sent'").all()) await check(id).catch((e) => console.error('auto check', e));
-    for (const { id } of q("SELECT id FROM tasks WHERE status = 'open' AND auto_status = '' AND type IN ('recharge','renew') AND created_at > ?").all(now() - PICKUP_MS)) {
+    for (const { id } of q("SELECT id FROM tasks WHERE status = 'open' AND auto_status = '' AND type IN ('recharge','renew','activate','esim','port') AND created_at > ?").all(now() - PICKUP_MS)) {
       await send(id).catch((e) => console.error('auto send', e));
     }
   } finally {

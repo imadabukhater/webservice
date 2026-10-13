@@ -21,6 +21,8 @@ function amount(v, label) {
 const packageAttrs = (p) => ({
   dataGb: p.data_gb, minutes: p.minutes, sms: p.sms, tag: p.tag, description: p.description, art: !!p.art_card_id,
   kind: p.kind === 'card' ? 'card' : 'invoice', days: p.days ?? null,
+  // A QuickLine new line: its number is chosen from QuickLine's free numbers, and it is activated there automatically.
+  ql: /^qln:/.test(p.art_card_id || ''),
 });
 // The supplier's code for a package, shown to the manager. art-topup refs end in the code (ic:12345); QuickLine's
 // carry the package id and the duration (ql:2564:30), and the id is what identifies it there.

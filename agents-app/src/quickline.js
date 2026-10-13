@@ -86,9 +86,15 @@ async function companies(creds) {
   return Array.isArray(data) ? data : [];
 }
 
-// Everything on offer, as one entry per package and duration. A duration other than 30 days is priced as that many
-// 30-day units, the way the portal charges a repeated extension; the manager approves every price before it sells.
-async function catalog(creds) {
+const round2 = (n) => Math.round(n * 100) / 100;
+
+// Everything on offer for one system.
+//   card (extension): the line's regular monthly price (prices.cost), one entry per duration; a duration other than
+//     30 days is priced as that many 30-day units, the way the portal charges a repeated extension.
+//   invoice (new line): one entry per package. An offer package opens for its offer period at its offer price
+//     (prices.costOffer for offer.months × 30 days) — the portal's own form fixes that duration — others for 30 days.
+// Each entry carries the company's SIM rule (prefix and length) the portal checks when a line is activated.
+async function catalog(creds, kind = 'card') {
   const list = await companies(creds);
   if (!list.length) throw new QuickLineError('QuickLine: لم أجد شركات لهذه الوكالة');
   const out = [];
@@ -99,30 +105,96 @@ async function catalog(creds) {
       const cost = money(row.prices?.cost);
       if (!pkg.id || !pkg.name || cost === null) continue;
       const name = String(pkg.name).replace(/\s+/g, ' ').trim();
+      const base = {
+        company: co.name,
+        companyId: co.id,
+        packageId: pkg.id,
+        postalCode: String(co.postalCode || ''),
+        simLength: Number(co.simLength) || null,
+        customerPrice: money(row.prices?.pricePerCustomer),
+        dataGb: pkg.gb ?? gbOf(name),
+        minutes: pkg.minutes ?? null,
+        sms: pkg.sms ?? null,
+        description: [pkg.isOffer && pkg.offer?.title ? pkg.offer.title : '', pkg.gb ? `${pkg.gb} جيجا` : '']
+          .filter(Boolean).join(' · ').slice(0, 300),
+      };
+      if (kind === 'invoice') {
+        const offerMonths = pkg.isOffer ? Number(pkg.offer?.months) || 0 : 0;
+        const days = offerMonths ? offerMonths * 30 : 30;
+        const price = offerMonths ? money(row.prices?.costOffer) ?? cost : cost;
+        out.push({ ...base, ref: `qln:${pkg.id}:${days}`, kind: 'invoice', days, name, agentPrice: round2(price) });
+        continue;
+      }
       for (const days of DURATIONS) {
         if (days === 7 && Number(co.id) === NO_WEEK_COMPANY) continue;
-        const units = days / 30;
         out.push({
+          ...base,
           ref: `ql:${pkg.id}:${days}`,
-          newRef: `qln:${pkg.id}:${days}`,
           kind: 'card',
-          company: co.name,
-          companyId: co.id,
-          packageId: pkg.id,
           days,
           name: DURATIONS.length > 1 && days !== 30 ? `${name} — ${days} يوم` : name,
-          agentPrice: Math.round(cost * units * 100) / 100,
-          customerPrice: money(row.prices?.pricePerCustomer),
-          dataGb: pkg.gb ?? gbOf(name),
-          minutes: pkg.minutes ?? null,
-          sms: pkg.sms ?? null,
-          description: [pkg.isOffer && pkg.offer?.title ? pkg.offer.title : '', pkg.gb ? `${pkg.gb} جيجا` : '']
-            .filter(Boolean).join(' · ').slice(0, 300),
+          agentPrice: round2(cost * (days / 30)),
         });
       }
     }
   }
   return out;
+}
+
+// Free numbers QuickLine offers for a package, ten at a time; exclude holds the ids already shown.
+// An eSIM number comes with its eSIM (sim) and the QR code to install it (barcodeImage, base64 PNG).
+async function freeNumbers(creds, { packageId, exclude = [], esim = false }) {
+  const { data } = await api(creds, 'POST', 'Numbers/GetFreeNumbers', { packageId: Number(packageId), Numbers: exclude.map(String), isEsim: !!esim });
+  return (Array.isArray(data) ? data : []).filter((n) => n.id && n.phone)
+    .map((n) => ({ id: Number(n.id), phone: String(n.phone).replace(/\D/g, ''), sim: String(n.sim || ''), qr: n.barcodeImage || '' }));
+}
+
+// What is wrong with a SIM for a company's rule, or '' when it fits. The portal takes the full ICCID (check digit
+// included) and checks it starts with the company's prefix and has exactly its length.
+function simProblem(iccid, { postalCode, simLength, company }) {
+  const d = String(iccid || '').replace(/\D/g, '');
+  if (!postalCode || !simLength) return '';
+  if (!d.startsWith(postalCode) || d.length !== simLength) {
+    return `شريحة ${company || 'هذه الشركة'} في QuickLine يجب أن تكون ${simLength} رقماً وتبدأ بـ ${postalCode} (المُدخلة ${d.length} رقماً)`;
+  }
+  return '';
+}
+
+// QuickLine asks for a first name (required) and a last name.
+function splitName(name) {
+  const parts = String(name || '').trim().split(/\s+/).filter(Boolean);
+  return { firstName: parts[0] || '', lastName: parts.slice(1).join(' ') };
+}
+
+// Today in Israel, as the portal's form fills its start date (DD/MM/YYYY).
+const israelDate = () => new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Jerusalem' }).format(new Date());
+
+// Activates a subscription, the way the portal's «اشتراك جديد» form does:
+//   type newSubscription — a number from the pool (numberId) on a physical SIM
+//   type newEsimSubscription — a number from the eSIM pool, whose own eSIM is the SIM
+//   type neyod — porting the customer's number (phone) from another company (oldCompany)
+// The SIM is sent without the company prefix, which the portal adds back.
+async function newSubscription(creds, { type, packageId, days, numberId = null, phone = null, oldCompany = null, sim, rule, customerName, customerPrice }) {
+  const { firstName, lastName } = splitName(customerName);
+  const customer = { firstName, lastName, email: '', number: '', city: '', zip: '' };
+  const body = {
+    packageId: String(packageId),
+    ...customer,
+    startDate: israelDate(),
+    daysValues: Number(days),
+    customerPrice: Number(customerPrice) || 0,
+    automaticRenew: false,
+    constantRenewal: false,
+    simNumber: String(sim).replace(/\D/g, '').slice(rule.postalCode.length),
+    notes: '',
+    newSubscriptionType: type,
+    oldCompany: type === 'neyod' ? Number(oldCompany) : null,
+    phone: type === 'neyod' ? String(phone) : null,
+    numberId: type === 'neyod' ? null : String(numberId),
+    customer,
+  };
+  const r = await api(creds, 'POST', 'Subscriptions/NewSubscription', body);
+  return { ok: r.status < 300, text: r.text || '' };
 }
 
 // The dealer's lines, so a number can be turned into the subscription id an extension needs.
@@ -199,4 +271,5 @@ const parseRef = (ref) => {
 module.exports = {
   QuickLineError, DURATIONS, login, api, companies, catalog, subscriptions, findSubscription,
   balance, homeData, renew, localNumber, refKind, parseRef, gbOf,
+  freeNumbers, simProblem, splitName, newSubscription,
 };

@@ -1,6 +1,7 @@
 'use strict';
 // QuickLine integration against a fake API that mimics the real one (JWT login, the dealer's companies and
-// packages, the subscriptions list and Subscriptions/Renew, which moves a line's cut date).
+// packages, the subscriptions list, Subscriptions/Renew, which moves a line's cut date, Numbers/GetFreeNumbers and
+// Subscriptions/NewSubscription, which adds a line).
 const http = require('node:http');
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -8,13 +9,21 @@ const assert = require('node:assert/strict');
 const JWT = 'header.payload.signature';
 // The dealer's lines at QuickLine: number → subscription. 0524386903 can be extended, 0511111111 cannot.
 const subs = () => [
+  ...fake.added,
   { id: 305648, number: '0524386903', company: 'Cellcom', companyId: 3, packageId: 2564, status: 'فعال', statusInt: 2, canExtend: true, daysLeft: fake.daysLeft, cutDate: fake.cutDate },
   { id: 400877, number: '0511111111', company: 'Cellcom', companyId: 3, packageId: 2564, status: 'فصل نهائي', statusInt: 4, canExtend: false, daysLeft: 0, cutDate: '01/01/2026' },
 ];
-const fake = { renews: [], logins: 0, cutDate: '14/10/2026', daysLeft: 3, cost: 62, renewAnswer: null, expire: false };
+const fake = { renews: [], logins: 0, cutDate: '14/10/2026', daysLeft: 3, cost: 62, renewAnswer: null, expire: false, created: [], added: [], newAnswer: null };
+// Free numbers per kind: physical SIM, and eSIM (with its own eSIM and QR code).
+const FREE = {
+  s: [{ id: 9001, phone: '0528170777', sim: '', barcodeImage: null }, { id: 9002, phone: '0584922255', sim: '', barcodeImage: null }],
+  e: [{ id: 9101, phone: '0581112222', sim: '899720201234567890', barcodeImage: 'iVBORw0KGgo=' }],
+};
 
 const PACKAGES = {
-  3: [{ id: 2564, name: 'سلكوم 400 جيجا', gb: 400, sms: 5000, minutes: 5000, offer: 'سعر الشهر الأول' }],
+  3: [{ id: 2564, name: 'سلكوم 400 جيجا', gb: 400, sms: 5000, minutes: 5000, offer: 'سعر الشهر الأول' },
+    // An offer for the first three months: 80 for the 90 days, 45 a month after that.
+    { id: 2587, name: 'سلكوم 400 جيجا عرض 3 أشهر', gb: 400, sms: 5000, minutes: 5000, offer: 'السعر للأشهر الثلاثة الأولى', months: 3, cost: 45, costOffer: 80 }],
   2: [{ id: 2505, name: 'جولان 300 جيجا', gb: 300, sms: 4000, minutes: 4000, offer: null }],
 };
 const COMPANIES = [
@@ -47,8 +56,8 @@ const api = http.createServer((req, res) => {
       const co = COMPANIES.find((c) => c.id === Number(pk[1]));
       return json((PACKAGES[pk[1]] || []).map((p) => ({
         company: { id: co.id, name: co.name, logo: co.logo, color: co.color },
-        package: { name: p.name, id: p.id, gb: p.gb, sms: p.sms, minutes: p.minutes, isOffer: !!p.offer, offer: p.offer ? { id: 1, months: 1, title: p.offer } : null, hasFakePrice: false },
-        prices: { pricePerCustomer: 100, pricePerCustomerOffer: 100, fakePrice: null, cost: fake.cost, costOffer: fake.cost, secondaryPrice: fake.cost, mainPrice: fake.cost },
+        package: { name: p.name, id: p.id, gb: p.gb, sms: p.sms, minutes: p.minutes, isOffer: !!p.offer, offer: p.offer ? { id: 1, months: p.months || 1, title: p.offer } : null, hasFakePrice: false },
+        prices: { pricePerCustomer: 100, pricePerCustomerOffer: 100, fakePrice: null, cost: p.cost ?? fake.cost, costOffer: p.costOffer ?? fake.cost, secondaryPrice: p.cost ?? fake.cost, mainPrice: p.costOffer ?? fake.cost },
         dealerId: 4606,
       })));
     }
@@ -84,6 +93,20 @@ const api = http.createServer((req, res) => {
       fake.daysLeft += f.days;
       fake.cutDate = '13/11/2026';
       return text('تم تمديد الاشتراك بنجاح');
+    }
+    if (url === 'Numbers/GetFreeNumbers') {
+      const f = JSON.parse(body || '{}');
+      const skip = new Set((f.Numbers || []).map(Number));
+      return json(FREE[f.isEsim ? 'e' : 's'].filter((n) => !skip.has(n.id)));
+    }
+    if (url === 'Subscriptions/NewSubscription') {
+      const f = JSON.parse(body || '{}');
+      fake.created.push(f);
+      if (fake.newAnswer) return text(fake.newAnswer, 400);
+      const free = [...FREE.s, ...FREE.e].find((n) => n.id === Number(f.numberId));
+      const number = f.newSubscriptionType === 'neyod' ? f.phone : free.phone;
+      fake.added.push({ id: 500000 + fake.added.length, number, company: 'Cellcom', companyId: 3, packageId: Number(f.packageId), status: 'جديد', statusInt: 1, canExtend: false, daysLeft: f.daysValues, cutDate: '12/11/2026' });
+      return text('تمت إضافة الاشتراك بنجاح');
     }
     return text('not found', 404);
   });
@@ -138,9 +161,9 @@ test('QuickLine: sync with the markup, extend a line automatically, hand the res
   // ----- each system syncs on its own -----
   assert.equal((await call(admin, 'POST', '/api/quickline/sync', {})).status, 400, 'a system must be chosen');
   const sc = await ok(call(admin, 'POST', '/api/quickline/sync', { kind: 'card' }));
-  assert.deepEqual([sc.total, sc.added, sc.updated, sc.switchedOff, sc.pending, sc.markup], [2, 2, 0, 0, 0, 20]);
+  assert.deepEqual([sc.total, sc.added, sc.updated, sc.switchedOff, sc.pending, sc.markup], [3, 3, 0, 0, 0, 20]);
   const si = await ok(call(admin, 'POST', '/api/quickline/sync', { kind: 'invoice' }));
-  assert.deepEqual([si.total, si.added, si.markup], [2, 2, 10]);
+  assert.deepEqual([si.total, si.added, si.markup], [3, 3, 10]);
   assert.ok((await ok(call(admin, 'GET', '/api/settings'))).qlSyncedCard > 0);
 
   const cat = await ok(call(admin, 'GET', '/api/catalog'));
@@ -154,7 +177,12 @@ test('QuickLine: sync with the markup, extend a line automatically, hand the res
   assert.equal(cat.companies.find((c) => c.id === ext.companyId).activation, 'auto');
   assert.ok(cat.companies.some((c) => c.name === 'جولان'), 'a missing company is created');
   const again = await ok(call(admin, 'POST', '/api/quickline/sync', { kind: 'card' }));
-  assert.deepEqual([again.added, again.updated], [0, 2]);
+  assert.deepEqual([again.added, again.updated], [0, 3]);
+  // An offer package: extended at its regular monthly price, opened as a new line for its offer period at the offer price.
+  const offerExt = cat.packages.find((p) => p.supplier === 'ql' && p.kind === 'card' && p.artCode === '2587');
+  const offerNew = cat.packages.find((p) => p.supplier === 'ql' && p.kind === 'invoice' && p.artCode === '2587');
+  assert.deepEqual([offerExt.cost, offerExt.days], [45, 30]);
+  assert.deepEqual([offerNew.cost, offerNew.price, offerNew.days], [80, 88, 90]);
 
   // ----- art-topup's controls never touch QuickLine's packages -----
   assert.equal((await ok(call(admin, 'GET', '/api/art/reprice?kind=card'))).total, 0);
@@ -240,4 +268,78 @@ test('QuickLine: an expired token signs in again, and a new price waits for the 
   const lines = await ok(call(admin, 'GET', '/api/quickline/lines'));
   assert.deepEqual([lines.total, lines.extendable], [2, 1]);
   assert.equal(lines.lines[0].number, '0524386903');
+});
+
+test('QuickLine: a new line, an eSIM and a ported number are activated automatically', async () => {
+  const admin = await login('admin', 'admin-pass');
+  await ok(call(admin, 'POST', '/api/quickline/sync', { kind: 'invoice' }));
+  const pk = (await ok(call(admin, 'GET', '/api/catalog'))).packages.find((p) => p.supplier === 'ql' && p.kind === 'invoice' && p.artCode === '2564');
+  await ok(call(admin, 'POST', '/api/agents', { name: 'وكيل خطوط', username: 'agent2', password: 'secret2', balance: 1000 }));
+  const t = await login('agent2', 'secret2');
+  const agentPkg = (await ok(call(t, 'GET', '/api/catalog'))).packages.find((p) => p.id === pk.id);
+  assert.equal(agentPkg.ql, true, 'the agent knows its number comes from QuickLine');
+
+  // ----- the agent picks one of QuickLine's free numbers -----
+  const nums = await ok(call(t, 'GET', `/api/quickline/numbers?packageId=${pk.id}`));
+  assert.deepEqual(nums.map((n) => n.phone), ['0528170777', '0584922255']);
+  assert.deepEqual((await ok(call(t, 'GET', `/api/quickline/numbers?packageId=${pk.id}&exclude=9001`))).map((n) => n.id), [9002]);
+  const sale = { kind: 'new', packageId: pk.id, number: '0528170777', qlNumberId: 9001, sim: '899720201111111111', customerName: 'علاء عدنان' };
+
+  // ----- everything QuickLine checks is checked before the agent pays -----
+  const before = (await ok(call(t, 'GET', '/api/me'))).user.balance;
+  const bad = async (body, re) => { const r = await call(t, 'POST', '/api/lines', body); assert.equal(r.status, 400, JSON.stringify(r.body)); assert.match(r.body.error, re); };
+  await bad({ ...sale, customerName: '' }, /اسم الزبون/);
+  await bad({ ...sale, number: '0521234567' }, /قائمة أرقام QuickLine/);
+  await bad({ ...sale, qlNumberId: 9002 }, /قائمة أرقام QuickLine/);
+  await bad({ ...sale, sim: '8997202011111111111' }, /18 رقماً وتبدأ بـ 89972020/);
+  assert.equal((await ok(call(t, 'GET', '/api/me'))).user.balance, before, 'nothing was charged');
+  assert.equal(fake.created.length, 0);
+
+  // ----- a new line on a physical SIM -----
+  const r = await ok(call(t, 'POST', '/api/lines', sale));
+  assert.equal(r.line.status, 'pending');
+  const line = await until(async () => { const l = (await ok(call(t, 'GET', `/api/lines/${r.line.id}`))).line; return l.status === 'active' && l; });
+  assert.ok(line.expiresAt > Date.now() + 29 * 864e5);
+  assert.equal(fake.created.length, 1, 'sent once');
+  const sent = fake.created[0];
+  assert.deepEqual(
+    [sent.newSubscriptionType, sent.packageId, sent.numberId, sent.simNumber, sent.daysValues, sent.firstName, sent.lastName, sent.phone, sent.oldCompany],
+    ['newSubscription', '2564', '9001', '1111111111', 30, 'علاء', 'عدنان', null, null],
+    'the SIM goes without the company prefix, as the portal sends it',
+  );
+  assert.match(sent.startDate, /^\d{2}\/\d{2}\/\d{4}$/);
+  const done = (await ok(call(admin, 'GET', '/api/tasks'))).find((x) => x.lineId === r.line.id);
+  assert.deepEqual([done.status, done.autoStatus, done.resolvedBy], ['done', 'done', 'QuickLine (تلقائي)']);
+
+  // ----- an eSIM: its number brings its own eSIM, and the QR code reaches the line -----
+  const enums = await ok(call(t, 'GET', `/api/quickline/numbers?packageId=${pk.id}&esim=1`));
+  assert.deepEqual(enums.map((n) => n.id), [9101]);
+  const re = await ok(call(t, 'POST', '/api/lines', { kind: 'new', esim: true, packageId: pk.id, number: '0581112222', qlNumberId: 9101, customerName: 'زبون eSIM' }));
+  const esimLine = await until(async () => { const l = (await ok(call(t, 'GET', `/api/lines/${re.line.id}`))).line; return l.status === 'active' && l; });
+  assert.equal(esimLine.esimQr, 'data:image/png;base64,iVBORw0KGgo=');
+  assert.equal(esimLine.sim, '899720201234567890');
+  assert.deepEqual([fake.created[1].newSubscriptionType, fake.created[1].numberId, fake.created[1].simNumber], ['newEsimSubscription', '9101', '1234567890']);
+
+  // ----- a ported number names the company it leaves -----
+  const cos = await ok(call(t, 'GET', '/api/quickline/port-companies'));
+  assert.ok(cos.some((c) => c.id === 2 && c.name === 'Golan'));
+  const port = { kind: 'new', port: true, packageId: pk.id, number: '0547777777', sim: '899720202222222222', customerName: 'محمد' };
+  await bad(port, /الشركة التي يُحوَّل منها/);
+  const rp = await ok(call(t, 'POST', '/api/lines', { ...port, qlOldCompany: 2 }));
+  await until(async () => (await ok(call(t, 'GET', `/api/lines/${rp.line.id}`))).line.status === 'active');
+  assert.deepEqual([fake.created[2].newSubscriptionType, fake.created[2].phone, fake.created[2].oldCompany, fake.created[2].numberId, fake.created[2].lastName],
+    ['neyod', '0547777777', 2, null, '']);
+
+  // ----- QuickLine refusing: nothing was activated, the manager refunds, and it is never resent -----
+  fake.newAnswer = 'الشريحة مستعملة';
+  await ok(call(t, 'GET', `/api/quickline/numbers?packageId=${pk.id}`));
+  const rf = await ok(call(t, 'POST', '/api/lines', { ...sale, number: '0584922255', qlNumberId: 9002, sim: '899720203333333333' }));
+  const refused = await until(async () => (await ok(call(admin, 'GET', '/api/tasks'))).find((x) => x.lineId === rf.line.id && !['', 'sending'].includes(x.autoStatus)));
+  assert.deepEqual([refused.status, refused.autoStatus], ['open', 'failed']);
+  assert.match(refused.autoNote, /الشريحة مستعملة/);
+  const paid = (await ok(call(t, 'GET', '/api/me'))).user.balance;
+  await ok(call(admin, 'POST', `/api/tasks/${refused.id}/resolve`, { status: 'rejected', response: 'رفضه QuickLine' }));
+  assert.equal((await ok(call(t, 'GET', '/api/me'))).user.balance, Math.round((paid + rf.line.price) * 100) / 100);
+  assert.equal(fake.created.length, 4, 'tried once only');
+  fake.newAnswer = null;
 });
