@@ -15,6 +15,7 @@ require('./src/routes/dashboard');
 require('./src/routes/reports');
 require('./src/routes/messages');
 require('./src/routes/art');
+require('./src/routes/invoices');
 require('./src/autoexec');
 const { dispatch } = require('./src/router');
 const { ApiError } = require('./src/util');

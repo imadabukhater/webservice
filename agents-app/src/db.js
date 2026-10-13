@@ -167,6 +167,18 @@ CREATE TABLE IF NOT EXISTS messages (
   ts INTEGER NOT NULL,
   read_at INTEGER
 );
+CREATE TABLE IF NOT EXISTS invoices (
+  id INTEGER PRIMARY KEY,
+  invoice_number TEXT NOT NULL UNIQUE,
+  agent_id INTEGER NOT NULL REFERENCES users(id),
+  amount REAL NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','paid','rejected')),
+  issue_date INTEGER NOT NULL,
+  due_date INTEGER,
+  paid_date INTEGER,
+  notes TEXT NOT NULL DEFAULT ''
+);
 `);
 if (!tableSql('lines')) db.exec(LINES_DDL);
 
@@ -305,6 +317,7 @@ function bootstrap() {
   if (!q('SELECT COUNT(*) AS n FROM companies').get().n) {
     const co = q('INSERT INTO companies (name, sort, color, iccid_prefixes) VALUES (?, ?, ?, ?)');
     const pk = q('INSERT INTO packages (company_id, name, sort, data_gb) VALUES (?, ?, ?, ?)');
+    const pkFull = q('INSERT INTO packages (company_id, name, sort, cost, price) VALUES (?, ?, ?, ?, ?)');
     const cellcom = co.run('سلكوم', 1, '#6b2c91', '8997202').lastInsertRowid;
     pk.run(cellcom, '500 جيجا', 1, 500);
     pk.run(cellcom, '300 جيجا', 2, 300);
@@ -312,6 +325,7 @@ function bootstrap() {
     pk.run(co.run('بارتنر', 2, '#12a39a', '').lastInsertRowid, 'باقة بارتنر', 1, null);
     pk.run(co.run('بيلفون', 3, '#0a74c9', '8997250').lastInsertRowid, 'باقة بيلفون', 1, null);
     pk.run(co.run('هوت موبايل', 4, '#d7192d', '').lastInsertRowid, 'باقة هوت موبايل', 1, null);
+    pkFull.run(co.run('الكروت', 5, '#ff5722', '').lastInsertRowid, 'كرت 70 شيكل', 1, 70, 70);
   }
 }
 bootstrap();
