@@ -1,7 +1,7 @@
 'use strict';
 const { q, tx, getSettings } = require('../db');
 const { fail, round } = require('../util');
-const { route, ADMIN, AUTH } = require('../router');
+const { route, ADMIN, ANY } = require('../router');
 
 // Get next invoice number
 function getNextInvoiceNumber() {
@@ -12,7 +12,7 @@ function getNextInvoiceNumber() {
 }
 
 // List invoices (filtered for agents, all for admin)
-route('GET', '/api/invoices', AUTH, (req, res, user) => {
+route('GET', '/api/invoices', ANY, ({ user }) => {
   const invoices = user.role === 'admin'
     ? q('SELECT i.*, u.name as agent_name FROM invoices i LEFT JOIN users u ON i.agent_id = u.id ORDER BY i.id DESC').all()
     : q('SELECT i.*, u.name as agent_name FROM invoices i LEFT JOIN users u ON i.agent_id = u.id WHERE i.agent_id = ? ORDER BY i.id DESC').all(user.id);
@@ -33,7 +33,7 @@ route('GET', '/api/invoices', AUTH, (req, res, user) => {
 });
 
 // Get single invoice
-route('GET', '/api/invoices/:id', AUTH, (req, res, user, id) => {
+route('GET', '/api/invoices/:id', ANY, ({ user, params: { id } }) => {
   const inv = q('SELECT i.*, u.name as agent_name FROM invoices i LEFT JOIN users u ON i.agent_id = u.id WHERE i.id = ?').get(id);
   if (!inv) fail(404, 'الفاتورة غير موجودة');
   if (user.role !== 'admin' && inv.agent_id !== user.id) fail(403, 'غير مصرح لك');
@@ -54,8 +54,8 @@ route('GET', '/api/invoices/:id', AUTH, (req, res, user, id) => {
 });
 
 // Create invoice (admin only)
-route('POST', '/api/invoices', ADMIN, (req, res) => {
-  const { agentId, amount, description, dueDate, notes } = req.body;
+route('POST', '/api/invoices', ADMIN, ({ body }) => {
+  const { agentId, amount, description, dueDate, notes } = body;
 
   if (!agentId || amount === undefined) fail(400, 'معرّف الوكيل والمبلغ مطلوب');
   if (amount <= 0) fail(400, 'المبلغ يجب أن يكون أكبر من صفر');
@@ -76,8 +76,8 @@ route('POST', '/api/invoices', ADMIN, (req, res) => {
 });
 
 // Update invoice (admin only)
-route('PUT', '/api/invoices/:id', ADMIN, (req, res, id) => {
-  const { amount, description, dueDate, notes } = req.body;
+route('PUT', '/api/invoices/:id', ADMIN, ({ body, params: { id } }) => {
+  const { amount, description, dueDate, notes } = body;
 
   const inv = q('SELECT status FROM invoices WHERE id = ?').get(id);
   if (!inv) fail(404, 'الفاتورة غير موجودة');
@@ -94,7 +94,7 @@ route('PUT', '/api/invoices/:id', ADMIN, (req, res, id) => {
 });
 
 // Mark invoice as paid (admin only)
-route('POST', '/api/invoices/:id/pay', ADMIN, (req, res, id) => {
+route('POST', '/api/invoices/:id/pay', ADMIN, ({ body, params: { id } }) => {
   const inv = q('SELECT agent_id, amount, status FROM invoices WHERE id = ?').get(id);
   if (!inv) fail(404, 'الفاتورة غير موجودة');
   if (inv.status === 'paid') fail(400, 'الفاتورة مدفوعة بالفعل');
@@ -109,7 +109,7 @@ route('POST', '/api/invoices/:id/pay', ADMIN, (req, res, id) => {
 });
 
 // Reject invoice (admin only)
-route('POST', '/api/invoices/:id/reject', ADMIN, (req, res, id) => {
+route('POST', '/api/invoices/:id/reject', ADMIN, ({ body, params: { id } }) => {
   const inv = q('SELECT status FROM invoices WHERE id = ?').get(id);
   if (!inv) fail(404, 'الفاتورة غير موجودة');
   if (inv.status !== 'pending') fail(400, 'لا يمكن رفض فاتورة غير معلقة');
@@ -123,7 +123,7 @@ route('POST', '/api/invoices/:id/reject', ADMIN, (req, res, id) => {
 });
 
 // Delete invoice (admin only, pending only)
-route('DELETE', '/api/invoices/:id', ADMIN, (req, res, id) => {
+route('DELETE', '/api/invoices/:id', ADMIN, ({ body, params: { id } }) => {
   const inv = q('SELECT status FROM invoices WHERE id = ?').get(id);
   if (!inv) fail(404, 'الفاتورة غير موجودة');
   if (inv.status !== 'pending') fail(400, 'يمكن حذف الفواتير المعلقة فقط');
