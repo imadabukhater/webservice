@@ -327,15 +327,20 @@ async function check(taskId) {
 // The line's status there is read first, so a change already made (or made again after a dropped connection) is
 // never sent twice. A refusal goes to the manager; a dropped connection is tried again by the sweep.
 const MIRROR = {
-  close: { want: ql.STATUS.closed, from: [1, 2, 3, 6], call: ql.closeNumber, done: 'فُصل الرقم نهائياً في QuickLine', what: 'الفصل' },
+  close: { want: ql.STATUS.closed, from: [2, 3, 6], call: ql.closeNumber, done: 'فُصل الرقم نهائياً في QuickLine', what: 'الفصل' },
   pause: { want: ql.STATUS.paused, from: [2], call: ql.pauseNumber, done: 'فُصل الرقم مؤقتاً في QuickLine', what: 'التجميد' },
   activate: { want: ql.STATUS.active, from: [6], call: ql.activateNumber, done: 'أُعيد تفعيل الرقم في QuickLine', what: 'إلغاء التجميد' },
 };
 const mirroring = new Set();
+// A line QuickLine still shows as «جديد» is not activated there yet, and QuickLine takes no state change for it
+// (it accepts one and then activates the line anyway): wait until it is active, for up to a day.
+const NOT_YET = 1;
+const WAIT_MS = 24 * 60 * 60_000;
+const waitLogged = new Set();
 
 async function mirrorLine(lineId) {
   if (!getSettings().qlConfigured || mirroring.has(lineId)) return;
-  const line = q('SELECT id, number, agent_id, package_label, ql_pending FROM lines WHERE id = ?').get(lineId);
+  const line = q('SELECT id, number, agent_id, package_label, ql_pending, updated_at FROM lines WHERE id = ?').get(lineId);
   const m = line && MIRROR[line.ql_pending];
   if (!m) return;
   mirroring.add(lineId);
@@ -352,6 +357,14 @@ async function mirrorLine(lineId) {
     const sub = subs.find((s) => s.statusValue !== ql.STATUS.closed) || subs[0];
     if (!sub) return problem('الرقم غير موجود في QuickLine تحت هذه الوكالة — لم يتغيّر شيء هناك');
     if (sub.statusValue === m.want) return log(`${m.done} (كان كذلك مسبقاً)`);
+    if (sub.statusValue === NOT_YET) {
+      if (now() - line.updated_at > WAIT_MS) return problem(`ما زال الخط «${sub.status}» في QuickLine بعد يوم، ولم يُنفَّذ ${m.what} — نفّذه هناك يدوياً`);
+      // Keep it queued: the sweep looks again until QuickLine has activated the line.
+      if (q("UPDATE lines SET ql_pending = ? WHERE id = ? AND ql_pending = ''").run(pending, lineId).changes) retry = true;
+      const key = `${lineId}:${pending}`;
+      if (!waitLogged.has(key)) { waitLogged.add(key); log(`${m.what} بانتظار أن يفعّل QuickLine الخط (حالته الآن «${sub.status}»)`); }
+      return undefined;
+    }
     if (!m.from.includes(sub.statusValue)) return problem(`حالة الرقم في QuickLine «${sub.status}» لا تسمح بـ${m.what} — نفّذه هناك يدوياً`);
     await m.call(qlCredentials(), sub.id);
     const after = (await ql.subscriptions(qlCredentials())).find((s) => s.id === sub.id);

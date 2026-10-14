@@ -93,6 +93,8 @@ const api = http.createServer((req, res) => {
       fake.renews.push(f);
       if (fake.renewAnswer) return text(fake.renewAnswer, 400);
       // The extension takes effect at once: the cut date moves and the remaining days grow.
+      const own = fake.added.find((x) => x.id === Number(f.subscriptionId));
+      if (own) { own.daysLeft += f.days; own.cutDate = '13/12/2026'; return text('تم تمديد الاشتراك بنجاح'); }
       fake.daysLeft += f.days;
       fake.cutDate = '13/11/2026';
       return text('تم تمديد الاشتراك بنجاح');
@@ -421,6 +423,7 @@ test('QuickLine: sales by the manager go through QuickLine, renewals fit the lin
   assert.match((await renew(pk.id)).body.error, /تفعيل خط جديد/);
   const ok1 = await ok(renew(ext.id));
   assert.equal(ok1.pending, true, 'waits for QuickLine');
+  await until(async () => (await ok(call(admin, 'GET', '/api/tasks'))).find((x) => x.lineId === sale.line.id && x.type === 'renew' && x.status === 'done'));
 
   // ----- QuickLine's two systems cannot stand in for each other -----
   assert.match((await call(t, 'POST', '/api/lines', { kind: 'external', packageId: pk.id, number: '0501112233' })).body.error, /تفعيل خط جديد/);
@@ -439,13 +442,29 @@ test('QuickLine: sales by the manager go through QuickLine, renewals fit the lin
   assert.equal(fake.renews.length, renews + 1, 'sent once');
 
   // ----- a send cut off midway is handed to the manager, never resent -----
-  // (the extension of the manager's line above is still waiting on QuickLine; pretend the server died mid-send)
+  // (a request whose send began 11 minutes ago and never finished, as when the server dies mid-send)
   const { q } = require('../src/db');
-  const open = (await ok(call(admin, 'GET', '/api/tasks'))).find((x) => x.lineId === sale.line.id && x.status === 'open');
-  q("UPDATE tasks SET auto_status = 'sending', auto_at = ? WHERE id = ?").run(Date.now() - 11 * 60_000, open.id);
+  const open = { id: Number(q(`INSERT INTO tasks (type, agent_id, line_id, amount, note, created_at, auto_status, auto_at)
+    VALUES ('renew', ?, ?, 10, 'تمديد', ?, 'sending', ?)`).run(agentId, sale.line.id, Date.now() - 11 * 60_000, Date.now() - 11 * 60_000).lastInsertRowid) };
   const sentBefore = fake.renews.length;
   await require('../src/autoexec').sweep();
   const stuck = (await ok(call(admin, 'GET', '/api/tasks'))).find((x) => x.id === open.id);
   assert.deepEqual([stuck.status, stuck.autoStatus], ['open', 'unknown']);
   assert.equal(fake.renews.length, sentBefore, 'not resent');
+
+  // ----- disconnected while QuickLine still shows the line as «جديد»: nothing is sent until QuickLine activates it -----
+  const qlLine = fake.added.find((x) => x.id === 600001);
+  Object.assign(qlLine, { status: 'جديد', statusInt: 1 });
+  const calls = fake.stateCalls.length;
+  await ok(call(admin, 'POST', `/api/lines/${sale.line.id}/action`, { action: 'disconnect' }));
+  const waiting = await until(async () => (await ok(call(admin, 'GET', `/api/lines/${sale.line.id}`))).history.find((x) => x.type === 'supplier_sync'));
+  assert.match(waiting.detail, /بانتظار أن يفعّل QuickLine الخط/);
+  await require('../src/autoexec').sweep();
+  assert.equal(fake.stateCalls.length, calls, 'nothing sent while «جديد»');
+  Object.assign(qlLine, { status: 'فعال', statusInt: 2 });
+  await require('../src/autoexec').sweep();
+  assert.deepEqual(fake.stateCalls.slice(calls), [['CloseNumber', 600001, true]]);
+  assert.equal(qlLine.statusInt, 4);
+  await require('../src/autoexec').sweep();
+  assert.equal(fake.stateCalls.length, calls + 1, 'sent once');
 });
