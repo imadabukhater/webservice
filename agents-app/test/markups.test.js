@@ -69,4 +69,11 @@ test('each agent can have its own profit percentage per system; a price set by h
   assert.equal(await priceOf(t1, card), 44);
   assert.equal((await call(t1, 'GET', `/api/agents/${a1}/markups`)).status, 403);
   assert.equal((await call(t1, 'PUT', `/api/agents/${a1}/markups`, { invoice: 0 })).status, 403);
+
+  // ----- the developer's 2% of every sale: on the manager's dashboard only -----
+  const dash = await ok(call(admin, 'GET', '/api/dashboard'));
+  assert.equal(dash.devFeePercent, 2);
+  assert.deepEqual([dash.month.revenue, dash.month.profit, dash.month.devFee, dash.month.net], [55, 5, 1.1, 3.9]);
+  const agentDash = await ok(call(t1, 'GET', '/api/dashboard'));
+  assert.ok(!/devFee|net|profit/.test(JSON.stringify(agentDash)), 'agents see none of it');
 });

@@ -58,7 +58,8 @@ function kpis() {
   const k = (label, value) => `<div class="kpi"><span>${label}</span><b>${value}</b></div>`;
   if (isAdmin()) {
     return `<div class="kpis">${k('أرباح اليوم', money(d.today.profit))}${k('أرباح هذا الشهر', money(d.month.profit))}
-      ${k('مجموع أرصدة الوكلاء', money(d.balances))}${k('ديون الوكلاء', money(d.debt))}</div>`;
+      ${k('مجموع أرصدة الوكلاء', money(d.balances))}${k('ديون الوكلاء', money(d.debt))}
+      ${k(`حصة المطور هذا الشهر (${d.devFeePercent}% من المبيعات)`, money(d.month.devFee))}${k('صافي ربحك هذا الشهر', money(d.month.net))}</div>`;
   }
   return `<div class="kpis">${k('الرصيد المتاح', money(d.available))}${k('مبيعات اليوم', `${d.today.activations + d.today.renewals}`)}
     ${k('ربحك هذا الشهر', money(d.month.margin))}${k('مبيعات هذا الشهر', `${d.month.activations + d.month.renewals}`)}</div>`;

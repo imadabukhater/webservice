@@ -24,6 +24,15 @@ function lineCounts(agentId) {
   return c;
 }
 
+// The developer's share of every sale: a fixed percentage of what agents paid (sales less refunds and corrections, the
+// same "revenue" as below). It changes no price, is not a setting the manager can edit (only DEV_FEE_PERCENT on the
+// server), and is shown to the manager only, with the profit left after it.
+const DEV_FEE_PERCENT = Number(process.env.DEV_FEE_PERCENT ?? 2);
+const withDevFee = (s) => {
+  const devFee = round(s.revenue * DEV_FEE_PERCENT / 100);
+  return { ...s, devFee, net: round(s.profit - devFee) };
+};
+
 // Sales since a moment: counts, money spent by agents, manager profit, and the agent's own margin over customer prices.
 function sales(from, agentId) {
   const r = q(`SELECT
@@ -56,7 +65,7 @@ route('GET', '/api/dashboard', ANY, ({ user, query }) => {
   const agents = q("SELECT COUNT(*) AS n, COALESCE(SUM(balance), 0) AS b, COALESCE(SUM(CASE WHEN balance < 0 THEN -balance ELSE 0 END), 0) AS debt FROM users WHERE role = 'agent'").get();
   return {
     agents: agents.n, balances: round(agents.b), debt: round(agents.debt),
-    lines: lineCounts(null), today: sales(today, null), month: sales(month, null),
+    lines: lineCounts(null), today: withDevFee(sales(today, null)), month: withDevFee(sales(month, null)), devFeePercent: DEV_FEE_PERCENT,
     openTasks: q("SELECT COUNT(*) AS n FROM tasks WHERE status = 'open'").get().n,
     sims: q("SELECT COUNT(*) AS n FROM sims WHERE status = 'available'").get().n,
   };
