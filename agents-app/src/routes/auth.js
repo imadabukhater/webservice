@@ -104,6 +104,16 @@ route('PUT', '/api/settings', ADMIN, ({ body }) => {
 });
 
 // A consistent copy of the whole database, made with VACUUM INTO.
+// A copy in Google Cloud Storage now (the same one the server makes every day).
+route('POST', '/api/backup/cloud', ADMIN, async () => {
+  try {
+    return await require('../cloudbackup').backupNow();
+  } catch (e) {
+    setSetting('backup_error', String(e.message).slice(0, 300));
+    return fail(502, e.message);
+  }
+});
+
 route('GET', '/api/backup', ADMIN, ({ res }) => {
   const file = path.join(os.tmpdir(), `agents-backup-${process.pid}-${now()}.db`);
   db.exec(`VACUUM INTO '${file.replace(/'/g, "''")}'`);

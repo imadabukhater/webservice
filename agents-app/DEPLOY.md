@@ -100,6 +100,48 @@ https://your-service-name.onrender.com
 
 ---
 
+## النسخ الاحتياطي السحابي / Cloud Backups (Google Compute Engine)
+
+على سيرفر Google Compute Engine يحفظ التطبيق نسخة كاملة من قاعدة البيانات كل يوم في Google Cloud Storage
+(مضغوطة، باسم جديد كل مرة، ولا يكتب فوق نسخة قديمة). تظهر حالتها في «الإعدادات» ← «النسخ السحابي التلقائي».
+
+### الإعداد (مرة واحدة)
+```bash
+B=agents-portal-6476-backups
+SA=238738628870-compute@developer.gserviceaccount.com
+
+# المكان: خاص، ولا تُحذف أي نسخة قبل 30 يوماً، وتُحذف تلقائياً بعد 31 يوماً
+gcloud storage buckets create gs://$B --location=us-central1 --uniform-bucket-level-access --public-access-prevention
+gcloud storage buckets update gs://$B --retention-period=30d
+echo '{"rule":[{"action":{"type":"Delete"},"condition":{"age":31}}]}' > lifecycle.json
+gcloud storage buckets update gs://$B --lifecycle-file=lifecycle.json
+
+# السيرفر يضيف نسخاً فقط
+gcloud storage buckets add-iam-policy-binding gs://$B --member=serviceAccount:$SA --role=roles/storage.objectCreator
+gcloud compute instances add-metadata agents-server --zone us-central1-a --metadata backup-bucket=$B
+
+# صلاحية الكتابة في Cloud Storage للسيرفر (يتطلب إيقافه دقيقة؛ عنوانه ثابت فلا يتغيّر الرابط)
+gcloud compute instances stop agents-server --zone us-central1-a
+gcloud compute instances set-service-account agents-server --zone us-central1-a --service-account $SA \
+  --scopes=storage-rw,logging-write,monitoring-write,pubsub,service-management,service-control,trace
+gcloud compute instances start agents-server --zone us-central1-a
+```
+
+### الاسترجاع / Restore
+```bash
+gcloud storage ls gs://$B                              # النسخ المتوفرة، الأحدث آخراً
+gcloud storage cp gs://$B/agents-<التاريخ>.db.gz .
+gunzip agents-<التاريخ>.db.gz
+gcloud compute scp agents-<التاريخ>.db agents-server:/tmp/restore.db --zone us-central1-a
+gcloud compute ssh agents-server --zone us-central1-a --command "sudo systemctl stop agents-app && \
+  sudo cp /var/lib/agents-app/agents.db /var/lib/agents-app/agents.before-restore.db && \
+  sudo rm -f /var/lib/agents-app/agents.db-wal /var/lib/agents-app/agents.db-shm && \
+  sudo install -o agents -g agents -m 600 /tmp/restore.db /var/lib/agents-app/agents.db && \
+  sudo systemctl start agents-app"
+```
+
+---
+
 ## المشاكل الشائعة / Common Issues
 
 ### خطأ "ADMIN_PASSWORD غير محدد"

@@ -1,4 +1,15 @@
-import { S, api, icon, esc, field, toast, downloadBlob, changed } from '../core.js';
+import { S, api, icon, esc, field, toast, downloadBlob, changed, relTime, fmtDateTime } from '../core.js';
+
+// The daily copy in Google Cloud Storage: when the last one was made, and why the last attempt failed if it did.
+function cloudBackupHtml(s) {
+  if (!s.backupBucket && !s.backupError) {
+    return `<p class="muted small">يحفظ السيرفر نسخة كاملة كل يوم في Google Cloud Storage. لم يُضبط مكان الحفظ على هذا السيرفر بعد.</p>`;
+  }
+  const kb = s.backupLastBytes ? ` · ${Math.max(1, Math.round(s.backupLastBytes / 1024))} KB` : '';
+  return `<p class="muted small">نسخة كاملة كل يوم في <span class="ltr mono">${esc(s.backupBucket)}</span>، تُحفظ 30 يوماً ولا يستطيع السيرفر حذفها.</p>
+    ${s.backupLastAt ? `<div class="msg info">${icon('checkCircle')}<span>آخر نسخة ${relTime(s.backupLastAt)} (${fmtDateTime(s.backupLastAt)})${kb}</span></div>` : ''}
+    ${s.backupError ? `<div class="msg">${icon('alert')}<span>فشلت آخر محاولة: ${esc(s.backupError)}</span></div>` : ''}`;
+}
 
 export default {
   admin: true,
@@ -61,6 +72,10 @@ export default {
           <h2 class="dot-title">النسخ الاحتياطي</h2>
           <p class="muted">كل البيانات (الوكلاء، الأرصدة، الأرقام، السجل) في ملف واحد. نزّل نسخة بانتظام واحفظها في مكان آمن.</p>
           <button class="btn" data-action="backup">${icon('download')}تنزيل نسخة احتياطية</button>
+          <div class="divider"></div>
+          <h2 class="dot-title">النسخ السحابي التلقائي</h2>
+          <div id="cloud-backup">${cloudBackupHtml(s)}</div>
+          <button class="btn" data-action="cloud-backup" ${s.backupBucket ? '' : 'disabled title="لم يُحدَّد مكان النسخ بعد"'}>${icon('refresh')}نسخة سحابية الآن</button>
           <div class="divider"></div>
           <h2 class="dot-title">تثبيت التطبيق على الهاتف</h2>
           <p class="muted">افتح الرابط في Chrome على أندرويد أو Safari على آيفون، ثم اختر «إضافة إلى الشاشة الرئيسية». يعمل التطبيق بعدها بأيقونته وبملء الشاشة.</p>
@@ -130,6 +145,18 @@ export default {
       } catch (err) {
         box.innerHTML = `<div class="msg">${icon('alert')}<span>${esc(err.message)}</span></div>`;
       } finally { btn.disabled = false; }
+    },
+    async 'cloud-backup'(btn) {
+      btn.disabled = true;
+      try {
+        const r = await api.post('/api/backup/cloud');
+        toast(`تم حفظ النسخة (${Math.max(1, Math.round(r.bytes / 1024))} KB)`);
+      } catch (err) {
+        toast(err.message, { error: true });
+      }
+      S.settings = await api.get('/api/settings');
+      document.getElementById('cloud-backup').innerHTML = cloudBackupHtml(S.settings);
+      btn.disabled = false;
     },
     async backup() {
       const blob = await api.blob('/api/backup');

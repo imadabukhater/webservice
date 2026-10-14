@@ -18,6 +18,7 @@ require('./src/routes/art');
 require('./src/routes/quickline');
 require('./src/routes/invoices');
 require('./src/autoexec');
+require('./src/cloudbackup');
 const { dispatch } = require('./src/router');
 const { ApiError } = require('./src/util');
 

@@ -326,6 +326,12 @@ function getSettings() {
     qlMarkupInvoice: Math.max(0, Number(out.ql_markup_invoice ?? out.ql_markup) || 0),
     qlSyncedCard: Number(out.ql_synced_card) || null,
     qlSyncedInvoice: Number(out.ql_synced_invoice) || null,
+    // The daily copy in Google Cloud Storage (see cloudbackup.js): where, the last good one, and the last failure.
+    backupBucket: out.backup_bucket || '',
+    backupLastAt: Number(out.backup_last_at) || null,
+    backupLastName: out.backup_last_name || '',
+    backupLastBytes: Number(out.backup_last_bytes) || null,
+    backupError: out.backup_error || '',
   };
 }
 function artCredentials() {
