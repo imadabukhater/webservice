@@ -91,7 +91,7 @@ route('PUT', '/api/companies/:id', ADMIN, ({ params, body }) => {
 }, { maxBody: 600 * 1024 });
 
 route('DELETE', '/api/companies/:id', ADMIN, ({ params }) => {
-  if (q('SELECT 1 FROM packages WHERE company_id = ?').get(Number(params.id))) fail(400, 'احذف باقات الشركة أولاً');
+  if (q('SELECT 1 FROM packages WHERE company_id = ?').get(Number(params.id))) fail(400, 'احذف رزم الشركة أولاً');
   q('DELETE FROM companies WHERE id = ?').run(Number(params.id));
   return { ok: true };
 });
@@ -102,7 +102,7 @@ function packageFields(body, existing = {}) {
   const companyId = Number(pick('companyId', 'company_id'));
   if (!q('SELECT 1 FROM companies WHERE id = ?').get(companyId)) fail(400, 'اختر الشركة');
   const name = str(pick('name'), 80);
-  if (!name) fail(400, 'اكتب اسم الباقة');
+  if (!name) fail(400, 'اكتب اسم الرزمة');
   const cost = num(pick('cost') ?? 0, 'التكلفة');
   const price = num(pick('price') ?? 0, 'السعر');
   if (cost < 0 || price < 0) fail(400, 'الأسعار لا تكون سالبة');
@@ -133,7 +133,7 @@ route('POST', '/api/packages', ADMIN, ({ body }) => {
 // Showing or hiding it alone does not.
 route('PUT', '/api/packages/:id', ADMIN, ({ params, body }) => {
   const p = q('SELECT * FROM packages WHERE id = ?').get(Number(params.id));
-  if (!p) fail(404, 'الباقة غير موجودة');
+  if (!p) fail(404, 'الرزمة غير موجودة');
   const f = packageFields(body, p);
   const edited = p.edited || ['name', 'price', 'dataGb', 'description', 'days', 'minutes', 'sms', 'kind'].some((k) => body[k] !== undefined);
   q(`UPDATE packages SET company_id = ?, name = ?, cost = ?, price = ?, active = ?, data_gb = ?, minutes = ?, sms = ?, tag = ?, description = ?,
@@ -176,7 +176,7 @@ function offerFields(body, existing = {}) {
   const title = str(body.title ?? existing.title, 100);
   if (!title) fail(400, 'اكتب عنوان العرض');
   const packageId = body.packageId === undefined ? existing.package_id ?? null : body.packageId ? Number(body.packageId) : null;
-  if (packageId && !q('SELECT 1 FROM packages WHERE id = ?').get(packageId)) fail(400, 'الباقة غير موجودة');
+  if (packageId && !q('SELECT 1 FROM packages WHERE id = ?').get(packageId)) fail(400, 'الرزمة غير موجودة');
   const rawPrice = body.offerPrice === undefined ? existing.offer_price : body.offerPrice;
   const offerPrice = isBlank(rawPrice) ? null : num(rawPrice, 'سعر العرض');
   if (offerPrice !== null && offerPrice < 0) fail(400, 'السعر لا يكون سالباً');

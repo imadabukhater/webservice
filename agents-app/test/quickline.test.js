@@ -255,6 +255,8 @@ test('QuickLine: sync with the markup, extend a line automatically, hand the res
   assert.equal(refused.status, 'open');
   assert.equal(refused.autoStatus, 'failed', 'an answered refusal charges nothing, so the manager can simply refund');
   assert.match(refused.autoNote, /الرصيد غير كافٍ/);
+  assert.match(refused.autoNote, /رصيد حسابك في QuickLine لا يكفي/, 'in plain words');
+  assert.ok(!/\(400\)/.test(refused.autoNote), 'no HTTP codes');
   assert.equal(fake.renews.length, before + 1, 'tried once only');
   fake.renewAnswer = null;
 });
@@ -363,6 +365,11 @@ test('QuickLine: a new line, an eSIM and a ported number are activated automatic
   const refused = await until(async () => (await ok(call(admin, 'GET', '/api/tasks'))).find((x) => x.lineId === rf.line.id && !['', 'sending'].includes(x.autoStatus)));
   assert.deepEqual([refused.status, refused.autoStatus], ['open', 'failed']);
   assert.match(refused.autoNote, /الشريحة مستعملة/);
+  assert.match(refused.autoNote, /مستعملان من قبل في QuickLine — جرّب شريحة أو رقماً آخر/);
+  // The agent sees a simple state, never the technical note.
+  const mine = (await ok(call(t, 'GET', '/api/tasks'))).find((x) => x.id === refused.id);
+  assert.equal(mine.autoState, 'review');
+  assert.ok(!('autoNote' in mine) && !('autoStatus' in mine));
   const paid = (await ok(call(t, 'GET', '/api/me'))).user.balance;
   await ok(call(admin, 'POST', `/api/tasks/${refused.id}/resolve`, { status: 'rejected', response: 'رفضه QuickLine' }));
   assert.equal((await ok(call(t, 'GET', '/api/me'))).user.balance, Math.round((paid + rf.line.price) * 100) / 100);
@@ -533,4 +540,13 @@ test('QuickLine: a SIM swap reaches QuickLine, the manager can stop automation, 
   assert.equal(kept.active, false, 'lines use 2564: kept, hidden from agents');
   PACKAGES[2] = saved[2];
   PACKAGES[3] = saved[3];
+
+  // ----- the manager's system health -----
+  const h = await ok(call(admin, 'GET', '/api/health'));
+  assert.equal(h.quickline.balance, -116.67);
+  assert.ok(h.quickline.synced > 0);
+  assert.equal(h.art, null, 'art-topup not set up here');
+  assert.equal(typeof h.tasks.attention, 'number');
+  assert.equal(h.qlPending, 0);
+  assert.equal((await call(t, 'GET', '/api/health')).status, 403);
 });

@@ -22,25 +22,36 @@ function taskCard(t) {
       <span class="pill s-${t.status}">${TASK_STATUS[t.status]}</span></div>
     ${t.note ? `<p class="small" style="color:var(--ink-2)">${esc(t.note)}</p>` : ''}
     ${admin && t.autoStatus ? autoBox(t) : ''}
+    ${!admin && t.status === 'open' && t.autoState ? agentAutoBox(t) : ''}
     ${t.response ? `<p class="small muted">الرد: ${esc(t.response)}${t.resolvedBy ? ` — ${esc(t.resolvedBy)}` : ''}</p>` : ''}
     <div class="item-actions">
       ${admin && t.status === 'open' && SALE_TASKS.includes(t.type) ? `<button class="btn btn-sm" data-action="copy-task" data-id="${t.id}">${icon('copy')}نسخ التفاصيل</button>` : ''}
       ${t.hasAttachment ? `<button class="btn btn-sm" data-action="attachment" data-id="${t.id}">${icon('image')}عرض المرفق</button>` : ''}
-      ${admin && t.status === 'open' ? `<button class="btn btn-sm btn-good" data-action="resolve" data-id="${t.id}">${icon('check')}تنفيذ</button>
+      ${admin && t.status === 'open' && !running(t) ? `<button class="btn btn-sm btn-good" data-action="resolve" data-id="${t.id}">${icon('check')}تنفيذ</button>
         <button class="btn btn-sm btn-danger" data-action="reject" data-id="${t.id}">${icon('x')}رفض</button>` : ''}
       ${!admin && t.status === 'open' && ['topup', 'general'].includes(t.type) ? `<button class="btn btn-sm btn-ghost" data-action="cancel" data-id="${t.id}">إلغاء الطلب</button>` : ''}
     </div></article>`;
 }
 
-// What the art-topup executor did with a request. failed/unknown need the manager.
+// What the supplier (art-topup or QuickLine — the note says which) did with a request. failed/unknown need the manager;
+// while it is sending or sent there is nothing to do but wait.
 const AUTO = {
-  sending: ['clock', 'info', 'يُرسل إلى art-topup…'], sent: ['clock', 'info', 'أُرسل إلى art-topup — بانتظار النتيجة'],
-  done: ['checkCircle', 'info', 'نُفّذ تلقائياً عبر art-topup'], failed: ['alert', '', 'لم ينجح الشحن التلقائي — نفّذه يدوياً أو ارفضه ليُسترد المبلغ'],
-  unknown: ['alert', 'warn', 'غير مؤكد — افحص «العمليات» في art-topup قبل أي تنفيذ يدوي'],
+  sending: ['clock', 'info', 'يُرسل الآن إلى المورّد…'], sent: ['clock', 'info', 'أُرسل — بانتظار تأكيد المورّد'],
+  done: ['checkCircle', 'info', 'نُفّذ تلقائياً'], failed: ['alert', '', 'لم ينجح التنفيذ التلقائي — نفّذه يدوياً أو ارفضه ليُسترد المبلغ'],
+  unknown: ['alert', 'warn', 'غير مؤكد — افحص عند المورّد قبل أي تنفيذ يدوي'],
 };
+const running = (t) => ['sending', 'sent'].includes(t.autoStatus);
+// Open requests that wait for the manager: everything not being carried out right now.
+const needsYou = (t) => t.status === 'open' && !running(t);
 function autoBox(t) {
   const [ic, cls, label] = AUTO[t.autoStatus] || AUTO.sent;
   return `<div class="msg ${cls}">${icon(ic)}<span><b>${label}</b>${t.autoNote ? `<br><small>${esc(t.autoNote)}</small>` : ''}</span></div>`;
+}
+// The agent's view of the same: plain words, no supplier details.
+function agentAutoBox(t) {
+  return t.autoState === 'running'
+    ? `<div class="msg info">${icon('clock')}<span><b>يُنفَّذ تلقائياً الآن</b> — يصلك تنبيه عند الانتهاء.</span></div>`
+    : `<div class="msg warn">${icon('clock')}<span><b>يراجعه المدير</b> — يُكمله أو يُرجع لك المبلغ كاملاً.</span></div>`;
 }
 
 function dueCard(l) {
@@ -126,14 +137,22 @@ export default {
   },
   render() {
     if (isAdmin()) {
-      const open = V.tasks.filter((t) => t.status === 'open');
+      // Three groups: what needs the manager, what a supplier is carrying out now, and what is finished.
+      const mine = V.tasks.filter(needsYou);
+      const auto = V.tasks.filter((t) => t.status === 'open' && running(t));
       const closed = V.tasks.filter((t) => t.status !== 'open');
-      const list = V.tab === 'open' ? open : closed;
+      const tab = ['open', 'auto', 'closed'].includes(V.tab) ? V.tab : 'open';
+      const list = { open: mine, auto, closed }[tab];
+      const none = {
+        open: ['checkCircle', 'لا شيء يحتاج تدخلك', 'الطلبات اليدوية، وما لم ينجح تلقائياً، تظهر هنا.'],
+        auto: ['clock', 'لا شيء يُنفَّذ الآن', 'ما يُرسل إلى art-topup أو QuickLine يظهر هنا حتى يكتمل.'],
+        closed: ['checkCircle', 'لا توجد مهام منجزة', ''],
+      }[tab];
       return `
-        <div class="segmented"><button data-action="tab" data-tab="open" aria-pressed="${V.tab === 'open'}">مفتوحة (${open.length})</button>
-          <button data-action="tab" data-tab="closed" aria-pressed="${V.tab === 'closed'}">المنجزة</button></div>
-        ${list.length ? `<div class="grid-cards">${list.map(taskCard).join('')}</div>`
-          : empty('checkCircle', V.tab === 'open' ? 'لا توجد مهام مفتوحة' : 'لا توجد مهام منجزة', V.tab === 'open' ? 'طلبات التفعيل والشحن والتمديد وتحويل الأرقام وeSIM تظهر هنا.' : '')}`;
+        <div class="segmented"><button data-action="tab" data-tab="open" aria-pressed="${tab === 'open'}">تحتاج تدخلك (${mine.length})</button>
+          <button data-action="tab" data-tab="auto" aria-pressed="${tab === 'auto'}">يُنفَّذ تلقائياً (${auto.length})</button>
+          <button data-action="tab" data-tab="closed" aria-pressed="${tab === 'closed'}">المنجزة</button></div>
+        ${list.length ? `<div class="grid-cards">${list.map(taskCard).join('')}</div>` : empty(...none)}`;
     }
     return `
       <section class="list"><div class="section-title"><h2 class="dot-title">تجديدات مستحقة</h2><span class="muted small">${V.due.length}</span></div>

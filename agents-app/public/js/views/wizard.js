@@ -63,6 +63,7 @@ function modeNote() {
 const step3Valid = () => {
   const numberOk = W.numberState === 'ok' && (!poolSale() || !!W.ql.numberId);
   if (qlSale() && W.port && !W.ql.oldCompany) return false;
+  if (qlSale() && !W.customerName.trim()) return false;
   if (external() || W.esim) return numberOk;
   return numberOk && W.sim.valid;
 };
@@ -195,6 +196,8 @@ function step3() {
       <div class="hint" id="wz-number-hint"></div></div>`}
     ${qlSale() && W.port ? `<div class="field"><label for="wz-oldco">الشركة التي يُحوَّل منها الرقم</label>
       <select class="input" id="wz-oldco"><option value="">اختر الشركة</option>${(W.ql.companies || []).map((c) => `<option value="${c.id}" ${String(c.id) === String(W.ql.oldCompany) ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select></div>` : ''}
+    <div class="field"><label for="wz-cname">اسم الزبون ${qlSale() ? '<span class="opt">(مطلوب — الاسم والعائلة)</span>' : '<span class="opt">(اختياري)</span>'}</label>
+      <input class="input" id="wz-cname" value="${esc(W.customerName)}" autocomplete="off"></div>
     ${pkg()?.days ? `<div class="field"><span class="label">المدة</span><div class="msg info">${icon('cal')}<span>${pkg().days} يوماً — مدة ثابتة لهذه الرزمة</span></div></div>`
       : `<div class="field"><span class="label">المدة</span>
       <div class="months">${MONTHS.map((m) => `<button type="button" data-action="wz-months" data-m="${m}" aria-pressed="${m === W.months}">${m}<small>${m === 1 ? 'شهر' : m === 2 ? 'شهران' : m <= 10 ? 'أشهر' : 'شهراً'}</small></button>`).join('')}</div></div>`}
@@ -210,7 +213,6 @@ function step4() {
     <h2 class="dot-title">تلخيص الطلبية</h2>
     <div class="kv">${rows().map(([k, v]) => `<div>${k}</div><div>${v}</div>`).join('')}</div>
     <div class="row2 stack-xs">
-      <div class="field"><label for="wz-cname">اسم الزبون</label><input class="input" id="wz-cname" value="${esc(W.customerName)}" placeholder="${qlSale() ? 'مطلوب — الاسم والعائلة' : 'اختياري'}"></div>
       <div class="field"><label for="wz-cprice">سعر الزبون (₪)</label><input class="input ltr" id="wz-cprice" type="number" min="0" step="0.01" inputmode="decimal" value="${esc(W.customerPrice)}" placeholder="اختياري"></div>
     </div>
     <div class="hint" id="wz-margin"></div>
@@ -386,6 +388,7 @@ export default {
       root.querySelector('#wz-esim')?.addEventListener('change', (e) => { W.esim = e.target.checked; qlSwitch(); this.rerenderSelf(); });
       root.querySelector('#wz-port')?.addEventListener('change', (e) => { W.port = e.target.checked; qlSwitch(); this.rerenderSelf(); });
       root.querySelector('#wz-oldco')?.addEventListener('change', (e) => { W.ql.oldCompany = e.target.value; refreshSummary(); });
+      root.querySelector('#wz-cname')?.addEventListener('input', (e) => { W.customerName = e.target.value; refreshSummary(); });
       if (poolSale() && W.ql.state === 'idle') loadPool(() => this.rerenderSelf());
       if (qlSale() && W.port && !W.ql.companies) {
         W.ql.companies = [];

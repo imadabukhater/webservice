@@ -103,7 +103,7 @@ function renderShell() {
       <main class="content" id="view"></main>
     </div>
     <nav class="tabbar" aria-label="تنقل سريع">${TABS[role()].map(([r, label, ic]) => r === 'new'
-      ? `<a href="#/new" data-route="new" aria-label="اشتراك فاتورة جديدة"><span class="fab">${icon(ic)}</span></a>`
+      ? `<button data-action="new-menu" aria-label="بيع جديد"><span class="fab">${icon(ic)}</span></button>`
       : r === 'menu' ? `<button data-action="open-drawer">${icon(ic)}<span>${label}</span></button>`
         : `<a href="#/${r}" data-route="${r}">${icon(ic)}<span>${label}</span></a>`).join('')}</nav>
   </div>`;
@@ -317,8 +317,24 @@ async function logout() {
   renderLogin(onLoggedIn);
 }
 
+// The "+" in the tab bar: the three ways to sell, so none is hidden away on the home page.
+function openNewMenu() {
+  const items = [
+    ['#/new', 'userPlus', '', 'اشتراك فاتورة جديدة', 'خط جديد بشريحة، أو eSIM، أو تحويل رقم'],
+    ['#/new?type=external', 'card', 'green', 'زبون دفع مسبق', 'شحن رقم مسبق الدفع'],
+    ['#/renew', 'repeat', 'amber', 'تمديد زبون قائم', 'تمديد رزمة رقم مفعّل'],
+  ];
+  sheet({
+    title: isAdmin() ? 'بيع لوكيل' : 'بيع جديد',
+    body: `<div class="action-list">${items.map(([href, ic, color, label, hint]) => `<button type="button" data-go="${href}">
+      <span class="tile sm ${color}">${icon(ic)}</span><span class="grow"><b>${label}</b><br><small class="muted">${hint}</small></span></button>`).join('')}</div>`,
+    onMount(form, el) { el.querySelectorAll('[data-go]').forEach((b) => b.addEventListener('click', () => go(b.dataset.go))); },
+  });
+}
+
 // ---------- global actions ----------
 const GLOBAL = {
+  'new-menu': openNewMenu,
   'open-drawer': openDrawer,
   'close-drawer': closeDrawer,
   async nav(a) {

@@ -77,7 +77,7 @@ function priceFor(agentId, packageId) {
                FROM packages p JOIN companies c ON c.id = p.company_id
                ${AGENT_PRICE_JOINS}
                WHERE p.id = ?`).get(agentId, agentId, Number(packageId));
-  if (!p || !p.active) fail(404, 'الباقة غير متوفرة');
+  if (!p || !p.active) fail(404, 'الرزمة غير متوفرة');
   return p;
 }
 
@@ -94,7 +94,7 @@ function quote(agentId, { packageId, offerId }) {
     const pkg = priceFor(agentId, offer.package_id);
     return { pkg, offer, unit: round(offer.offer_price ?? pkg.agent_price) };
   }
-  if (!packageId) fail(400, 'اختر الباقة');
+  if (!packageId) fail(400, 'اختر الرزمة');
   const pkg = priceFor(agentId, packageId);
   return { pkg, offer: null, unit: round(pkg.agent_price) };
 }

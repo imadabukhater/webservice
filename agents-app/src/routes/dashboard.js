@@ -66,7 +66,7 @@ route('GET', '/api/dashboard', ANY, ({ user, query }) => {
   return {
     agents: agents.n, balances: round(agents.b), debt: round(agents.debt),
     lines: lineCounts(null), today: withDevFee(sales(today, null)), month: withDevFee(sales(month, null)), devFeePercent: DEV_FEE_PERCENT,
-    openTasks: q("SELECT COUNT(*) AS n FROM tasks WHERE status = 'open'").get().n,
+    openTasks: q("SELECT COUNT(*) AS n FROM tasks WHERE status = 'open' AND auto_status NOT IN ('sending','sent')").get().n,
     sims: q("SELECT COUNT(*) AS n FROM sims WHERE status = 'available'").get().n,
   };
 });
@@ -156,7 +156,8 @@ route('GET', '/api/notifications', ANY, ({ user }) => {
     }
     tasks = expiring + q("SELECT COUNT(*) AS n FROM tasks WHERE agent_id = ? AND status = 'open'").get(user.id).n;
   } else {
-    const open = q("SELECT COUNT(*) AS n FROM tasks WHERE status = 'open'").get().n;
+    // What waits for the manager: open requests no supplier is carrying out right now.
+    const open = q("SELECT COUNT(*) AS n FROM tasks WHERE status = 'open' AND auto_status NOT IN ('sending','sent')").get().n;
     if (open) alerts.push({ kind: 'tasks', title: `${arCount(open, { one: 'طلب واحد', two: 'طلبان', few: 'طلبات', many: 'طلباً' })} بانتظارك`, body: 'تفعيل وشحن وتمديد خطوط، أرصدة، تحويل أرقام وeSIM', link: '#/tasks' });
     if (s.lowBalance > 0) {
       const low = q("SELECT COUNT(*) AS n FROM users WHERE role = 'agent' AND active = 1 AND balance + credit_limit < ?").get(s.lowBalance).n;

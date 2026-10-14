@@ -52,7 +52,7 @@ route('POST', '/api/quickline/sync', ADMIN, ({ body }) => { const kind = kindOf(
 
 async function syncKind(creds, kind) {
   const items = await ql.catalog(creds, kind);
-  if (!items.length) fail(502, 'QuickLine: لم أجد باقات');
+  if (!items.length) fail(502, 'QuickLine: لم أجد رزماً');
   return tx(() => {
     let added = 0;
     let updated = 0;

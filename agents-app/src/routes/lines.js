@@ -65,7 +65,7 @@ route('POST', '/api/lines', ANY, ({ user, body }) => tx(() => {
   let unit = quoted;
   if (isAdmin && !isBlank(body.unitPrice)) unit = num(body.unitPrice, 'السعر');
   if (unit < 0) fail(400, 'السعر لا يكون سالباً');
-  if (!isAdmin && !(unit > 0)) fail(400, 'لم يحدد المدير سعر هذه الباقة بعد');
+  if (!isAdmin && !(unit > 0)) fail(400, 'لم يحدد المدير سعر هذه الرزمة بعد');
   // A package with a set duration (e.g. 90 days) is sold once, not per month.
   const days = pkg.days || null;
   if (days) months = 1;
@@ -159,9 +159,9 @@ function renewLine(user, l, body) {
   if (!agent.active) fail(403, 'حساب الوكيل موقوف');
   let months = int(Number(body.months ?? 1), 'المدة', 1, 24);
   const packageId = body.offerId ? null : body.packageId ?? l.package_id;
-  if (!body.offerId && !packageId) fail(400, 'اختر الباقة');
+  if (!body.offerId && !packageId) fail(400, 'اختر الرزمة');
   const { pkg, offer, unit: quoted } = D.quote(agent.id, { packageId, offerId: body.offerId });
-  if (l.company_id && pkg.company_id !== l.company_id) fail(400, `اختر باقة من ${l.company_name}`);
+  if (l.company_id && pkg.company_id !== l.company_id) fail(400, `اختر رزمة من ${l.company_name}`);
   // A line is extended by its own supplier, on its own package there (see quickline.renewalProblem).
   const misfit = require('../quickline').renewalProblem(l.package_ref, pkg.art_card_id);
   if (misfit) fail(400, misfit);
@@ -170,7 +170,7 @@ function renewLine(user, l, body) {
   let unit = quoted;
   if (isAdmin && !isBlank(body.unitPrice)) unit = num(body.unitPrice, 'السعر');
   if (unit < 0) fail(400, 'السعر لا يكون سالباً');
-  if (!isAdmin && !(unit > 0)) fail(400, 'لم يحدد المدير سعر هذه الباقة بعد');
+  if (!isAdmin && !(unit > 0)) fail(400, 'لم يحدد المدير سعر هذه الرزمة بعد');
   const total = round(unit * months);
   const cost = round(pkg.cost * months);
   const customerPrice = optNum(body.customerPrice, 'سعر الزبون');

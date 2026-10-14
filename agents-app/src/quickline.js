@@ -73,8 +73,22 @@ async function api(creds, method, route, body) {
     await login(creds);
     r = await request(method, route, { body, jwt: session.jwt });
   }
-  if (r.status >= 400) throw new QuickLineError(`QuickLine: رُفض الطلب (${r.status})${r.text ? ` — ${r.text}` : ''}`, { refused: true });
+  if (r.status >= 400) throw new QuickLineError(refusal(r.status, r.text), { refused: true });
   return r;
+}
+
+// A refusal in plain words and what to do, with QuickLine's own words kept in brackets for checking there.
+const REFUSALS = [
+  [/استعمال|مستعمل|مستخدم|used|בשימוש/i, 'الرقم أو الشريحة مستعملان من قبل في QuickLine — جرّب شريحة أو رقماً آخر'],
+  [/رصيد|credit|balance|יתרה/i, 'رصيد حسابك في QuickLine لا يكفي — اشحن الرصيد هناك ثم نفّذ الطلب'],
+  [/غير موجود|not found|לא נמצא/i, 'غير موجود في QuickLine'],
+  [/شريحة|sim/i, 'QuickLine لم يقبل الشريحة — تأكد من رقمها'],
+];
+function refusal(status, text) {
+  const said = String(text || '').replace(/^"|"$/g, '').trim();
+  const known = REFUSALS.find(([re]) => re.test(said))?.[1]
+    || (status === 401 || status === 403 ? 'QuickLine رفض صلاحية الحساب — تأكد من بريد QuickLine وكلمة المرور في الإعدادات' : 'QuickLine رفض الطلب');
+  return said ? `${known} (QuickLine: ${said.slice(0, 160)})` : known;
 }
 
 const gbOf = (s) => { const m = /(\d+(?:\.\d+)?)\s*(?:جيجا|جبجا|GB|G\b)/i.exec(s); return m ? Number(m[1]) : null; };

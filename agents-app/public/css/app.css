@@ -652,3 +652,18 @@ table.data tfoot th { background: var(--surface-2); font: 600 .86rem var(--f-ui)
 .sys-row small { display: block; color: var(--muted); font-size: .8rem; }
 .sys-row + .sys-row { padding-top: 12px; border-top: 1px solid var(--line); }
 .segmented button svg { width: 16px; height: 16px; margin-inline-end: 4px; vertical-align: -3px; }
+
+/* The manager's system health card */
+.health { display: grid; gap: 4px; margin-top: 8px; }
+.health-row { display: flex; align-items: center; gap: 12px; padding: 10px 6px; border-radius: 12px; color: inherit; text-decoration: none; }
+.health-row:hover { background: var(--surface-2); }
+.health-row .grow { display: grid; gap: 2px; min-width: 0; }
+.health-row small { color: var(--muted); overflow-wrap: anywhere; }
+.health-row svg { width: 16px; height: 16px; color: var(--muted); flex: none; }
+
+/* Agent price sheet: one collapsible block per company */
+.pr-group { border-bottom: 1px solid var(--line); padding: 4px 0; }
+.pr-group > summary { cursor: pointer; padding: 12px 4px; list-style: none; display: flex; gap: 8px; align-items: center; }
+.pr-group > summary::-webkit-details-marker { display: none; }
+.pr-group > summary::before { content: '›'; transform: rotate(90deg); color: var(--muted); transition: transform .15s; }
+.pr-group[open] > summary::before { transform: rotate(-90deg); }

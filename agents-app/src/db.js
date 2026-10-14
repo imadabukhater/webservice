@@ -373,9 +373,9 @@ function bootstrap() {
     pk.run(cellcom, '500 جيجا', 1, 500);
     pk.run(cellcom, '300 جيجا', 2, 300);
     pk.run(cellcom, '100 جيجا', 3, 100);
-    pk.run(co.run('بارتنر', 2, '#12a39a', '').lastInsertRowid, 'باقة بارتنر', 1, null);
-    pk.run(co.run('بيلفون', 3, '#0a74c9', '8997250').lastInsertRowid, 'باقة بيلفون', 1, null);
-    pk.run(co.run('هوت موبايل', 4, '#d7192d', '').lastInsertRowid, 'باقة هوت موبايل', 1, null);
+    pk.run(co.run('بارتنر', 2, '#12a39a', '').lastInsertRowid, 'رزمة بارتنر', 1, null);
+    pk.run(co.run('بيلفون', 3, '#0a74c9', '8997250').lastInsertRowid, 'رزمة بيلفون', 1, null);
+    pk.run(co.run('هوت موبايل', 4, '#d7192d', '').lastInsertRowid, 'رزمة هوت موبايل', 1, null);
     pkFull.run(co.run('الكروت', 5, '#ff5722', '').lastInsertRowid, 'كرت 70 شيكل', 1, 70, 70);
   }
 }

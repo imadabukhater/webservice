@@ -71,21 +71,48 @@ async function openPrices(a) {
         <span class="hint">سعر الوكيل = التكلفة + النسبة، لكل نظام وحده، ويتبع التكلفة إذا تغيّرت. اتركها فارغة ليأخذ أسعار الرزم العادية.</span>
         <div class="row2 stack-xs">${SYSTEMS.filter(([k]) => used.has(k) || markups[k] !== null).map(([k, label]) => `<div class="field"><label for="mk-${k}">${label} (%)</label>
           <input class="input ltr" id="mk-${k}" data-markup="${k}" type="number" min="0" max="200" step="0.5" inputmode="decimal" placeholder="سعر الرزمة" value="${markups[k] ?? ''}"></div>`).join('')}</div></div>
+      <div class="search-box">${icon('search', 'i lead')}<input class="input" id="pr-q" type="search" placeholder="ابحث باسم الرزمة أو الشركة…" aria-label="بحث في الرزم"></div>
+      <div class="segmented" id="pr-sys"><button type="button" data-sys="" aria-pressed="true">الكل</button>${SYSTEMS.filter(([k]) => used.has(k)).map(([k, label]) => `<button type="button" data-sys="${k}" aria-pressed="false">${label}</button>`).join('')}</div>
       <div class="card card-pad" style="display:grid;gap:10px;box-shadow:none;background:var(--surface-2)">
-        <b>تعديل سريع لكل الرزم</b>
+        <b>تعديل سريع للرزم الظاهرة</b>
         <div class="input-group wrap"><input class="input ltr" id="pr-bulk" type="number" step="0.01" inputmode="decimal" placeholder="مثال: 5">
           <button type="button" class="btn" data-bulk="minus">خصم ₪ من سعره</button><button type="button" class="btn" data-bulk="clear">إزالة الأسعار الخاصة</button></div></div>
-      ${[...groups.entries()].map(([name, list]) => `<div class="field"><h3>${esc(name)}</h3>${list.map((r) => `
-        <div class="item-top" style="padding:10px 0;border-bottom:1px solid var(--line)">
+      ${[...groups.entries()].map(([name, list]) => `<details class="pr-group" data-group><summary><b>${esc(name)}</b> <span class="muted small" data-count>${list.length}</span></summary>${list.map((r) => `
+        <div class="item-top" data-row data-system="${r.system}" data-name="${esc(`${r.name} ${name}`.toLowerCase())}" style="padding:10px 0;border-bottom:1px solid var(--line)">
           <div class="grow"><b>${esc(r.name)}</b>${r.active ? '' : ' <span class="pill">موقوفة</span>'}<div class="item-sub"><span data-base="${r.packageId}"></span><span>التكلفة ${fmtMoney(r.cost)}</span><span data-margin="${r.packageId}"></span></div></div>
           <input class="input ltr" style="width:120px" type="number" min="0" step="0.01" inputmode="decimal" data-pkg="${r.packageId}" value="${r.customPrice ?? ''}" aria-label="سعر خاص">
-        </div>`).join('')}</div>`).join('') || empty('box', 'لا توجد رزم', 'أضف الرزم من «الشركات والرزم».')}`,
+        </div>`).join('')}</details>`).join('') || empty('box', 'لا توجد رزم', 'أضف الرزم من «الشركات والرزم».')}`,
     submit: 'حفظ الأسعار',
     onMount(form) {
       const byId = new Map(rows.map((r) => [String(r.packageId), r]));
+      // Search and the system filter show only matching packages; a search opens the companies it finds.
+      let sys = '';
+      const filter = () => {
+        const term = form.querySelector('#pr-q').value.trim().toLowerCase();
+        form.querySelectorAll('[data-group]').forEach((g) => {
+          let shown = 0;
+          g.querySelectorAll('[data-row]').forEach((row) => {
+            const on = (!sys || row.dataset.system === sys) && (!term || row.dataset.name.includes(term));
+            row.hidden = !on;
+            if (on) shown++;
+          });
+          g.hidden = !shown;
+          g.querySelector('[data-count]').textContent = shown;
+          if (term) g.open = true;
+        });
+      };
+      form.querySelector('#pr-q').addEventListener('input', filter);
+      form.querySelectorAll('#pr-sys [data-sys]').forEach((b) => b.addEventListener('click', () => {
+        sys = b.dataset.sys;
+        form.querySelectorAll('#pr-sys [data-sys]').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+        filter();
+      }));
+      // With few companies, show them open.
+      if (groups.size <= 2) form.querySelectorAll('[data-group]').forEach((g) => { g.open = true; });
       form.querySelectorAll('[data-bulk]').forEach((b) => b.addEventListener('click', () => {
         const v = Number(form.querySelector('#pr-bulk').value) || 0;
-        form.querySelectorAll('input[data-pkg]').forEach((i) => {
+        // Only the packages on screen (after search and filter).
+        form.querySelectorAll('[data-row]:not([hidden]) input[data-pkg]').forEach((i) => {
           i.value = b.dataset.bulk === 'clear' ? '' : Math.max(0, round(base(form, byId.get(i.dataset.pkg)) - v));
         });
         form.dispatchEvent(new Event('input'));

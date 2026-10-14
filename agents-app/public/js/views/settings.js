@@ -11,14 +11,19 @@ function cloudBackupHtml(s) {
     ${s.backupError ? `<div class="msg">${icon('alert')}<span>فشلت آخر محاولة: ${esc(s.backupError)}</span></div>` : ''}`;
 }
 
+// Three tabs, so each part is short: the app itself, the suppliers' accounts, and the backups.
+const V = { tab: 'general' };
+const TABS = [['general', 'عام', 'sliders'], ['suppliers', 'المورّدون', 'refresh'], ['backup', 'النسخ الاحتياطي', 'download']];
+
 export default {
   admin: true,
   title: () => ({ title: 'الإعدادات', subtitle: 'اسم التطبيق، الرسوم، الدعم الفني والنسخ الاحتياطي' }),
   async load() { S.settings = await api.get('/api/settings'); },
   render() {
     const s = S.settings;
-    return `
-      <div class="two-col">
+    const tab = TABS.some(([k]) => k === V.tab) ? V.tab : 'general';
+    const parts = {
+      general: `
         <form class="card card-pad form" id="settings-form" novalidate>
           <h2 class="dot-title">عام</h2>
           <div class="field"><label for="st-name">اسم التطبيق</label><input class="input" id="st-name" name="appName" value="${esc(s.appName)}">
@@ -38,6 +43,12 @@ export default {
           <div id="settings-msg"></div>
           <button class="btn btn-primary" type="submit">${icon('check')}حفظ الإعدادات</button>
         </form>
+        <section class="card card-pad form">
+          <h2 class="dot-title">تثبيت التطبيق على الهاتف</h2>
+          <p class="muted">افتح الرابط في Chrome على أندرويد أو Safari على آيفون، ثم اختر «إضافة إلى الشاشة الرئيسية». يعمل التطبيق بعدها بأيقونته وبملء الشاشة.</p>
+        </section>
+`,
+      suppliers: `
         <form class="card card-pad form" id="art-form" novalidate autocomplete="off">
           <h2 class="dot-title">الشحن التلقائي عبر art-topup</h2>
           <p class="muted small">يشحن السيرفر كروت الشركات المضبوطة على «تلقائي» من حسابك في art-topup، ويُكمل الطلب بنفسه. إن تعذّر، يبقى الطلب عندك.</p>
@@ -68,6 +79,8 @@ export default {
             <a class="btn" href="#/catalog">${icon('box')}الشركات والرزم</a>
           </div>
         </form>
+`,
+      backup: `
         <section class="card card-pad form">
           <h2 class="dot-title">النسخ الاحتياطي</h2>
           <p class="muted">كل البيانات (الوكلاء، الأرصدة، الأرقام، السجل) في ملف واحد. نزّل نسخة بانتظام واحفظها في مكان آمن.</p>
@@ -76,14 +89,14 @@ export default {
           <h2 class="dot-title">النسخ السحابي التلقائي</h2>
           <div id="cloud-backup">${cloudBackupHtml(s)}</div>
           <button class="btn" data-action="cloud-backup" ${s.backupBucket ? '' : 'disabled title="لم يُحدَّد مكان النسخ بعد"'}>${icon('refresh')}نسخة سحابية الآن</button>
-          <div class="divider"></div>
-          <h2 class="dot-title">تثبيت التطبيق على الهاتف</h2>
-          <p class="muted">افتح الرابط في Chrome على أندرويد أو Safari على آيفون، ثم اختر «إضافة إلى الشاشة الرئيسية». يعمل التطبيق بعدها بأيقونته وبملء الشاشة.</p>
         </section>
-      </div>`;
+`,
+    };
+    return `<div class="segmented">${TABS.map(([k, label, ic]) => `<button data-action="tab" data-tab="${k}" aria-pressed="${tab === k}">${icon(ic)}${label}</button>`).join('')}</div>
+      <div class="two-col">${parts[tab]}</div>`;
   },
   mount(root) {
-    root.querySelector('#art-form').addEventListener('submit', async (e) => {
+    root.querySelector('#art-form')?.addEventListener('submit', async (e) => {
       e.preventDefault();
       const form = e.currentTarget;
       const msg = root.querySelector('#art-msg');
@@ -95,7 +108,7 @@ export default {
         msg.innerHTML = `<div class="msg">${icon('alert')}<span>${esc(err.message)}</span></div>`;
       }
     });
-    root.querySelector('#ql-form').addEventListener('submit', async (e) => {
+    root.querySelector('#ql-form')?.addEventListener('submit', async (e) => {
       e.preventDefault();
       const form = e.currentTarget;
       const msg = root.querySelector('#ql-msg');
@@ -107,7 +120,7 @@ export default {
         msg.innerHTML = `<div class="msg">${icon('alert')}<span>${esc(err.message)}</span></div>`;
       }
     });
-    root.querySelector('#settings-form').addEventListener('submit', async (e) => {
+    root.querySelector('#settings-form')?.addEventListener('submit', async (e) => {
       e.preventDefault();
       const form = e.currentTarget;
       const msg = root.querySelector('#settings-msg');
@@ -126,6 +139,7 @@ export default {
     });
   },
   actions: {
+    tab(btn, e, ctx) { V.tab = btn.dataset.tab; ctx.rerender(); },
     async 'art-check'(btn) {
       const box = document.getElementById('art-msg');
       btn.disabled = true;

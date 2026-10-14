@@ -13,12 +13,15 @@ const TYPE_LABEL = {
 const LINE_TASKS = ['port', 'esim', 'activate', 'recharge'];
 const DONE_OP = { port: 'port_done', esim: 'esim_done', activate: 'activate_done', recharge: 'activate_done' };
 
-const taskView = (t) => ({
+// The manager sees how a supplier is carrying a request out (autoStatus, autoNote); an agent only a simple state:
+// running (being carried out automatically), review (waiting for the manager) or '' — never the technical notes.
+const autoStateFor = (s) => (['sending', 'sent'].includes(s) ? 'running' : ['failed', 'unknown'].includes(s) ? 'review' : '');
+const taskView = (t, role = 'admin') => ({
   id: t.id, type: t.type, status: t.status, agentId: t.agent_id, agentName: t.agent_name || '',
   lineId: t.line_id, lineNumber: t.line_number || '', linePackage: t.line_package || '',
   amount: t.amount === null ? null : round(t.amount), note: t.note, response: t.response,
   hasAttachment: !!t.has_attachment, createdAt: t.created_at, resolvedAt: t.resolved_at, resolvedBy: t.resolved_by,
-  autoStatus: t.auto_status || '', autoNote: t.auto_note || '',
+  ...(role === 'admin' ? { autoStatus: t.auto_status || '', autoNote: t.auto_note || '' } : { autoState: autoStateFor(t.auto_status) }),
 });
 
 const TASK_SELECT = `SELECT t.id, t.type, t.status, t.agent_id, t.line_id, t.amount, t.note, t.response, (t.attachment != '') AS has_attachment,
@@ -39,13 +42,13 @@ route('GET', '/api/tasks', ANY, ({ user, query }) => {
   if (query.status === 'open') where += " AND t.status = 'open'";
   else if (query.status === 'closed') where += " AND t.status != 'open'";
   if (query.type) { where += ' AND t.type = ?'; args.push(String(query.type)); }
-  return q(`${TASK_SELECT} WHERE ${where} ORDER BY t.status = 'open' DESC, t.created_at DESC, t.id DESC LIMIT 500`).all(...args).map(taskView);
+  return q(`${TASK_SELECT} WHERE ${where} ORDER BY t.status = 'open' DESC, t.created_at DESC, t.id DESC LIMIT 500`).all(...args).map((t) => taskView(t, user.role));
 });
 
 route('GET', '/api/tasks/:id', ANY, ({ user, params }) => {
   const t = getTask(params.id, user);
   const row = q(`${TASK_SELECT} WHERE t.id = ?`).get(t.id);
-  return { ...taskView(row), attachment: t.attachment };
+  return { ...taskView(row, user.role), attachment: t.attachment };
 });
 
 // Agents ask the manager for a top-up (with an optional receipt photo) or anything else.
