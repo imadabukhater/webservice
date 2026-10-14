@@ -50,11 +50,13 @@ route('POST', '/api/logout', ANY, ({ token }) => {
 
 route('GET', '/api/me', ANY, ({ user }) => ({ user: publicUser(user), settings: settingsFor(user) }));
 
-// Agents do not see the manager's art-topup account or profit percentages.
+// Agents see only what their screens need — never the suppliers' accounts, the manager's profit percentages or the
+// backups. A list of what to show, so a setting added later stays the manager's unless it is added here.
+const AGENT_SETTINGS = ['appName', 'warnDays', 'lowBalance', 'esimFee', 'supportWhatsapp'];
 function settingsFor(user) {
   const s = getSettings();
   if (user.role === 'admin') return s;
-  return Object.fromEntries(Object.entries(s).filter(([k]) => !k.startsWith('art')));
+  return Object.fromEntries(AGENT_SETTINGS.map((k) => [k, s[k]]));
 }
 
 route('POST', '/api/me/password', ANY, ({ user, body, token }) => {

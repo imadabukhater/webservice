@@ -51,7 +51,8 @@ function sendJson(res, status, data) {
 
 function serveStatic(req, res, pathname) {
   let file = path.normalize(path.join(PUBLIC_DIR, pathname === '/' ? 'index.html' : pathname));
-  if (!file.startsWith(PUBLIC_DIR)) {
+  // Inside public/ only (with the separator, so a sibling folder whose name starts with "public" is not inside).
+  if (!file.startsWith(PUBLIC_DIR + path.sep)) {
     res.writeHead(403);
     return res.end();
   }
@@ -65,17 +66,26 @@ function serveStatic(req, res, pathname) {
     ...SECURITY_HEADERS,
     ...(ext === '.html' ? { 'Content-Security-Policy': CSP } : {}),
   });
-  fs.createReadStream(file).pipe(res);
+  fs.createReadStream(file).on('error', () => res.destroy()).pipe(res);
 }
 
 async function handle(req, res) {
-  const url = new URL(req.url, 'http://x');
-  if (!url.pathname.startsWith('/api/')) {
-    if (req.method !== 'GET' && req.method !== 'HEAD') {
-      res.writeHead(405);
-      return res.end();
+  // Nothing a request carries may take the server down: an unhandled error here would end the whole process.
+  let url;
+  try {
+    url = new URL(req.url, 'http://x');
+    if (!url.pathname.startsWith('/api/')) {
+      if (req.method !== 'GET' && req.method !== 'HEAD') {
+        res.writeHead(405);
+        return res.end();
+      }
+      return serveStatic(req, res, decodeURIComponent(url.pathname));
     }
-    return serveStatic(req, res, decodeURIComponent(url.pathname));
+  } catch {
+    // A malformed address (e.g. a broken %-escape).
+    if (res.headersSent) return res.destroy();
+    res.writeHead(400);
+    return res.end();
   }
   try {
     const out = await dispatch(req, res, url);
