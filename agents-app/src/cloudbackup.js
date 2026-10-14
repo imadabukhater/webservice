@@ -60,6 +60,9 @@ function backupNow() {
       }
       if (!r.ok) {
         const why = (await r.text()).slice(0, 200);
+        // "Provided scope(s) are not authorized": the VM itself may only read Cloud Storage (its access scopes), which
+        // only changes with the VM stopped. Anything else 403 is the bucket's own permission.
+        if (/scope/i.test(why)) throw new Error('لا صلاحية كتابة للسيرفر في Cloud Storage بعد: تُفعَّل بإيقاف السيرفر دقيقة وتغيير صلاحياته (DEPLOY.md ← النسخ الاحتياطي السحابي)');
         throw new Error(r.status === 403 ? `لا صلاحية للكتابة في ${b} — راجع صلاحيات السيرفر (${why})` : `رفض Cloud Storage النسخة (${r.status}) ${why}`);
       }
       setSetting('backup_bucket', b);

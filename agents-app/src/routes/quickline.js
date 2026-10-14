@@ -83,14 +83,30 @@ async function syncKind(creds, kind) {
         added++;
       }
     }
-    const off = q(`UPDATE packages SET active = 0 WHERE ${REF[kind]} AND active = 1 AND art_card_id NOT IN (${refs.map(() => '?').join(',')})`)
-      .run(...refs).changes;
+    // Packages gone from QuickLine (or replaced, e.g. an offer whose duration changed): removed when nothing here
+    // refers to them, so the list does not fill up with old copies; kept but hidden when a line, an offer or an open
+    // request still does (a line keeps its QuickLine identity through its package).
+    let off = 0;
+    let removed = 0;
+    const gone = q(`SELECT id, active FROM packages WHERE ${REF[kind]} AND art_card_id NOT IN (${refs.map(() => '?').join(',')})`).all(...refs);
+    for (const g of gone) {
+      const used = q(`SELECT 1 FROM lines WHERE package_id = ?1 UNION ALL SELECT 1 FROM offers WHERE package_id = ?1
+                      UNION ALL SELECT 1 FROM tasks WHERE status = 'open' AND json_valid(payload) AND json_extract(payload, '$.packageId') = ?1
+                      LIMIT 1`).get(g.id);
+      if (!used) {
+        q('DELETE FROM packages WHERE id = ?').run(g.id);
+        removed++;
+      } else if (g.active) {
+        q('UPDATE packages SET active = 0 WHERE id = ?').run(g.id);
+        off++;
+      }
+    }
     // Extensions and new lines are carried out automatically for "auto" companies. A company getting QuickLine
     // packages for the first time is switched to auto; after that a manager's "manual" stays, so automation can be
     // stopped for a company.
     for (const id of companyIds) if (!known.has(id)) q("UPDATE companies SET activation = 'auto' WHERE id = ? AND activation = 'manual'").run(id);
     setSetting(`ql_synced_${kind}`, now());
-    return { kind, total: items.length, added, updated, switchedOff: off, pending: pendingCount(kind), markup: markupFor(kind) };
+    return { kind, total: items.length, added, updated, switchedOff: off + removed, removed, pending: pendingCount(kind), markup: markupFor(kind) };
   });
 }
 

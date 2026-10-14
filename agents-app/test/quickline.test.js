@@ -520,4 +520,17 @@ test('QuickLine: a SIM swap reaches QuickLine, the manager can stop automation, 
   assert.deepEqual(fake.simCalls, [[700001, '6666666666']], 'without the company prefix, once');
   const logged = await until(async () => (await ok(call(admin, 'GET', `/api/lines/${r.line.id}`))).history.find((x) => x.type === 'supplier_sync' && /الشريحة/.test(x.detail)));
   assert.match(logged.detail, /وُضعت الشريحة 899720206666666666/);
+
+  // ----- packages gone from QuickLine: removed when unused, hidden when a line still uses them -----
+  const saved = { 2: PACKAGES[2], 3: PACKAGES[3] };
+  PACKAGES[2] = [];
+  PACKAGES[3] = PACKAGES[3].filter((x) => x.id !== 2564);
+  const sync = await ok(call(admin, 'POST', '/api/quickline/sync', { kind: 'invoice' }));
+  assert.equal(sync.removed, 1, 'Golan 2505 was not used: removed');
+  const after = (await ok(call(admin, 'GET', '/api/catalog'))).packages.filter((x) => x.supplier === 'ql' && x.kind === 'invoice');
+  assert.ok(!after.some((x) => x.artCode === '2505'));
+  const kept = after.find((x) => x.artCode === '2564');
+  assert.equal(kept.active, false, 'lines use 2564: kept, hidden from agents');
+  PACKAGES[2] = saved[2];
+  PACKAGES[3] = saved[3];
 });

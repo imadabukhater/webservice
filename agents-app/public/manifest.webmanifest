@@ -17,7 +17,7 @@
     { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml" }
   ],
   "shortcuts": [
-    { "name": "مشترك جديد", "url": "/#/new", "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }] },
+    { "name": "اشتراك فاتورة جديدة", "url": "/#/new", "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }] },
     { "name": "زبون قائم", "url": "/#/renew", "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }] },
     { "name": "المشتركون", "url": "/#/subscribers", "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }] }
   ]

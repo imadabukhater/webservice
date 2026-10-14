@@ -245,7 +245,7 @@ function resultView() {
       <button class="btn" data-action="wz-share">${icon('share')}مشاركة مع الزبون</button>
       <button class="btn" data-action="wz-copy">${icon('copy')}نسخ التفاصيل</button></div>
     <div class="btn-row" style="width:100%;max-width:420px">
-      <button class="btn btn-primary" data-action="wz-again">${external() ? `${icon('card')}شحن كرت آخر` : `${icon('userPlus')}مشترك جديد آخر`}</button>
+      <button class="btn btn-primary" data-action="wz-again">${external() ? `${icon('card')}زبون دفع مسبق آخر` : `${icon('userPlus')}اشتراك فاتورة آخر`}</button>
       <a class="btn" href="#/subscribers">${icon('phone')}المشتركون</a></div>
   </div></section>`;
 }
@@ -337,7 +337,7 @@ async function loadAgentContext() {
   if (!isAdmin()) return;
   if (!W.agentId) { D.prices = null; return; }
   const prices = await api.get(`/api/agents/${W.agentId}/prices`);
-  D.prices = new Map(prices.map((r) => [r.packageId, r.customPrice ?? r.defaultPrice]));
+  D.prices = new Map(prices.map((r) => [r.packageId, r.agentPrice]));
 }
 
 function shareText() {
@@ -347,7 +347,7 @@ function shareText() {
 }
 
 export default {
-  title: () => ({ title: W?.mode === 'external' ? 'شحن كرت' : 'مشترك جديد', subtitle: W?.result ? 'تم' : `الخطوة ${W?.step || 1} من ${W?.mode === 'external' ? 3 : 4}` }),
+  title: () => ({ title: W?.mode === 'external' ? 'زبون دفع مسبق' : 'اشتراك فاتورة جديدة', subtitle: W?.result ? 'تم' : `الخطوة ${W?.step || 1} من ${W?.mode === 'external' ? 3 : 4}` }),
   async load(ctx) {
     const mode = ctx.query.type === 'external' ? 'external' : 'new';
     if (!W || W.mode !== mode || W.result || JSON.stringify(W.query) !== JSON.stringify(ctx.query)) W = fresh(mode, ctx.query);

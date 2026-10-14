@@ -61,11 +61,22 @@ function notify({ userId = null, role = null, kind, title, body = '', link = '' 
 // ---------- pricing ----------
 const LIVE_OFFER = '(o.active = 1 AND (o.starts_at IS NULL OR o.starts_at <= ?) AND (o.ends_at IS NULL OR o.ends_at >= ?))';
 
+// The manager's pricing systems; each can have its own profit percentage for each agent.
+const SYSTEMS = ['invoice', 'card', 'qlinvoice', 'qlcard'];
+const SYSTEM_SQL = `CASE WHEN p.art_card_id LIKE 'qln:%' THEN 'qlinvoice' WHEN p.art_card_id LIKE 'ql:%' THEN 'qlcard'
+  WHEN p.kind = 'card' THEN 'card' ELSE 'invoice' END`;
+// An agent's price for a package: a price set for that package > the agent's percentage for its system, on the cost
+// (only when there is a cost) > the package's own price. The joins take the agent id twice.
+const AGENT_PRICE_JOINS = `LEFT JOIN agent_prices ap ON ap.package_id = p.id AND ap.agent_id = ?
+  LEFT JOIN agent_markups am ON am.agent_id = ? AND am.system = ${SYSTEM_SQL}`;
+const MARKUP_PRICE_SQL = 'CASE WHEN am.markup IS NOT NULL AND p.cost > 0 THEN ROUND(p.cost * (1 + am.markup / 100.0), 2) END';
+const AGENT_PRICE_SQL = `COALESCE(ap.price, ${MARKUP_PRICE_SQL}, p.price)`;
+
 function priceFor(agentId, packageId) {
-  const p = q(`SELECT p.*, c.name AS company_name, COALESCE(ap.price, p.price) AS agent_price
+  const p = q(`SELECT p.*, c.name AS company_name, ${AGENT_PRICE_SQL} AS agent_price
                FROM packages p JOIN companies c ON c.id = p.company_id
-               LEFT JOIN agent_prices ap ON ap.package_id = p.id AND ap.agent_id = ?
-               WHERE p.id = ?`).get(agentId, Number(packageId));
+               ${AGENT_PRICE_JOINS}
+               WHERE p.id = ?`).get(agentId, agentId, Number(packageId));
   if (!p || !p.active) fail(404, 'الباقة غير متوفرة');
   return p;
 }
@@ -196,5 +207,5 @@ module.exports = {
   getUser, getAgent, publicUser, logOp, opView, logLineOp, changeBalance, notify,
   LIVE_OFFER, priceFor, liveOffer, quote, packageLabel, directCompany, openSaleTask, events,
   prefixesOf, companyForIccid, learnPrefix, takeSim, markSimUsed,
-  LINE_SELECT, lineState, lineView, getLine,
+  LINE_SELECT, lineState, lineView, getLine, SYSTEMS, SYSTEM_SQL, AGENT_PRICE_JOINS, AGENT_PRICE_SQL, MARKUP_PRICE_SQL,
 };

@@ -32,7 +32,7 @@ export function lineCard(l) {
   const renewable = ['active', 'frozen'].includes(l.status);
   return `<article class="item clickable" data-action="open-line" data-id="${l.id}">
     <div class="item-top">${companyLogo(companyById(l.companyId) || (l.companyName ? { name: l.companyName, color: l.companyColor } : null), 'xs')}
-      <div class="grow">${phone(l.number)}<div class="item-sub"><span>${esc(l.customerName || 'بدون اسم')}</span><span>${esc(l.packageLabel)}</span>${isAdmin() ? `<span>${esc(l.agentName)}</span>` : ''}${l.esim ? '<span>eSIM</span>' : ''}${l.kind === 'external' ? '<span>شحن كرت</span>' : ''}</div></div>
+      <div class="grow">${phone(l.number)}<div class="item-sub"><span>${esc(l.customerName || 'بدون اسم')}</span><span>${esc(l.packageLabel)}</span>${isAdmin() ? `<span>${esc(l.agentName)}</span>` : ''}${l.esim ? '<span>eSIM</span>' : ''}${l.kind === 'external' ? '<span>دفع مسبق</span>' : ''}</div></div>
       ${statePill(l.state)}</div>
     ${l.status !== 'disconnected' && l.status !== 'pending'
       ? `<div class="line-meter"><div class="meter ${meter}"><i style="width:${pct}%"></i></div>
@@ -210,7 +210,7 @@ export async function openLine(id) {
 
   sheet({
     title: fmtPhone(l.number),
-    subtitle: `${statePill(l.state)} ${l.kind === 'external' ? '<span class="pill plain">شحن كرت</span>' : ''} ${l.port ? '<span class="pill plain">تحويل رقم</span>' : ''} ${l.direct ? '<span class="pill plain">تفعيل مباشر</span>' : ''}`,
+    subtitle: `${statePill(l.state)} ${l.kind === 'external' ? '<span class="pill plain">دفع مسبق</span>' : ''} ${l.port ? '<span class="pill plain">تحويل رقم</span>' : ''} ${l.direct ? '<span class="pill plain">تفعيل مباشر</span>' : ''}`,
     wide: true,
     body: `
       <div class="summary-pkg">${companyLogo(co, 'sm')}<div class="grow"><b>${esc(l.packageLabel)}</b><small>${esc(co?.name || '')}</small></div></div>
@@ -249,7 +249,7 @@ function listHtml() {
   const list = filtered();
   if (!list.length) {
     return V.lines.length ? empty('search', 'لا توجد أرقام بهذا الفلتر', 'غيّر الفلتر أو كلمة البحث.')
-      : empty('phone', 'لا يوجد مشتركون بعد', 'فعّل أول خط وسيظهر هنا مع تاريخ انتهاء رزمته.', `<a class="btn btn-primary" href="#/new">${icon('userPlus')}مشترك جديد</a>`);
+      : empty('phone', 'لا يوجد مشتركون بعد', 'فعّل أول خط وسيظهر هنا مع تاريخ انتهاء رزمته.', `<a class="btn btn-primary" href="#/new">${icon('userPlus')}اشتراك فاتورة جديدة</a>`);
   }
   return `<div class="grid-cards">${list.slice(0, V.shown).map(lineCard).join('')}</div>
     ${list.length > V.shown ? `<button class="btn btn-block" data-action="more">عرض المزيد (${list.length - V.shown})</button>` : ''}`;
@@ -280,7 +280,7 @@ export default {
       <div class="toolbar">
         <div class="search-box">${icon('search', 'i lead')}<input class="input" id="sub-q" type="search" placeholder="رقم، اسم زبون، شريحة أو رزمة" value="${esc(V.q)}" autocomplete="off"></div>
         ${isAdmin() ? `<select class="input" id="sub-agent" style="width:auto;min-width:180px"><option value="">كل الوكلاء</option>${V.agents.map((a) => `<option value="${a.id}" ${String(a.id) === String(V.agentId) ? 'selected' : ''}>${esc(a.name)}</option>`).join('')}</select>` : ''}
-        <a class="btn btn-primary" href="#/new">${icon('userPlus')}<span class="hide-xs">مشترك جديد</span></a>
+        <a class="btn btn-primary" href="#/new">${icon('userPlus')}<span class="hide-xs">اشتراك فاتورة جديدة</span></a>
       </div>
       <div class="chips" id="sub-chips">${chipsHtml()}</div>
       <div id="sub-list">${listHtml()}</div>`;

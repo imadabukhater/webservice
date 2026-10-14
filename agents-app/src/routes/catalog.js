@@ -1,7 +1,7 @@
 'use strict';
 const { q } = require('../db');
 const { fail, now, round, str, num, int, isBlank, dateOrNull, imageOrEmpty } = require('../util');
-const { LIVE_OFFER, priceFor, notify, prefixesOf } = require('../domain');
+const { LIVE_OFFER, priceFor, notify, prefixesOf, AGENT_PRICE_SQL, AGENT_PRICE_JOINS } = require('../domain');
 const { route, ADMIN, ANY } = require('../router');
 
 const companyView = (c, admin) => ({
@@ -39,10 +39,10 @@ function catalogFor(user) {
   const companies = q(`SELECT c.*, (SELECT COUNT(*) FROM packages p WHERE p.company_id = c.id) AS package_count
                        FROM companies c ORDER BY c.sort, c.id`).all();
   if (user.role === 'agent') {
-    const packages = q(`SELECT p.*, c.name AS company_name, COALESCE(ap.price, p.price) AS agent_price, ap.price IS NOT NULL AS custom
+    const packages = q(`SELECT p.*, c.name AS company_name, ${AGENT_PRICE_SQL} AS agent_price, ap.price IS NOT NULL AS custom
                         FROM packages p JOIN companies c ON c.id = p.company_id
-                        LEFT JOIN agent_prices ap ON ap.package_id = p.id AND ap.agent_id = ?
-                        WHERE p.active = 1 ORDER BY c.sort, c.id, p.sort, p.id`).all(user.id)
+                        ${AGENT_PRICE_JOINS}
+                        WHERE p.active = 1 ORDER BY c.sort, c.id, p.sort, p.id`).all(user.id, user.id)
       .filter((p) => p.agent_price > 0)
       .map((p) => ({ id: p.id, name: p.name, companyId: p.company_id, companyName: p.company_name, price: round(p.agent_price), custom: !!p.custom, active: true, ...packageAttrs(p) }));
     return { companies: companies.map((c) => companyView(c, false)), packages };

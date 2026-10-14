@@ -103,7 +103,7 @@ function renderShell() {
       <main class="content" id="view"></main>
     </div>
     <nav class="tabbar" aria-label="تنقل سريع">${TABS[role()].map(([r, label, ic]) => r === 'new'
-      ? `<a href="#/new" data-route="new" aria-label="مشترك جديد"><span class="fab">${icon(ic)}</span></a>`
+      ? `<a href="#/new" data-route="new" aria-label="اشتراك فاتورة جديدة"><span class="fab">${icon(ic)}</span></a>`
       : r === 'menu' ? `<button data-action="open-drawer">${icon(ic)}<span>${label}</span></button>`
         : `<a href="#/${r}" data-route="${r}">${icon(ic)}<span>${label}</span></a>`).join('')}</nav>
   </div>`;

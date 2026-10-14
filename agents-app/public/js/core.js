@@ -140,7 +140,7 @@ export const STATE = {
 export const statePill = (state) => `<span class="pill s-${state}">${STATE[state] || state}</span>`;
 export const TASK_STATUS = { open: 'بانتظار التنفيذ', done: 'تم', rejected: 'مرفوض' };
 export const TASK_TYPE = {
-  topup: 'طلب شحن رصيد', port: 'تحويل رقم', esim: 'تفعيل eSIM', general: 'طلب عام', activate: 'تفعيل خط', recharge: 'شحن كرت', renew: 'تمديد رزمة',
+  topup: 'طلب شحن رصيد', port: 'تحويل رقم', esim: 'تفعيل eSIM', general: 'طلب عام', activate: 'تفعيل خط', recharge: 'زبون دفع مسبق', renew: 'تمديد رزمة',
 };
 export const OP = {
   activate: 'تفعيل خط', renew: 'تمديد', topup: 'شحن رصيد', deduct: 'خصم رصيد', transfer_in: 'رصيد وارد', transfer_out: 'رصيد صادر',

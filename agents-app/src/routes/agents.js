@@ -106,14 +106,40 @@ route('POST', '/api/transfer', ADMIN, ({ user, body }) => tx(() => {
 }));
 
 // Per-agent prices: every package with the agent's price (custom or default).
+// Each package for one agent: its own price, the price the agent's percentage gives (markupPrice), the price set by
+// hand for this agent (customPrice), and the one the agent pays (agentPrice) — in that order of precedence, reversed.
 route('GET', '/api/agents/:id/prices', ADMIN, ({ params }) => {
   const a = D.getAgent(params.id);
   return q(`SELECT p.id AS packageId, p.company_id AS companyId, c.name AS companyName, p.name, p.cost, p.price AS defaultPrice,
-              ap.price AS customPrice, p.active
+              ap.price AS customPrice, ${D.MARKUP_PRICE_SQL} AS markupPrice, ${D.AGENT_PRICE_SQL} AS agentPrice,
+              ${D.SYSTEM_SQL} AS system, p.active
             FROM packages p JOIN companies c ON c.id = p.company_id
-            LEFT JOIN agent_prices ap ON ap.package_id = p.id AND ap.agent_id = ?
-            ORDER BY c.sort, c.id, p.sort, p.id`).all(a.id).map((r) => ({ ...r, active: !!r.active }));
+            ${D.AGENT_PRICE_JOINS}
+            ORDER BY c.sort, c.id, p.sort, p.id`).all(a.id, a.id).map((r) => ({ ...r, active: !!r.active }));
 });
+
+// The manager's profit percentage for one agent, per pricing system; null = the packages' own prices.
+route('GET', '/api/agents/:id/markups', ADMIN, ({ params }) => {
+  const a = D.getAgent(params.id);
+  const set = Object.fromEntries(q('SELECT system, markup FROM agent_markups WHERE agent_id = ?').all(a.id).map((r) => [r.system, r.markup]));
+  return Object.fromEntries(D.SYSTEMS.map((k) => [k, set[k] ?? null]));
+});
+
+route('PUT', '/api/agents/:id/markups', ADMIN, ({ params, body }) => tx(() => {
+  const a = D.getAgent(params.id);
+  for (const k of D.SYSTEMS) {
+    if (body[k] === undefined) continue;
+    if (body[k] === null || body[k] === '') {
+      q('DELETE FROM agent_markups WHERE agent_id = ? AND system = ?').run(a.id, k);
+      continue;
+    }
+    const m = num(body[k], 'نسبة الربح');
+    if (m < 0 || m > 200) fail(400, 'نسبة الربح بين 0 و200%');
+    q(`INSERT INTO agent_markups (agent_id, system, markup) VALUES (?, ?, ?)
+       ON CONFLICT(agent_id, system) DO UPDATE SET markup = excluded.markup`).run(a.id, k, m);
+  }
+  return Object.fromEntries(D.SYSTEMS.map((k) => [k, q('SELECT markup FROM agent_markups WHERE agent_id = ? AND system = ?').get(a.id, k)?.markup ?? null]));
+}));
 
 route('PUT', '/api/agents/:id/prices', ADMIN, ({ params, body }) => tx(() => {
   const a = D.getAgent(params.id);

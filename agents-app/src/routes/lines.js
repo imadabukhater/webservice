@@ -130,7 +130,7 @@ route('POST', '/api/lines', ANY, ({ user, body }) => tx(() => {
   D.markSimUsed(sim.stockId, lineId);
   if (sim.iccid) D.learnPrefix(pkg.company_id, sim.iccid);
 
-  const detail = [durationText(months, days), offer ? `عرض: ${offer.title}` : '', kind === 'external' ? 'شحن كرت' : '',
+  const detail = [durationText(months, days), offer ? `عرض: ${offer.title}` : '', kind === 'external' ? 'زبون دفع مسبق' : '',
     esim ? (esimFee ? `eSIM (رسوم ${esimFee} ₪)` : 'eSIM') : '', port ? 'تحويل رقم' : ''].filter(Boolean).join(' · ');
   D.changeBalance(agent, -total, {
     type: 'activate', actor: user, lineId, number, cost, profit: total - cost, detail, package: label, customerPrice,
@@ -138,7 +138,7 @@ route('POST', '/api/lines', ANY, ({ user, body }) => tx(() => {
 
   if (pending) {
     const type = port ? 'port' : esim ? 'esim' : kind === 'external' ? 'recharge' : 'activate';
-    const what = { port: 'تحويل رقم', esim: 'تفعيل eSIM', recharge: 'شحن كرت', activate: 'تفعيل خط' }[type];
+    const what = { port: 'تحويل رقم', esim: 'تفعيل eSIM', recharge: 'زبون دفع مسبق', activate: 'تفعيل خط' }[type];
     // Everything the manager needs to carry it out on the company's site.
     const note = [`${what} ${number}`, label, durationText(months, days), sim.iccid ? `شريحة ${sim.iccid}` : '', customerName ? `الزبون: ${customerName}` : '']
       .filter(Boolean).join(' — ');
@@ -154,7 +154,7 @@ route('POST', '/api/lines/:id/renew', ANY, ({ user, params, body }) => tx(() => 
 function renewLine(user, l, body) {
   const isAdmin = user.role === 'admin';
   if (l.status === 'pending') fail(400, 'طلب هذا الرقم ما زال قيد التنفيذ');
-  if (l.status === 'disconnected') fail(400, 'الرقم مفصول. فعّله من جديد كمشترك جديد.');
+  if (l.status === 'disconnected') fail(400, 'الرقم مفصول. فعّله من جديد من «اشتراك فاتورة جديدة».');
   const agent = D.getUser(l.agent_id);
   if (!agent.active) fail(403, 'حساب الوكيل موقوف');
   let months = int(Number(body.months ?? 1), 'المدة', 1, 24);
@@ -184,10 +184,10 @@ function renewLine(user, l, body) {
   if (!manual) applyRenewal(l.id, renewal);
   D.changeBalance(agent, -total, {
     type: 'renew', actor: user, lineId: l.id, number: l.number, cost, profit: total - cost, package: label, customerPrice,
-    detail: [`تمديد ${durationText(months, days)}`, offer ? `عرض: ${offer.title}` : '', card ? 'شحن كرت' : '', manual ? 'بانتظار التنفيذ' : ''].filter(Boolean).join(' · '),
+    detail: [`تمديد ${durationText(months, days)}`, offer ? `عرض: ${offer.title}` : '', card ? 'زبون دفع مسبق' : '', manual ? 'بانتظار التنفيذ' : ''].filter(Boolean).join(' · '),
   }, { charge: true });
   if (manual) {
-    const note = [`${card ? 'شحن كرت' : 'تمديد رزمة'} ${l.number}`, label, durationText(months, days), l.customer_name ? `الزبون: ${l.customer_name}` : '']
+    const note = [`${card ? 'زبون دفع مسبق' : 'تمديد رزمة'} ${l.number}`, label, durationText(months, days), l.customer_name ? `الزبون: ${l.customer_name}` : '']
       .filter(Boolean).join(' — ');
     D.openSaleTask({ type: 'renew', agent, lineId: l.id, amount: total, note, payload: renewal });
   }

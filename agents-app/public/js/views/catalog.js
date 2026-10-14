@@ -7,10 +7,10 @@ import {
 // with art-topup's two tabs, the ones that existed before any supplier.
 const V = { tab: 'invoice', q: '', msg: {} };
 const TABS = {
-  invoice: { label: 'الفواتير', icon: 'sim', color: '', supplier: 'art', kind: 'invoice', note: 'رزم تفعيل خط جديد بشريحة. تظهر للوكيل في «مشترك جديد».' },
-  card: { label: 'كروت الشحن', icon: 'card', color: 'green', supplier: 'art', kind: 'card', note: 'كروت وحزم ورصيد لرقم موجود. تظهر للوكيل في «شحن كرت» و«تمديد».' },
+  invoice: { label: 'الفواتير', icon: 'sim', color: '', supplier: 'art', kind: 'invoice', note: 'رزم تفعيل خط جديد بشريحة. تظهر للوكيل في «اشتراك فاتورة جديدة».' },
+  card: { label: 'كروت الشحن', icon: 'card', color: 'green', supplier: 'art', kind: 'card', note: 'كروت وحزم ورصيد لرقم موجود. تظهر للوكيل في «زبون دفع مسبق» و«تمديد».' },
   qlcard: { label: 'تمديد QuickLine', short: 'التمديد', icon: 'refresh', color: 'green', supplier: 'ql', kind: 'card', note: 'تمديد خط موجود في QuickLine تحت وكالتك. يُنفَّذ تلقائياً. تظهر للوكيل في «تمديد».' },
-  qlinvoice: { label: 'خطوط QuickLine', short: 'الخط الجديد', icon: 'sim', color: '', supplier: 'ql', kind: 'invoice', note: 'تفعيل خط جديد في QuickLine: رقم من أرقامهم المتاحة، eSIM، أو تحويل رقم. يُنفَّذ تلقائياً. تظهر للوكيل في «مشترك جديد».' },
+  qlinvoice: { label: 'خطوط QuickLine', short: 'الخط الجديد', icon: 'sim', color: '', supplier: 'ql', kind: 'invoice', note: 'تفعيل خط جديد في QuickLine: رقم من أرقامهم المتاحة، eSIM، أو تحويل رقم. يُنفَّذ تلقائياً. تظهر للوكيل في «اشتراك فاتورة جديدة».' },
 };
 // What the manager sees: art-topup's two systems each in its own tab, and QuickLine's two together in one tab.
 const VIEWS = {

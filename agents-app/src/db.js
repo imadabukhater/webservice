@@ -108,6 +108,13 @@ CREATE TABLE IF NOT EXISTS agent_prices (
   price REAL NOT NULL,
   PRIMARY KEY (agent_id, package_id)
 );
+-- The manager's profit percentage for one agent on one pricing system (see domain.SYSTEM_SQL).
+CREATE TABLE IF NOT EXISTS agent_markups (
+  agent_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  system TEXT NOT NULL CHECK (system IN ('invoice','card','qlinvoice','qlcard')),
+  markup REAL NOT NULL,
+  PRIMARY KEY (agent_id, system)
+);
 CREATE TABLE IF NOT EXISTS offers (
   id INTEGER PRIMARY KEY,
   title TEXT NOT NULL,

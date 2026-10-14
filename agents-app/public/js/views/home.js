@@ -22,15 +22,15 @@ const tileCls = (c) => (c === 'blue' ? '' : c);
 function quickActions() {
   if (isAdmin()) {
     return `<div class="quick">
-      <a class="btn btn-primary" href="#/new">${icon('userPlus')}مشترك جديد لوكيل</a>
+      <a class="btn btn-primary" href="#/new">${icon('userPlus')}اشتراك فاتورة جديدة لوكيل</a>
       <button class="btn" data-action="add-agent">${icon('users')}إضافة وكيل</button>
       <button class="btn" data-action="agent-balance">${icon('wallet')}شحن رصيد وكيل</button>
-      <a class="btn" href="#/new?type=external">${icon('card')}شحن كرت لوكيل</a>
+      <a class="btn" href="#/new?type=external">${icon('card')}زبون دفع مسبق لوكيل</a>
     </div>`;
   }
   return `<div class="quick">
-    <a class="btn btn-primary" href="#/new">${icon('userPlus')}مشترك جديد</a>
-    <a class="btn" href="#/new?type=external">${icon('card')}شحن كرت</a>
+    <a class="btn btn-primary" href="#/new">${icon('userPlus')}اشتراك فاتورة جديدة</a>
+    <a class="btn" href="#/new?type=external">${icon('card')}زبون دفع مسبق</a>
     <a class="btn" href="#/renew">${icon('repeat')}زبون قائم</a>
     <a class="btn" href="#/messages">${icon('msg')}مراسلة المدير</a>
   </div>`;

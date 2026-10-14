@@ -25,7 +25,7 @@ export async function openRenew(line) {
   let priceOf;
   if (admin) {
     const [prices, agents] = extra;
-    const map = new Map(prices.map((r) => [r.packageId, r.customPrice ?? r.defaultPrice]));
+    const map = new Map(prices.map((r) => [r.packageId, r.agentPrice]));
     priceOf = (p) => map.get(p.id) ?? p.price;
     available = agents.find((a) => a.id === line.agentId)?.available ?? 0;
   } else {
@@ -141,7 +141,7 @@ export default {
     return `
       <div class="search-box">${icon('search', 'i lead')}<input class="input" id="renew-q" type="search" placeholder="ابحث برقم الهاتف، اسم الزبون أو الشريحة" value="${esc(V.q)}" autocomplete="off"></div>
       <p class="small muted">الأرقام التي تنتهي قريباً تظهر أولاً. الرقم غير موجود في قائمتك؟ <a href="#/new?type=external">اشحن له كرت</a>.</p>
-      <div class="list" id="renew-list">${list.length ? list.slice(0, 80).map(renewCard).join('') : empty('phone', V.lines.length ? 'لا توجد نتائج' : 'لا توجد أرقام مفعّلة بعد', V.lines.length ? 'جرّب جزءاً آخر من الرقم أو الاسم.' : 'فعّل أول مشترك من «مشترك جديد».')}</div>`;
+      <div class="list" id="renew-list">${list.length ? list.slice(0, 80).map(renewCard).join('') : empty('phone', V.lines.length ? 'لا توجد نتائج' : 'لا توجد أرقام مفعّلة بعد', V.lines.length ? 'جرّب جزءاً آخر من الرقم أو الاسم.' : 'فعّل أول مشترك من «اشتراك فاتورة جديدة».')}</div>`;
   },
   mount(root) {
     root.querySelector('#renew-q').addEventListener('input', (e) => {

@@ -7,7 +7,7 @@ const { route, ADMIN, ANY } = require('../router');
 const { applyRenewal } = require('./lines');
 
 const TYPE_LABEL = {
-  topup: 'طلب شحن رصيد', port: 'تحويل رقم', esim: 'تفعيل eSIM', general: 'طلب عام', activate: 'تفعيل خط', recharge: 'شحن كرت', renew: 'تمديد رزمة',
+  topup: 'طلب شحن رصيد', port: 'تحويل رقم', esim: 'تفعيل eSIM', general: 'طلب عام', activate: 'تفعيل خط', recharge: 'زبون دفع مسبق', renew: 'تمديد رزمة',
 };
 // Requests that hold a pending line until the manager carries them out.
 const LINE_TASKS = ['port', 'esim', 'activate', 'recharge'];
@@ -124,7 +124,7 @@ function resolveTask(t, user, body) {
   if (LINE_TASKS.includes(t.type) && t.line_id) {
     const l = q('SELECT * FROM lines WHERE id = ?').get(t.line_id);
     if (l && l.status === 'pending') {
-      const what = { port: 'تحويل الرقم', esim: 'eSIM', activate: 'تفعيل الخط', recharge: 'شحن الكرت' }[t.type];
+      const what = { port: 'تحويل الرقم', esim: 'eSIM', activate: 'تفعيل الخط', recharge: 'شحن زبون دفع مسبق' }[t.type];
       if (status === 'done') {
         const esimQr = t.type === 'esim' ? imageOrEmpty(body.attachment, { maxKb: 600, label: 'رمز QR' }) : '';
         const esimCode = t.type === 'esim' ? str(body.esimCode, 500) : '';
