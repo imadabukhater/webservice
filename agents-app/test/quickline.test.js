@@ -13,7 +13,7 @@ const subs = () => [
   { id: 305648, number: '0524386903', company: 'Cellcom', companyId: 3, packageId: 2564, status: 'فعال', statusInt: 2, canExtend: true, daysLeft: fake.daysLeft, cutDate: fake.cutDate },
   { id: 400877, number: '0511111111', company: 'Cellcom', companyId: 3, packageId: 2564, status: 'فصل نهائي', statusInt: 4, canExtend: false, daysLeft: 0, cutDate: '01/01/2026' },
 ];
-const fake = { renews: [], logins: 0, cutDate: '14/10/2026', daysLeft: 3, cost: 62, renewAnswer: null, expire: false, created: [], added: [], newAnswer: null };
+const fake = { renews: [], logins: 0, cutDate: '14/10/2026', daysLeft: 3, cost: 62, renewAnswer: null, expire: false, created: [], added: [], newAnswer: null, stateCalls: [] };
 // Free numbers per kind: physical SIM, and eSIM (with its own eSIM and QR code).
 const FREE = {
   s: [{ id: 9001, phone: '0528170777', sim: '', barcodeImage: null }, { id: 9002, phone: '0584922255', sim: '', barcodeImage: null }],
@@ -107,6 +107,17 @@ const api = http.createServer((req, res) => {
       const number = f.newSubscriptionType === 'neyod' ? f.phone : free.phone;
       fake.added.push({ id: 500000 + fake.added.length, number, company: 'Cellcom', companyId: 3, packageId: Number(f.packageId), status: 'جديد', statusInt: 1, canExtend: false, daysLeft: f.daysValues, cutDate: '12/11/2026' });
       return text('تمت إضافة الاشتراك بنجاح');
+    }
+    // A line's state: CloseNumber (final, 4), PauseNumber (temporary, 6), ActivateNumber/<id> (back to 2).
+    const stateCall = /^Subscriptions\/(CloseNumber|PauseNumber|ActivateNumber)(?:\/(\d+))?$/.exec(url);
+    if (stateCall) {
+      const f = JSON.parse(body || '{}');
+      const id = Number(stateCall[2] || f.subscriptionId);
+      fake.stateCalls.push([stateCall[1], id, f.cutNoReceive]);
+      const sub = fake.added.find((x) => x.id === id);
+      if (!sub) return text('الاشتراك غير موجود', 400);
+      Object.assign(sub, { CloseNumber: { status: 'فصل نهائي', statusInt: 4 }, PauseNumber: { status: 'فصل مؤقت', statusInt: 6 }, ActivateNumber: { status: 'فعال', statusInt: 2 } }[stateCall[1]]);
+      return text('تم');
     }
     return text('not found', 404);
   });
@@ -342,4 +353,29 @@ test('QuickLine: a new line, an eSIM and a ported number are activated automatic
   assert.equal((await ok(call(t, 'GET', '/api/me'))).user.balance, Math.round((paid + rf.line.price) * 100) / 100);
   assert.equal(fake.created.length, 4, 'tried once only');
   fake.newAnswer = null;
+
+  // ----- freezing, unfreezing and disconnecting a QuickLine line change it there too -----
+  const qlSub = fake.added.find((x) => x.number === '0528170777');
+  Object.assign(qlSub, { status: 'فعال', statusInt: 2 });
+  const act = (action) => ok(call(t, 'POST', `/api/lines/${r.line.id}/action`, { action }));
+  await act('freeze');
+  await until(async () => qlSub.statusInt === 6);
+  await act('unfreeze');
+  await until(async () => qlSub.statusInt === 2);
+  await act('disconnect');
+  await until(async () => qlSub.statusInt === 4);
+  assert.deepEqual(fake.stateCalls, [['PauseNumber', qlSub.id, true], ['ActivateNumber', qlSub.id, undefined], ['CloseNumber', qlSub.id, true]]);
+  const log = await until(async () => {
+    const h = (await ok(call(admin, 'GET', `/api/lines/${r.line.id}`))).history.filter((x) => x.type === 'supplier_sync');
+    return h.length === 3 && h;
+  });
+  assert.match(log[0].detail, /فُصل الرقم نهائياً في QuickLine/);
+
+  // ----- a QuickLine line that QuickLine does not have: the manager is told, nothing is sent -----
+  const calls = fake.stateCalls.length;
+  fake.added.splice(fake.added.findIndex((x) => x.number === '0547777777'), 1);
+  await ok(call(t, 'POST', `/api/lines/${rp.line.id}/action`, { action: 'disconnect' }));
+  const missing = await until(async () => (await ok(call(admin, 'GET', `/api/lines/${rp.line.id}`))).history.find((x) => x.type === 'supplier_sync'));
+  assert.match(missing.detail, /غير موجود في QuickLine/);
+  assert.equal(fake.stateCalls.length, calls);
 });

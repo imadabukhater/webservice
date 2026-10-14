@@ -254,6 +254,20 @@ async function renew(creds, { subscriptionId, days }) {
 }
 const DURATION_OK = (d) => [7, 30, 60, 90].includes(Number(d));
 
+// ---------- a line's state ----------
+// The portal's line actions: a final disconnect (status 4), a temporary one (status 6), and back to active (2).
+// cutNoReceive: true also stops incoming calls, as the portal does unless «קבלת שיחות» is ticked.
+const STATUS = { active: 2, closed: 4, paused: 6 };
+async function closeNumber(creds, subscriptionId) {
+  await api(creds, 'POST', 'Subscriptions/CloseNumber', { subscriptionId: Number(subscriptionId), cutNoReceive: true });
+}
+async function pauseNumber(creds, subscriptionId) {
+  await api(creds, 'POST', 'Subscriptions/PauseNumber', { subscriptionId: Number(subscriptionId), cutNoReceive: true });
+}
+async function activateNumber(creds, subscriptionId) {
+  await api(creds, 'POST', `Subscriptions/ActivateNumber/${encodeURIComponent(subscriptionId)}`, {});
+}
+
 // Phone numbers in the portal's 10-digit local form (05XXXXXXXX).
 function localNumber(n) {
   let d = String(n).replace(/\D/g, '');
@@ -271,5 +285,5 @@ const parseRef = (ref) => {
 module.exports = {
   QuickLineError, DURATIONS, login, api, companies, catalog, subscriptions, findSubscription,
   balance, homeData, renew, localNumber, refKind, parseRef, gbOf,
-  freeNumbers, simProblem, splitName, newSubscription,
+  freeNumbers, simProblem, splitName, newSubscription, STATUS, closeNumber, pauseNumber, activateNumber,
 };

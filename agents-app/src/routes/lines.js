@@ -200,6 +200,8 @@ const ACTIONS = {
   unfreeze: { from: ['frozen'], to: 'active', label: 'إلغاء التجميد' },
   disconnect: { from: ['active', 'frozen'], to: 'disconnected', label: 'فصل الرقم' },
 };
+// The same change on QuickLine: disconnecting is its final disconnect, freezing its temporary one.
+const QL_ACTION = { freeze: 'pause', unfreeze: 'activate', disconnect: 'close' };
 
 route('POST', '/api/lines/:id/action', ANY, ({ user, params, body }) => tx(() => {
   const l = D.getLine(params.id, user);
@@ -222,6 +224,12 @@ route('POST', '/api/lines/:id/action', ANY, ({ user, params, body }) => tx(() =>
     if (!a.from.includes(l.status)) fail(400, 'لا يمكن تنفيذ هذا الإجراء على حالة الرقم الحالية');
     q('UPDATE lines SET status = ?, updated_at = ? WHERE id = ?').run(a.to, now(), l.id);
     D.logLineOp(action, l, agent, user, a.label + (reason ? ' · ' + reason : ''), { package: l.package_label });
+    // A QuickLine line changes there too, right after this commits (the latest change wins if several queue up).
+    const ref = l.package_id ? q('SELECT art_card_id FROM packages WHERE id = ?').get(l.package_id)?.art_card_id : '';
+    if (/^qln?:/.test(ref || '')) {
+      q('UPDATE lines SET ql_pending = ? WHERE id = ?').run(QL_ACTION[action], l.id);
+      D.events.emit('line-supplier', l.id);
+    }
   }
   return { line: view(l.id, user) };
 }));

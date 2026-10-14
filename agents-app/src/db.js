@@ -275,6 +275,8 @@ ensureColumn('tasks', 'auto_status', "auto_status TEXT NOT NULL DEFAULT ''");
 ensureColumn('tasks', 'auto_note', "auto_note TEXT NOT NULL DEFAULT ''");
 ensureColumn('tasks', 'auto_ref', "auto_ref TEXT NOT NULL DEFAULT ''");
 ensureColumn('tasks', 'auto_at', 'auto_at INTEGER');
+// QuickLine lines: a state change made here (close, pause, activate) still to be carried out there.
+ensureColumn('lines', 'ql_pending', "ql_pending TEXT NOT NULL DEFAULT ''");
 
 const q = (sql) => db.prepare(sql);
 

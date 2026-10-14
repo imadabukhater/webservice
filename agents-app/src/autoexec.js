@@ -311,6 +311,56 @@ async function check(taskId) {
   }
 }
 
+// ---------- QuickLine: a line closed, paused or reactivated here changes there too ----------
+// The line's status there is read first, so a change already made (or made again after a dropped connection) is
+// never sent twice. A refusal goes to the manager; a dropped connection is tried again by the sweep.
+const MIRROR = {
+  close: { want: ql.STATUS.closed, from: [1, 2, 3, 6], call: ql.closeNumber, done: 'فُصل الرقم نهائياً في QuickLine', what: 'الفصل' },
+  pause: { want: ql.STATUS.paused, from: [2], call: ql.pauseNumber, done: 'فُصل الرقم مؤقتاً في QuickLine', what: 'التجميد' },
+  activate: { want: ql.STATUS.active, from: [6], call: ql.activateNumber, done: 'أُعيد تفعيل الرقم في QuickLine', what: 'إلغاء التجميد' },
+};
+const mirroring = new Set();
+
+async function mirrorLine(lineId) {
+  if (!getSettings().qlConfigured || mirroring.has(lineId)) return;
+  const line = q('SELECT id, number, agent_id, package_label, ql_pending FROM lines WHERE id = ?').get(lineId);
+  const m = line && MIRROR[line.ql_pending];
+  if (!m) return;
+  mirroring.add(lineId);
+  const pending = line.ql_pending;
+  let retry = false;
+  // Take it; a newer change made meanwhile sets it again and is carried out next.
+  q("UPDATE lines SET ql_pending = '' WHERE id = ? AND ql_pending = ?").run(lineId, pending);
+  const agent = q('SELECT id, name, balance FROM users WHERE id = ?').get(line.agent_id);
+  const log = (detail) => D.logLineOp('supplier_sync', line, agent, QL_ACTOR, detail, { package: line.package_label });
+  const problem = (detail) => { log(detail); tellManager(`QuickLine: تعذّر ${m.what}`, `${line.number}: ${detail}`); };
+  try {
+    const number = ql.localNumber(line.number);
+    const subs = (await ql.subscriptions(qlCredentials())).filter((s) => s.number === number);
+    const sub = subs.find((s) => s.statusValue !== ql.STATUS.closed) || subs[0];
+    if (!sub) return problem('الرقم غير موجود في QuickLine تحت هذه الوكالة — لم يتغيّر شيء هناك');
+    if (sub.statusValue === m.want) return log(`${m.done} (كان كذلك مسبقاً)`);
+    if (!m.from.includes(sub.statusValue)) return problem(`حالة الرقم في QuickLine «${sub.status}» لا تسمح بـ${m.what} — نفّذه هناك يدوياً`);
+    await m.call(qlCredentials(), sub.id);
+    const after = (await ql.subscriptions(qlCredentials())).find((s) => s.id === sub.id);
+    if (after && after.statusValue !== m.want) return problem(`أُرسل ${m.what} لكن الحالة في QuickLine ما زالت «${after.status}» — افحصه هناك`);
+    return log(`${m.done} (اشتراك #${sub.id})`);
+  } catch (e) {
+    if (!(e instanceof ql.QuickLineError)) throw e;
+    if (e.refused) return problem(`رفض QuickLine ${m.what}: ${e.message}`);
+    // Not sure it arrived: queue it again (unless a newer change took its place); the status check makes it safe.
+    if (q("UPDATE lines SET ql_pending = ? WHERE id = ? AND ql_pending = ''").run(pending, lineId).changes) retry = true;
+    return undefined;
+  } finally {
+    mirroring.delete(lineId);
+    // A newer change made while this one was on its way goes now, not at the next sweep.
+    if (!retry && q("SELECT ql_pending FROM lines WHERE id = ?").get(lineId)?.ql_pending) {
+      setImmediate(() => mirrorLine(lineId).catch((e) => console.error('ql mirror', e)));
+    }
+  }
+}
+D.events.on('line-supplier', (id) => setImmediate(() => mirrorLine(id).catch((e) => console.error('ql mirror', e))));
+
 // New sale requests are sent right after their transaction commits.
 D.events.on('sale-task', (id) => setImmediate(() => send(id).catch((e) => console.error('auto send', e))));
 
@@ -325,10 +375,13 @@ async function sweep() {
     for (const { id } of q("SELECT id FROM tasks WHERE status = 'open' AND auto_status = '' AND type IN ('recharge','renew','activate','esim','port') AND created_at > ?").all(now() - PICKUP_MS)) {
       await send(id).catch((e) => console.error('auto send', e));
     }
+    if (s.qlConfigured) {
+      for (const { id } of q("SELECT id FROM lines WHERE ql_pending != ''").all()) await mirrorLine(id).catch((e) => console.error('ql mirror', e));
+    }
   } finally {
     busy = false;
   }
 }
 setInterval(() => { sweep().catch((e) => console.error('auto sweep', e)); }, LOOP_MS).unref();
 
-module.exports = { send, check, sweep };
+module.exports = { send, check, sweep, mirrorLine };
