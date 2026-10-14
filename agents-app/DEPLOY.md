@@ -150,6 +150,15 @@ gcloud compute ssh agents-server --zone us-central1-a --command "sudo systemctl 
 ### قاعدة البيانات تُحذف بعد الإيقاف
 → تأكد من أن القرص الدائم مرتبط بـ `/data`
 
+### نسيت كلمة مرور المدير / Forgotten manager password
+لا يوجد «نسيت كلمة المرور» في الموقع عمداً: الاسترجاع من السيرفر فقط، فلا يقدر عليه إلا من يملك حساب Google Cloud.
+يضع كلمة مرور جديدة قوية ويطبعها، ويعيد تفعيل الحساب إن كان موقوفاً، ويُخرجه من كل الأجهزة:
+```bash
+gcloud compute ssh agents-server --zone us-central1-a --command \
+  "sudo -u agents env DB_FILE=/var/lib/agents-app/agents.db node /opt/agents/webservice/agents-app/scripts/reset-admin.js"
+```
+ثم ادخل بها وغيّرها من «الحساب» (اضغط على اسمك). لاختيار كلمة المرور بنفسك أضف `NEW_PASSWORD=...` بعد `env`.
+
 ### الكاميرا لا تعمل
 → تأكد من استخدام HTTPS (جميع المنصات الثلاث توفرها افتراضياً)
 
