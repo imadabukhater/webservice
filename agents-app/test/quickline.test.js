@@ -13,7 +13,7 @@ const subs = () => [
   { id: 305648, number: '0524386903', company: 'Cellcom', companyId: 3, packageId: 2564, status: 'فعال', statusInt: 2, canExtend: true, daysLeft: fake.daysLeft, cutDate: fake.cutDate },
   { id: 400877, number: '0511111111', company: 'Cellcom', companyId: 3, packageId: 2564, status: 'فصل نهائي', statusInt: 4, canExtend: false, daysLeft: 0, cutDate: '01/01/2026' },
 ];
-const fake = { renews: [], logins: 0, cutDate: '14/10/2026', daysLeft: 3, cost: 62, renewAnswer: null, expire: false, created: [], added: [], newAnswer: null, stateCalls: [] };
+const fake = { renews: [], logins: 0, cutDate: '14/10/2026', daysLeft: 3, cost: 62, renewAnswer: null, expire: false, created: [], added: [], newAnswer: null, stateCalls: [], holdNew: false, subsFail: 0 };
 // Free numbers per kind: physical SIM, and eSIM (with its own eSIM and QR code).
 const FREE = {
   s: [{ id: 9001, phone: '0528170777', sim: '', barcodeImage: null }, { id: 9002, phone: '0584922255', sim: '', barcodeImage: null }],
@@ -62,11 +62,14 @@ const api = http.createServer((req, res) => {
       })));
     }
     if (url === 'Subscriptions/DealersGetAllDT') {
+      if (fake.subsFail > 0) { fake.subsFail--; return text('down', 503); }
+      const f = JSON.parse(body || '{}');
+      const all = subs();
       return json({
-        draw: 1,
-        recordsTotal: 2,
-        recordsFiltered: 2,
-        data: subs().map((s, i) => ({
+        draw: f.draw,
+        recordsTotal: all.length,
+        recordsFiltered: all.length,
+        data: all.slice(f.start, f.start + f.length).map((s, i) => ({
           company: { name: s.company, id: s.companyId, simPrefix: '89972020', simLength: 18 },
           package: { name: 'سلكوم 400 جيجا', id: s.packageId, gb: 400 },
           customer: { name: 'زبون', id: 1 },
@@ -103,6 +106,8 @@ const api = http.createServer((req, res) => {
       const f = JSON.parse(body || '{}');
       fake.created.push(f);
       if (fake.newAnswer) return text(fake.newAnswer, 400);
+      // holdNew: QuickLine accepted it but has not activated the line yet.
+      if (fake.holdNew) return text('تم استلام الطلب');
       const free = [...FREE.s, ...FREE.e].find((n) => n.id === Number(f.numberId));
       const number = f.newSubscriptionType === 'neyod' ? f.phone : free.phone;
       fake.added.push({ id: 500000 + fake.added.length, number, company: 'Cellcom', companyId: 3, packageId: Number(f.packageId), status: 'جديد', statusInt: 1, canExtend: false, daysLeft: f.daysValues, cutDate: '12/11/2026' });
@@ -381,4 +386,66 @@ test('QuickLine: a new line, an eSIM and a ported number are activated automatic
   const missing = await until(async () => (await ok(call(admin, 'GET', `/api/lines/${rp.line.id}`))).history.find((x) => x.type === 'supplier_sync'));
   assert.match(missing.detail, /غير موجود في QuickLine/);
   assert.equal(fake.stateCalls.length, calls);
+});
+
+test('QuickLine: sales by the manager go through QuickLine, renewals fit the line, and nothing is refunded mid-way', async () => {
+  const admin = await login('admin', 'admin-pass');
+  const t = await login('agent2', 'secret2');
+  const cat = (await ok(call(admin, 'GET', '/api/catalog'))).packages;
+  const pk = cat.find((p) => p.supplier === 'ql' && p.kind === 'invoice' && p.artCode === '2564');
+  const ext = cat.find((p) => p.supplier === 'ql' && p.kind === 'card' && p.artCode === '2564');
+  const otherExt = cat.find((p) => p.supplier === 'ql' && p.kind === 'card' && p.artCode === '2587');
+  const manualPkg = cat.find((p) => !p.supplier && p.companyId === pk.companyId);
+  const agentId = (await ok(call(admin, 'GET', '/api/agents'))).find((a) => a.username === 'agent2').id;
+
+  // ----- the manager sells a QuickLine line: it waits for QuickLine like an agent's -----
+  await ok(call(admin, 'GET', `/api/quickline/numbers?packageId=${pk.id}`));
+  fake.holdNew = true;
+  const sale = await ok(call(admin, 'POST', '/api/lines', { agentId, kind: 'new', packageId: pk.id, number: '0584922255', qlNumberId: 9002, sim: '899720204444444444', customerName: 'زبون المدير' }));
+  assert.equal(sale.line.status, 'pending', 'not active before QuickLine has it');
+  const task = await until(async () => (await ok(call(admin, 'GET', '/api/tasks'))).find((x) => x.lineId === sale.line.id && x.autoStatus === 'sent'));
+
+  // ----- no refund while QuickLine is still carrying it out -----
+  const early = await call(admin, 'POST', `/api/tasks/${task.id}/resolve`, { status: 'rejected' });
+  assert.equal(early.status, 409);
+  fake.added.push({ id: 600001, number: '0584922255', company: 'Cellcom', companyId: 3, packageId: 2564, status: 'فعال', statusInt: 2, canExtend: true, daysLeft: 30, cutDate: '12/11/2026' });
+  fake.holdNew = false;
+  await until(async () => (await ok(call(admin, 'GET', `/api/lines/${sale.line.id}`))).line.status === 'active');
+
+  // ----- a QuickLine line is extended only by its own package's extension -----
+  const line = (await ok(call(t, 'GET', `/api/lines/${sale.line.id}`))).line;
+  assert.deepEqual([line.supplier, line.qlPackage], ['ql', 2564]);
+  const renew = (packageId) => call(t, 'POST', `/api/lines/${sale.line.id}/renew`, { packageId });
+  if (manualPkg) assert.match((await renew(manualPkg.id)).body.error, /خط QuickLine/);
+  assert.match((await renew(otherExt.id)).body.error, /خط QuickLine/);
+  assert.match((await renew(pk.id)).body.error, /تفعيل خط جديد/);
+  const ok1 = await ok(renew(ext.id));
+  assert.equal(ok1.pending, true, 'waits for QuickLine');
+
+  // ----- QuickLine's two systems cannot stand in for each other -----
+  assert.match((await call(t, 'POST', '/api/lines', { kind: 'external', packageId: pk.id, number: '0501112233' })).body.error, /تفعيل خط جديد/);
+  assert.match((await call(t, 'POST', '/api/lines', { kind: 'new', packageId: ext.id, number: '0501112233', sim: '899720205555555555', customerName: 'س' })).body.error, /رزمة تمديد/);
+
+  // ----- QuickLine unreachable before sending: tried again, sent once -----
+  const t1 = await login('agent1', 'secret1');
+  const had = new Set((await ok(call(admin, 'GET', '/api/tasks'))).map((x) => x.id));
+  const renews = fake.renews.length;
+  fake.subsFail = 1;
+  await ok(call(t1, 'POST', '/api/lines', { kind: 'external', packageId: ext.id, number: '0524386903' }));
+  const retry = await until(async () => (await ok(call(admin, 'GET', '/api/tasks'))).find((x) => !had.has(x.id) && x.autoStatus === '' && /يُعاد المحاولة/.test(x.autoNote)));
+  assert.equal(fake.renews.length, renews, 'nothing sent yet');
+  await require('../src/autoexec').sweep();
+  await until(async () => (await ok(call(admin, 'GET', '/api/tasks'))).find((x) => x.id === retry.id && x.status === 'done'));
+  assert.equal(fake.renews.length, renews + 1, 'sent once');
+
+  // ----- a send cut off midway is handed to the manager, never resent -----
+  // (the extension of the manager's line above is still waiting on QuickLine; pretend the server died mid-send)
+  const { q } = require('../src/db');
+  const open = (await ok(call(admin, 'GET', '/api/tasks'))).find((x) => x.lineId === sale.line.id && x.status === 'open');
+  q("UPDATE tasks SET auto_status = 'sending', auto_at = ? WHERE id = ?").run(Date.now() - 11 * 60_000, open.id);
+  const sentBefore = fake.renews.length;
+  await require('../src/autoexec').sweep();
+  const stuck = (await ok(call(admin, 'GET', '/api/tasks'))).find((x) => x.id === open.id);
+  assert.deepEqual([stuck.status, stuck.autoStatus], ['open', 'unknown']);
+  assert.equal(fake.renews.length, sentBefore, 'not resent');
 });

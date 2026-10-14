@@ -80,7 +80,14 @@ route('POST', '/api/tasks/:id/cancel', ANY, ({ user, params }) => {
 });
 
 // The manager completes or rejects a request (the art-topup executor does the same). Rejected sales are refunded in full.
-route('POST', '/api/tasks/:id/resolve', ADMIN, ({ user, params, body }) => tx(() => resolveTask(getTask(params.id, user), user, body)),
+route('POST', '/api/tasks/:id/resolve', ADMIN, ({ user, params, body }) => tx(() => {
+  const t = getTask(params.id, user);
+  // While a supplier is carrying it out, a refund could pay back something that is about to be delivered.
+  if (body.status === 'rejected' && ['sending', 'sent'].includes(t.auto_status)) {
+    fail(409, 'التنفيذ التلقائي جارٍ الآن عند المورّد — انتظر نتيجته قبل الرفض');
+  }
+  return resolveTask(t, user, body);
+}),
   { maxBody: 1100 * 1024 });
 
 // Runs inside the caller's transaction.

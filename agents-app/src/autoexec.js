@@ -18,10 +18,22 @@ const CHECK_MS = Number(process.env.ART_CHECK_MS) || 15_000; // first look at th
 const GIVE_UP_MS = 30 * 60_000; // still not finished after this: hand over to the manager
 const LOOP_MS = Number(process.env.ART_LOOP_MS) || 30_000;
 const PICKUP_MS = 10 * 60_000; // the loop only sends requests younger than this (e.g. after a restart)
+const STUCK_MS = 10 * 60_000; // a send still "sending" after this was interrupted (a send takes well under a minute)
 
 const setAuto = (id, status, note, extra = {}) => q(`UPDATE tasks SET auto_status = ?, auto_note = ?${extra.ref !== undefined ? ', auto_ref = ?' : ''} WHERE id = ?`)
   .run(status, note, ...(extra.ref !== undefined ? [extra.ref] : []), id);
 const tellManager = (title, body) => D.notify({ role: 'admin', kind: 'task', title, body, link: '#/tasks' });
+
+// QuickLine could not be reached before anything was sent. That is safe to try again, so a fresh task goes back to
+// the sweep (claimed again, sent at most once); one past the pickup window goes to the manager.
+function notSentYet(t, taskId, e, title) {
+  if (now() - t.created_at < PICKUP_MS - LOOP_MS) {
+    setAuto(taskId, '', `لم يُرسل بعد (${e.message}) — يُعاد المحاولة تلقائياً`);
+    return;
+  }
+  setAuto(taskId, 'failed', `لم يُرسل: ${e.message}`);
+  tellManager(title, `${t.number || ''} ${e.message}`.trim());
+}
 
 // The package and number behind an open recharge/renewal task, or null when no supplier carries it out.
 function job(taskId) {
@@ -83,7 +95,7 @@ async function sendQlNew(taskId, j) {
     known = (await ql.subscriptions(creds)).filter((s) => s.number === number);
   } catch (e) {
     // Nothing was sent yet.
-    return fail(`لم يُرسل: ${e.message}`, 'تعذّر التفعيل التلقائي');
+    return notSentYet({ ...j.t, number }, taskId, e, 'تعذّر التفعيل التلقائي');
   }
   if (!pkg) return fail('الرزمة لم تعد موجودة في QuickLine — نفّذه يدوياً أو ارفضه', 'تعذّر التفعيل التلقائي');
   // An offer's duration is fixed by QuickLine; if it changed since the sale, the agent paid for something else.
@@ -159,9 +171,8 @@ async function sendQl(taskId, j) {
   try {
     sub = await ql.findSubscription(creds, number);
   } catch (e) {
-    // Nothing was sent yet: give it back to the manager.
-    setAuto(taskId, 'failed', `لم يُرسل: ${e.message}`);
-    tellManager('تعذّر التمديد التلقائي', `${number}: ${e.message}`);
+    // Nothing was sent yet.
+    notSentYet({ ...j.t, number }, taskId, e, 'تعذّر التمديد التلقائي');
     return;
   }
   if (!sub) {
@@ -206,7 +217,8 @@ async function checkQl(t) {
   let before;
   try { before = JSON.parse(t.auto_ref || '{}'); } catch { before = {}; }
   const line = q('SELECT number FROM lines WHERE id = ?').get(t.line_id);
-  const sub = await ql.findSubscription(qlCredentials(), line?.number);
+  // The very subscription that was extended: another one for the same number says nothing about it.
+  const sub = (await ql.subscriptions(qlCredentials())).find((s) => s.id === before.id);
   const applied = sub && (sub.cutDate !== before.cutDate || (sub.daysLeft ?? 0) > (before.daysLeft ?? 0));
   if (applied) {
     finish(t.id, `QuickLine: تم التمديد حتى ${sub.cutDate} (${sub.daysLeft} يوم متبقٍ)`, `تم التمديد عبر QuickLine حتى ${sub.cutDate}`, QL_ACTOR);
@@ -371,6 +383,13 @@ async function sweep() {
   if (busy || !(s.artConfigured || s.qlConfigured)) return;
   busy = true;
   try {
+    // A send interrupted midway (e.g. the server restarted) may or may not have reached the supplier: never resend it,
+    // tell the manager to check there.
+    for (const t of q("SELECT t.id, l.number FROM tasks t LEFT JOIN lines l ON l.id = t.line_id WHERE t.status = 'open' AND t.auto_status = 'sending' AND t.auto_at < ?")
+      .all(now() - STUCK_MS)) {
+      setAuto(t.id, 'unknown', 'انقطع الإرسال قبل أن يُعرف إن وصل إلى المورّد. افحصه هناك قبل أي تنفيذ يدوي.');
+      tellManager('تنفيذ تلقائي غير مؤكد', `${t.number || ''}: افحص المورّد قبل التنفيذ`);
+    }
     for (const { id } of q("SELECT id FROM tasks WHERE status = 'open' AND auto_status = 'sent'").all()) await check(id).catch((e) => console.error('auto check', e));
     for (const { id } of q("SELECT id FROM tasks WHERE status = 'open' AND auto_status = '' AND type IN ('recharge','renew','activate','esim','port') AND created_at > ?").all(now() - PICKUP_MS)) {
       await send(id).catch((e) => console.error('auto send', e));

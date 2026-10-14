@@ -198,11 +198,19 @@ async function newSubscription(creds, { type, packageId, days, numberId = null, 
 }
 
 // The dealer's lines, so a number can be turned into the subscription id an extension needs.
+// Read page by page until every line QuickLine counts is in, so a number is never missed because a page was capped.
 async function subscriptions(creds) {
-  const { data } = await api(creds, 'POST', 'Subscriptions/DealersGetAllDT', {
-    draw: 1, start: 0, length: 5000, search: { value: '', regex: false }, order: [], columns: [],
-  });
-  return (data?.data || []).map((r) => ({
+  const rows = [];
+  for (let page = 0; page < 50; page++) {
+    const { data } = await api(creds, 'POST', 'Subscriptions/DealersGetAllDT', {
+      draw: page + 1, start: rows.length, length: 1000, search: { value: '', regex: false }, order: [], columns: [],
+    });
+    const got = Array.isArray(data?.data) ? data.data : [];
+    rows.push(...got);
+    const total = Number(data?.recordsFiltered ?? data?.recordsTotal);
+    if (!got.length || !(total > rows.length)) break;
+  }
+  return rows.map((r) => ({
     id: r.subscription?.id,
     number: String(r.subscription?.phoneNumber || '').replace(/\D/g, ''),
     sim: r.subscription?.simNumber || '',
@@ -275,6 +283,27 @@ function localNumber(n) {
   return /^0\d{9}$/.test(d) ? d : null;
 }
 
+// Who supplies a package, from its ref: art-topup (ic:/pb:/pc:/inv:), QuickLine (ql:/qln:, with its package id there),
+// or nobody (typed by the manager).
+function supplierOfRef(ref) {
+  const r = String(ref || '');
+  if (/^(ic|pb|pc|inv):/.test(r)) return { supplier: 'art', qlPackage: null };
+  const m = /^qln?:(\d+):/.exec(r);
+  return m ? { supplier: 'ql', qlPackage: Number(m[1]) } : { supplier: '', qlPackage: null };
+}
+
+// Which package may extend a line. A QuickLine line is extended there on its own package (QuickLine renews that one
+// and charges its price), so only that package's extension (ql:<same id>:) fits; an art-topup line takes no QuickLine
+// package; and a new-line package (qln:) never extends anything. Returns '' when it fits, else why not.
+function renewalProblem(lineRef, pkgRef) {
+  const line = supplierOfRef(lineRef);
+  const pkg = supplierOfRef(pkgRef);
+  if (/^qln:/.test(String(pkgRef || ''))) return 'هذه رزمة تفعيل خط جديد في QuickLine، وليست للتمديد';
+  if (line.supplier === 'ql' && !(pkg.supplier === 'ql' && pkg.qlPackage === line.qlPackage)) return 'هذا خط QuickLine: مدّده برزمة التمديد الخاصة برزمته في QuickLine';
+  if (line.supplier === 'art' && pkg.supplier === 'ql') return 'هذا الخط ليس من QuickLine: اختر كرتاً من كروت الشحن';
+  return '';
+}
+
 // Which system a package ref belongs to: ql: an extension (sold automatically), qln: a new line (manager's request).
 const refKind = (ref) => (/^ql:/.test(ref) ? 'card' : /^qln:/.test(ref) ? 'invoice' : null);
 const parseRef = (ref) => {
@@ -286,4 +315,5 @@ module.exports = {
   QuickLineError, DURATIONS, login, api, companies, catalog, subscriptions, findSubscription,
   balance, homeData, renew, localNumber, refKind, parseRef, gbOf,
   freeNumbers, simProblem, splitName, newSubscription, STATUS, closeNumber, pauseNumber, activateNumber,
+  supplierOfRef, renewalProblem,
 };

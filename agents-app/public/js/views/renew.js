@@ -33,7 +33,11 @@ export async function openRenew(line) {
     available = extra.user.available;
   }
   // Extending a number means recharging it: offer the company's recharge cards, or its invoices when it has no cards.
-  const sellable = cat.packages.filter((p) => p.companyId === line.companyId && p.active && priceOf(p) > 0);
+  // Only what its supplier can extend: a QuickLine line its own package's extension, an art-topup line no QuickLine
+  // package, and never a QuickLine new-line package (the server checks the same).
+  const fits = (p) => !p.ql && (line.supplier === 'ql' ? p.supplier === 'ql' && p.qlPackage === line.qlPackage
+    : !(line.supplier === 'art' && p.supplier === 'ql'));
+  const sellable = cat.packages.filter((p) => p.companyId === line.companyId && p.active && priceOf(p) > 0 && fits(p));
   const cards = sellable.filter((p) => p.kind === 'card');
   const pkgs = cards.length ? cards : sellable;
   const options = [
@@ -44,7 +48,9 @@ export async function openRenew(line) {
     ...pkgs.map((p) => ({ key: `p${p.id}`, packageId: p.id, title: `${p.companyName} ${p.name}`, sub: [p.dataGb ? `${fmtNum(p.dataGb)} GB` : '', p.days ? `${p.days} يوماً` : ''].filter(Boolean).join(' · '), unit: priceOf(p), days: p.days })),
   ];
   if (!options.length) {
-    sheet({ title: `تمديد ${line.number}`, body: empty('box', 'لا توجد رزم متاحة لهذه الشركة', 'اطلب من المدير تحديد سعر رزم الشركة.') });
+    sheet({ title: `تمديد ${line.number}`, body: line.supplier === 'ql'
+      ? empty('box', 'لا يوجد تمديد QuickLine لرزمة هذا الخط', 'اطلب من المدير مزامنة QuickLine وتحديد سعر تمديد هذه الرزمة.')
+      : empty('box', 'لا توجد رزم متاحة لهذه الشركة', 'اطلب من المدير تحديد سعر رزم الشركة.') });
     return;
   }
   const st = { key: (options.find((o) => o.packageId === line.packageId && !o.offerId) || options[0]).key, months: 1 };

@@ -59,6 +59,9 @@ route('POST', '/api/lines', ANY, ({ user, body }) => tx(() => {
   }
 
   const { pkg, offer, unit: quoted } = D.quote(agent.id, { packageId: body.packageId, offerId: body.offerId });
+  // QuickLine's two systems cannot stand in for each other: a new-line package opens a line, an extension extends one.
+  if (kind === 'external' && /^qln:/.test(pkg.art_card_id || '')) fail(400, 'هذه رزمة تفعيل خط جديد في QuickLine، وليست شحناً لرقم');
+  if (kind === 'new' && /^ql:/.test(pkg.art_card_id || '')) fail(400, 'هذه رزمة تمديد في QuickLine: اختر رزمة «خط جديد»');
   let unit = quoted;
   if (isAdmin && !isBlank(body.unitPrice)) unit = num(body.unitPrice, 'السعر');
   if (unit < 0) fail(400, 'السعر لا يكون سالباً');
@@ -71,10 +74,10 @@ route('POST', '/api/lines', ANY, ({ user, body }) => tx(() => {
   const total = round(unit * months + esimFee);
   const cost = round(pkg.cost * months + esimFee);
 
-  // A QuickLine new line (an agent's sale) is activated there automatically, so everything QuickLine checks is
+  // A QuickLine new line (the manager's sale too) is activated there automatically, so everything QuickLine checks is
   // checked here first, before the agent pays: the number comes from QuickLine's free numbers (eSIM: with its own
   // eSIM), a ported number names the company it leaves, the SIM fits the company's rule, and the customer has a name.
-  const qlRef = kind === 'new' && !isAdmin && /^qln:/.test(pkg.art_card_id || '') ? require('../quickline').parseRef(pkg.art_card_id) : null;
+  const qlRef = kind === 'new' && /^qln:/.test(pkg.art_card_id || '') ? require('../quickline').parseRef(pkg.art_card_id) : null;
   let qlJob = null;
   let sim = { iccid: '', stockId: null };
   if (qlRef) {
@@ -107,11 +110,14 @@ route('POST', '/api/lines', ANY, ({ user, body }) => tx(() => {
   // Direct companies: active at once and final. Manual companies: a request the manager carries out
   // (the manager's own sales count as already done). eSIM and number porting always go through the manager,
   // or through QuickLine for its packages. A QuickLine new line is never "direct": it must be activated there.
-  const direct = D.directCompany(pkg.company_id) && !port && !esim && !qlRef;
+  // Anything sold on a QuickLine package (a new line, or an extension sold as a recharge) is carried out there.
+  const viaQl = !!qlRef || /^ql:/.test(pkg.art_card_id || '');
+  const direct = D.directCompany(pkg.company_id) && !port && !esim && !viaQl;
   const manual = !direct && !port && !esim && !isAdmin;
   // The eSIM's QR code is kept with the task; it is shown on the line once QuickLine has activated it.
   const taskPayload = qlJob ? { ql: qlJob } : null;
-  const pending = port || esim || manual;
+  // A QuickLine sale is pending until QuickLine has carried it out, whoever sold it.
+  const pending = port || esim || manual || viaQl;
   const t = now();
   const label = D.packageLabel(pkg);
   const customerName = str(body.customerName, 80);
@@ -156,6 +162,9 @@ function renewLine(user, l, body) {
   if (!body.offerId && !packageId) fail(400, 'اختر الباقة');
   const { pkg, offer, unit: quoted } = D.quote(agent.id, { packageId, offerId: body.offerId });
   if (l.company_id && pkg.company_id !== l.company_id) fail(400, `اختر باقة من ${l.company_name}`);
+  // A line is extended by its own supplier, on its own package there (see quickline.renewalProblem).
+  const misfit = require('../quickline').renewalProblem(l.package_ref, pkg.art_card_id);
+  if (misfit) fail(400, misfit);
   const days = pkg.days || null;
   if (days) months = 1;
   let unit = quoted;
@@ -170,7 +179,8 @@ function renewLine(user, l, body) {
   const card = body.kind === 'external';
   const renewal = { packageId: pkg.id, label, companyId: pkg.company_id, months, days, total, cost, offerId: offer?.id ?? null, customerPrice };
   // Manual companies: the agent pays now; the line is extended when the manager marks the request done.
-  const manual = !isAdmin && !D.directCompany(pkg.company_id);
+  // A QuickLine extension is always carried out there (the manager's too), so it waits for QuickLine.
+  const manual = (!isAdmin && !D.directCompany(pkg.company_id)) || /^ql:/.test(pkg.art_card_id || '');
   if (!manual) applyRenewal(l.id, renewal);
   D.changeBalance(agent, -total, {
     type: 'renew', actor: user, lineId: l.id, number: l.number, cost, profit: total - cost, package: label, customerPrice,

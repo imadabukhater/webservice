@@ -44,9 +44,10 @@ const STEPS = () => (external() ? ['الشركة', 'الشحن', 'رقم الز�
 
 // An agent's sale for a "manual" company becomes a request the manager carries out on the company's site.
 const manualSale = () => !isAdmin() && !W.esim && !W.port && company()?.activation !== 'direct';
-const directSale = () => !isAdmin() && !W.esim && !W.port && company()?.activation === 'direct';
+// A QuickLine sale is never direct: it waits for QuickLine.
+const directSale = () => !isAdmin() && !W.esim && !W.port && company()?.activation === 'direct' && pkg()?.supplier !== 'ql';
 // A QuickLine new line sold by an agent: the number comes from QuickLine (or is ported), and it is activated there.
-const qlSale = () => !external() && !isAdmin() && !!pkg()?.ql;
+const qlSale = () => !external() && !!pkg()?.ql;
 const poolSale = () => qlSale() && !W.port;
 // Card recharges of art-topup cards for an "auto" company are carried out automatically within a minute,
 // and so are QuickLine new lines (also eSIM and ported numbers).
@@ -262,7 +263,7 @@ function rows() {
   r.push([W.port ? 'الرقم المحوَّل' : 'رقم الهاتف', W.numberState === 'ok' ? phone(normalizePhone(W.number)) : unset]);
   r.push(['مدة الخدمة', pkg()?.days ? `${pkg().days} يوماً` : monthsText(W.months)]);
   if (esimFee()) r.push(['رسوم تفعيل eSIM', fmtMoney(esimFee())]);
-  if (W.step >= 4 && p) r.push(['تنتهي في', W.esim || W.port || manualSale() || qlSale() ? 'بعد تنفيذ الطلب' : fmtDate(pkg()?.days ? Date.now() + pkg().days * 864e5 : addMonths(Date.now(), W.months))]);
+  if (W.step >= 4 && p) r.push(['تنتهي في', W.esim || W.port || manualSale() || pkg()?.supplier === 'ql' ? 'بعد تنفيذ الطلب' : fmtDate(pkg()?.days ? Date.now() + pkg().days * 864e5 : addMonths(Date.now(), W.months))]);
   return r;
 }
 

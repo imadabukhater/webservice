@@ -23,6 +23,8 @@ const packageAttrs = (p) => ({
   kind: p.kind === 'card' ? 'card' : 'invoice', days: p.days ?? null,
   // A QuickLine new line: its number is chosen from QuickLine's free numbers, and it is activated there automatically.
   ql: /^qln:/.test(p.art_card_id || ''),
+  // Who supplies it (art, ql or ''), and its package id at QuickLine, so a renewal can offer only what fits a line.
+  ...require('../quickline').supplierOfRef(p.art_card_id),
 });
 // The supplier's code for a package, shown to the manager. art-topup refs end in the code (ic:12345); QuickLine's
 // carry the package id and the duration (ql:2564:30), and the id is what identifies it there.
@@ -31,8 +33,6 @@ const artCode = (ref) => {
   if (!parts.length) return '';
   return /^qln?$/.test(parts[0]) ? parts[1] || '' : parts.slice(-1)[0] || '';
 };
-// Which supplier a package came from, so the manager's tabs can keep them apart.
-const supplierOf = (ref) => (/^(ic|pb|pc|inv):/.test(ref) ? 'art' : /^qln?:/.test(ref) ? 'ql' : '');
 
 // Agents see their own price (and never the cost); packages without a price are hidden from them.
 function catalogFor(user) {
@@ -50,7 +50,7 @@ function catalogFor(user) {
   const packages = q(`SELECT p.*, c.name AS company_name FROM packages p JOIN companies c ON c.id = p.company_id
                       ORDER BY c.sort, c.id, p.sort, p.id`).all()
     .map((p) => ({ id: p.id, name: p.name, companyId: p.company_id, companyName: p.company_name, cost: round(p.cost), price: round(p.price), active: !!p.active, sort: p.sort,
-      artCode: artCode(p.art_card_id), supplier: supplierOf(p.art_card_id), edited: !!p.edited, artPrice: p.art_price === null ? null : round(p.art_price),
+      artCode: artCode(p.art_card_id), edited: !!p.edited, artPrice: p.art_price === null ? null : round(p.art_price),
       // The supplier's price changed and the manager has not decided yet.
       artPending: p.art_price !== null && round(p.art_price) !== round(p.cost) && (p.art_ack === null || round(p.art_ack) !== round(p.art_price)),
       ...packageAttrs(p) }));

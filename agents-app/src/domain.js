@@ -155,7 +155,8 @@ function markSimUsed(stockId, lineId) {
 // ---------- lines ----------
 const LINE_SELECT = `SELECT l.id, l.number, l.sim, l.company_id, l.package_id, l.package_label, l.agent_id, l.kind, l.esim, l.port, l.direct,
   l.months, l.price, l.cost, l.offer_id, l.status, l.customer_name, l.customer_price, l.note, l.esim_code, (l.esim_qr != '') AS has_qr,
-  l.activated_at, l.expires_at, l.updated_at, u.name AS agent_name, c.name AS company_name, c.color AS company_color
+  l.activated_at, l.expires_at, l.updated_at, u.name AS agent_name, c.name AS company_name, c.color AS company_color,
+  (SELECT art_card_id FROM packages WHERE id = l.package_id) AS package_ref
   FROM lines l JOIN users u ON u.id = l.agent_id LEFT JOIN companies c ON c.id = l.company_id`;
 
 // Display state: active lines past their end date are "expired", close to it "expiring".
@@ -180,6 +181,8 @@ function lineView(l, role, warnDays) {
     note: l.note, esimCode: l.esim_code, hasQr: !!l.has_qr,
     activatedAt: l.activated_at, expiresAt: l.expires_at,
     daysLeft: l.expires_at ? Math.ceil((l.expires_at - now()) / 864e5) : null, updatedAt: l.updated_at,
+    // Who supplies the line, so a renewal can offer only what fits it.
+    ...require('./quickline').supplierOfRef(l.package_ref),
   };
 }
 
