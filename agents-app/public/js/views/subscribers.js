@@ -89,8 +89,8 @@ export async function lineAction(line, name) {
     }
     case 'disconnect':
       return sheet({
-        title: `فصل ${fmtPhone(line.number)}`,
-        body: `<div class="msg">${icon('alert')}<span>الفصل نهائي: لا يمكن إعادة الخط من التطبيق، ويصبح الرقم متاحاً للتفعيل من جديد.</span></div>
+        title: `فصل نهائي ${fmtPhone(line.number)}`,
+        body: `<div class="msg">${icon('alert')}<span>الفصل نهائي: لا يمكن إعادة الخط من التطبيق، ويصبح الرقم متاحاً للتفعيل من جديد. خطوط QuickLine تُفصل هناك نهائياً أيضاً.</span></div>
           <div class="field"><label for="dc-reason">السبب <span class="opt">(اختياري)</span></label><input class="input" id="dc-reason" name="reason"></div>`,
         submit: 'فصل الرقم', danger: true,
         async onSubmit(form) { await act(line, 'disconnect', { reason: field(form, 'reason') }); return finish('تم فصل الرقم'); },
@@ -184,14 +184,15 @@ export async function openLine(id) {
   const actions = [];
   const add = (key, label, ic, color = '', danger = false) => actions.push(`<button type="button" data-line-act="${key}" class="${danger ? 'danger' : ''}"><span class="tile sm ${color}">${icon(ic)}</span>${label}</button>`);
   if (['active', 'frozen'].includes(l.status)) add('renew', 'تمديد الرزمة', 'repeat', 'green');
-  if (l.status === 'active') add('freeze', 'تجميد الرقم', 'snow', 'violet');
+  if (l.status === 'active') add('freeze', 'تجميد الرقم (فصل مؤقت)', 'snow', 'violet');
   if (l.status === 'frozen') add('unfreeze', 'إلغاء التجميد', 'play', 'green');
   if (['active', 'frozen'].includes(l.status)) add('swap', 'تبديل الشريحة', 'sim', 'amber');
   add('edit', 'بيانات الزبون والملاحظات', 'edit');
   if (l.status !== 'disconnected') add('share', 'مشاركة التفاصيل مع الزبون', 'share', 'cyan');
   if (admin && l.status !== 'disconnected') add('correct', 'تعديل الرقم والرزمة والسعر', 'edit', 'amber');
   if (admin && l.status !== 'disconnected') add('move', 'نقل لوكيل آخر', 'swap', 'amber');
-  if (['active', 'frozen'].includes(l.status) && (admin || !l.direct)) add('disconnect', 'فصل الرقم', 'power', 'red', true);
+  // A final disconnect is the manager's; agents freeze (a temporary disconnect).
+  if (['active', 'frozen'].includes(l.status) && admin) add('disconnect', 'فصل نهائي', 'power', 'red', true);
   if (admin) add('delete', 'حذف الخط (تصحيح خطأ)', 'trash', 'red', true);
 
   const kv = [

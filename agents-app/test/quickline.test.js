@@ -354,15 +354,18 @@ test('QuickLine: a new line, an eSIM and a ported number are activated automatic
   assert.equal(fake.created.length, 4, 'tried once only');
   fake.newAnswer = null;
 
-  // ----- freezing, unfreezing and disconnecting a QuickLine line change it there too -----
+  // ----- the agent freezes and unfreezes, the manager disconnects: each changes the QuickLine line too -----
   const qlSub = fake.added.find((x) => x.number === '0528170777');
   Object.assign(qlSub, { status: 'فعال', statusInt: 2 });
-  const act = (action) => ok(call(t, 'POST', `/api/lines/${r.line.id}/action`, { action }));
+  const act = (action, who = t) => ok(call(who, 'POST', `/api/lines/${r.line.id}/action`, { action }));
   await act('freeze');
   await until(async () => qlSub.statusInt === 6);
   await act('unfreeze');
   await until(async () => qlSub.statusInt === 2);
-  await act('disconnect');
+  const refusedCut = await call(t, 'POST', `/api/lines/${r.line.id}/action`, { action: 'disconnect' });
+  assert.equal(refusedCut.status, 403, 'a final disconnect is for the manager only');
+  assert.equal(qlSub.statusInt, 2);
+  await act('disconnect', admin);
   await until(async () => qlSub.statusInt === 4);
   assert.deepEqual(fake.stateCalls, [['PauseNumber', qlSub.id, true], ['ActivateNumber', qlSub.id, undefined], ['CloseNumber', qlSub.id, true]]);
   const log = await until(async () => {
@@ -374,7 +377,7 @@ test('QuickLine: a new line, an eSIM and a ported number are activated automatic
   // ----- a QuickLine line that QuickLine does not have: the manager is told, nothing is sent -----
   const calls = fake.stateCalls.length;
   fake.added.splice(fake.added.findIndex((x) => x.number === '0547777777'), 1);
-  await ok(call(t, 'POST', `/api/lines/${rp.line.id}/action`, { action: 'disconnect' }));
+  await ok(call(admin, 'POST', `/api/lines/${rp.line.id}/action`, { action: 'disconnect' }));
   const missing = await until(async () => (await ok(call(admin, 'GET', `/api/lines/${rp.line.id}`))).history.find((x) => x.type === 'supplier_sync'));
   assert.match(missing.detail, /غير موجود في QuickLine/);
   assert.equal(fake.stateCalls.length, calls);

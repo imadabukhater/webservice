@@ -220,7 +220,8 @@ route('POST', '/api/lines/:id/action', ANY, ({ user, params, body }) => tx(() =>
   } else {
     const a = ACTIONS[action];
     if (!a) fail(400, 'إجراء غير معروف');
-    if (action === 'disconnect' && l.direct && user.role !== 'admin') fail(400, 'هذا الخط مفعّل تفعيلاً مباشراً ولا يمكن فصله');
+    // A final disconnect is the manager's; an agent can freeze the number (a temporary disconnect) instead.
+    if (action === 'disconnect' && user.role !== 'admin') fail(403, 'الفصل النهائي عند المدير. يمكنك تجميد الرقم (فصل مؤقت)، أو اطلب الفصل من المدير.');
     if (!a.from.includes(l.status)) fail(400, 'لا يمكن تنفيذ هذا الإجراء على حالة الرقم الحالية');
     q('UPDATE lines SET status = ?, updated_at = ? WHERE id = ?').run(a.to, now(), l.id);
     D.logLineOp(action, l, agent, user, a.label + (reason ? ' · ' + reason : ''), { package: l.package_label });
