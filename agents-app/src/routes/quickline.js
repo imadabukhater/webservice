@@ -58,6 +58,8 @@ async function syncKind(creds, kind) {
     let updated = 0;
     const companyIds = new Set();
     const refs = [];
+    // Companies that already had QuickLine packages: their automation is the manager's choice from now on.
+    const known = new Set(q(`SELECT DISTINCT company_id FROM packages WHERE ${REF.card} OR ${REF.invoice}`).all().map((r) => r.company_id));
     // Each package's SIM rule, so a sale can be checked at once, before the agent pays.
     const rules = simRules();
     for (const c of items) rules[c.packageId] = { company: c.company, postalCode: c.postalCode, simLength: c.simLength, qlCompanyId: c.companyId };
@@ -83,8 +85,10 @@ async function syncKind(creds, kind) {
     }
     const off = q(`UPDATE packages SET active = 0 WHERE ${REF[kind]} AND active = 1 AND art_card_id NOT IN (${refs.map(() => '?').join(',')})`)
       .run(...refs).changes;
-    // Extensions and new lines are both carried out automatically for "auto" companies.
-    for (const id of companyIds) q("UPDATE companies SET activation = 'auto' WHERE id = ? AND activation = 'manual'").run(id);
+    // Extensions and new lines are carried out automatically for "auto" companies. A company getting QuickLine
+    // packages for the first time is switched to auto; after that a manager's "manual" stays, so automation can be
+    // stopped for a company.
+    for (const id of companyIds) if (!known.has(id)) q("UPDATE companies SET activation = 'auto' WHERE id = ? AND activation = 'manual'").run(id);
     setSetting(`ql_synced_${kind}`, now());
     return { kind, total: items.length, added, updated, switchedOff: off, pending: pendingCount(kind), markup: markupFor(kind) };
   });

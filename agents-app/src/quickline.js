@@ -275,6 +275,12 @@ async function pauseNumber(creds, subscriptionId) {
 async function activateNumber(creds, subscriptionId) {
   await api(creds, 'POST', `Subscriptions/ActivateNumber/${encodeURIComponent(subscriptionId)}`, {});
 }
+// A new SIM for a line; like an activation, it goes without the company prefix.
+async function changeSim(creds, subscriptionId, iccid, rule) {
+  await api(creds, 'POST', 'Subscriptions/ChangeSim', {
+    subscriptionId: Number(subscriptionId), simNumber: String(iccid).replace(/\D/g, '').slice(rule.postalCode.length),
+  });
+}
 
 // Phone numbers in the portal's 10-digit local form (05XXXXXXXX).
 function localNumber(n) {
@@ -314,6 +320,6 @@ const parseRef = (ref) => {
 module.exports = {
   QuickLineError, DURATIONS, login, api, companies, catalog, subscriptions, findSubscription,
   balance, homeData, renew, localNumber, refKind, parseRef, gbOf,
-  freeNumbers, simProblem, splitName, newSubscription, STATUS, closeNumber, pauseNumber, activateNumber,
+  freeNumbers, simProblem, splitName, newSubscription, STATUS, closeNumber, pauseNumber, activateNumber, changeSim,
   supplierOfRef, renewalProblem,
 };

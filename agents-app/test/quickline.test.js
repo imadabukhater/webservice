@@ -13,7 +13,7 @@ const subs = () => [
   { id: 305648, number: '0524386903', company: 'Cellcom', companyId: 3, packageId: 2564, status: 'فعال', statusInt: 2, canExtend: true, daysLeft: fake.daysLeft, cutDate: fake.cutDate },
   { id: 400877, number: '0511111111', company: 'Cellcom', companyId: 3, packageId: 2564, status: 'فصل نهائي', statusInt: 4, canExtend: false, daysLeft: 0, cutDate: '01/01/2026' },
 ];
-const fake = { renews: [], logins: 0, cutDate: '14/10/2026', daysLeft: 3, cost: 62, renewAnswer: null, expire: false, created: [], added: [], newAnswer: null, stateCalls: [], holdNew: false, subsFail: 0 };
+const fake = { renews: [], logins: 0, cutDate: '14/10/2026', daysLeft: 3, cost: 62, renewAnswer: null, expire: false, created: [], added: [], newAnswer: null, stateCalls: [], holdNew: false, subsFail: 0, simCalls: [] };
 // Free numbers per kind: physical SIM, and eSIM (with its own eSIM and QR code).
 const FREE = {
   s: [{ id: 9001, phone: '0528170777', sim: '', barcodeImage: null }, { id: 9002, phone: '0584922255', sim: '', barcodeImage: null }],
@@ -76,7 +76,7 @@ const api = http.createServer((req, res) => {
           daysLeft: { value: s.daysLeft, color: 'warning' },
           status: { name: s.status, value: 'success', valueInt: s.statusInt },
           automaticRenew: { name: 'غير فعال', text: 'danger', value: false },
-          subscription: { id: s.id, phoneNumber: s.number, simNumber: `8997202035011905${i}`, customerPrice: null, isEsim: { name: 'لا', value: 'danger', valueInt: 0 } },
+          subscription: { id: s.id, phoneNumber: s.number, simNumber: s.sim || `8997202035011905${i}`, customerPrice: null, isEsim: { name: 'لا', value: 'danger', valueInt: 0 } },
           constantRenew: { name: 'غير فعال', text: 'danger', value: false },
           actions: { canExtend: s.canExtend, canDisconnect: true, canPause: true, canChangeSim: true, canChangeAutomaticRenew: true, canRefresh: true },
           cutDate: s.cutDate,
@@ -114,6 +114,14 @@ const api = http.createServer((req, res) => {
       const number = f.newSubscriptionType === 'neyod' ? f.phone : free.phone;
       fake.added.push({ id: 500000 + fake.added.length, number, company: 'Cellcom', companyId: 3, packageId: Number(f.packageId), status: 'جديد', statusInt: 1, canExtend: false, daysLeft: f.daysValues, cutDate: '12/11/2026' });
       return text('تمت إضافة الاشتراك بنجاح');
+    }
+    if (url === 'Subscriptions/ChangeSim') {
+      const f = JSON.parse(body || '{}');
+      fake.simCalls.push([f.subscriptionId, f.simNumber]);
+      const sub = fake.added.find((x) => x.id === Number(f.subscriptionId));
+      if (!sub) return text('الاشتراك غير موجود', 400);
+      sub.sim = `89972020${f.simNumber}`;
+      return text('تم تغيير الشريحة');
     }
     // A line's state: CloseNumber (final, 4), PauseNumber (temporary, 6), ActivateNumber/<id> (back to 2).
     const stateCall = /^Subscriptions\/(CloseNumber|PauseNumber|ActivateNumber)(?:\/(\d+))?$/.exec(url);
@@ -467,4 +475,49 @@ test('QuickLine: sales by the manager go through QuickLine, renewals fit the lin
   assert.equal(qlLine.statusInt, 4);
   await require('../src/autoexec').sweep();
   assert.equal(fake.stateCalls.length, calls + 1, 'sent once');
+});
+
+test('QuickLine: a SIM swap reaches QuickLine, the manager can stop automation, and nothing is resolved or deleted mid-way', async () => {
+  const admin = await login('admin', 'admin-pass');
+  const t = await login('agent2', 'secret2');
+  const pk = (await ok(call(admin, 'GET', '/api/catalog'))).packages.find((p) => p.supplier === 'ql' && p.kind === 'invoice' && p.artCode === '2564');
+  const company = () => ok(call(admin, 'GET', '/api/catalog')).then((c) => c.companies.find((x) => x.id === pk.companyId));
+
+  // ----- a company the manager set to "manual" stays manual through a sync -----
+  await ok(call(admin, 'PUT', `/api/companies/${pk.companyId}`, { activation: 'manual' }));
+  await ok(call(admin, 'POST', '/api/quickline/sync', { kind: 'card' }));
+  await ok(call(admin, 'POST', '/api/quickline/sync', { kind: 'invoice' }));
+  assert.equal((await company()).activation, 'manual');
+  await ok(call(admin, 'PUT', `/api/companies/${pk.companyId}`, { activation: 'auto' }));
+
+  // ----- a line whose activation QuickLine is still carrying out cannot be deleted -----
+  await ok(call(t, 'GET', `/api/quickline/numbers?packageId=${pk.id}`));
+  fake.holdNew = true;
+  const r = await ok(call(t, 'POST', '/api/lines', { kind: 'new', packageId: pk.id, number: '0528170777', qlNumberId: 9001, sim: '899720207777777777', customerName: 'زبون جديد' }));
+  const task = await until(async () => (await ok(call(admin, 'GET', '/api/tasks'))).find((x) => x.lineId === r.line.id && x.autoStatus === 'sent'));
+  assert.equal((await call(admin, 'DELETE', `/api/lines/${r.line.id}?refund=1`)).status, 409);
+  const added = fake.created.at(-1);
+  fake.added.unshift({ id: 700001, number: '0528170777', sim: `89972020${added.simNumber}`, company: 'Cellcom', companyId: 3, packageId: 2564, status: 'فعال', statusInt: 2, canExtend: true, daysLeft: 30, cutDate: '12/11/2026' });
+  fake.holdNew = false;
+  await until(async () => (await ok(call(t, 'GET', `/api/lines/${r.line.id}`))).line.status === 'active');
+  assert.equal((await ok(call(admin, 'GET', '/api/tasks'))).find((x) => x.id === task.id).status, 'done');
+
+  // ----- a request being sent cannot be carried out by hand at the same moment -----
+  const { q } = require('../src/db');
+  const agentId = (await ok(call(admin, 'GET', '/api/agents'))).find((a) => a.username === 'agent2').id;
+  const sending = Number(q(`INSERT INTO tasks (type, agent_id, line_id, amount, note, created_at, auto_status, auto_at)
+    VALUES ('renew', ?, ?, 10, 'تمديد', ?, 'sending', ?)`).run(agentId, r.line.id, Date.now(), Date.now()).lastInsertRowid);
+  assert.equal((await call(admin, 'POST', `/api/tasks/${sending}/resolve`, { status: 'done' })).status, 409);
+  q("UPDATE tasks SET status = 'rejected', auto_status = 'failed' WHERE id = ?").run(sending);
+
+  // ----- a new SIM goes on the line at QuickLine too, checked against its rule first -----
+  const swap = (sim) => call(t, 'POST', `/api/lines/${r.line.id}/action`, { action: 'swap_sim', sim });
+  const wrong = await swap('8997202066666666666');
+  assert.equal(wrong.status, 400);
+  assert.match(wrong.body.error, /18 رقماً/);
+  await ok(swap('899720206666666666'));
+  await until(async () => fake.added[0].sim === '899720206666666666');
+  assert.deepEqual(fake.simCalls, [[700001, '6666666666']], 'without the company prefix, once');
+  const logged = await until(async () => (await ok(call(admin, 'GET', `/api/lines/${r.line.id}`))).history.find((x) => x.type === 'supplier_sync' && /الشريحة/.test(x.detail)));
+  assert.match(logged.detail, /وُضعت الشريحة 899720206666666666/);
 });

@@ -223,10 +223,21 @@ route('POST', '/api/lines/:id/action', ANY, ({ user, params, body }) => tx(() =>
     if (isBlank(body.sim) && !body.simId) fail(400, 'أدخل رقم الشريحة الجديدة');
     const sim = D.takeSim({ iccid: body.sim, simId: body.simId },
       { agentId: agent.id, isAdmin: user.role === 'admin', companyId: l.company_id, companyName: l.company_name });
+    // A QuickLine line takes the new SIM there too, so it must fit QuickLine's rule for the company.
+    const qlPkg = require('../quickline').supplierOfRef(l.package_ref).qlPackage;
+    if (qlPkg) {
+      const rule = require('./quickline').simRuleFor(qlPkg);
+      const problem = rule && require('../quickline').simProblem(sim.iccid, rule);
+      if (problem) fail(400, problem);
+    }
     q('UPDATE lines SET sim = ?, esim = 0, updated_at = ? WHERE id = ?').run(sim.iccid, now(), l.id);
     D.markSimUsed(sim.stockId, l.id);
     if (l.company_id) D.learnPrefix(l.company_id, sim.iccid);
     D.logLineOp('swap_sim', l, agent, user, `${l.sim || 'بدون شريحة'} ← ${sim.iccid}${reason ? ' · ' + reason : ''}`, { package: l.package_label });
+    if (qlPkg) {
+      q('UPDATE lines SET ql_sim = ? WHERE id = ?').run(sim.iccid, l.id);
+      D.events.emit('line-supplier', l.id);
+    }
   } else {
     const a = ACTIONS[action];
     if (!a) fail(400, 'إجراء غير معروف');
@@ -329,6 +340,10 @@ route('POST', '/api/lines/:id/move', ADMIN, ({ user, params, body }) => tx(() =>
 // Removes a line entered by mistake. A SIM taken from stock goes back to stock.
 route('DELETE', '/api/lines/:id', ADMIN, ({ user, params, query }) => tx(() => {
   const l = D.getLine(params.id, user);
+  // A request a supplier is carrying out right now would be lost (and possibly refunded) while it is delivered.
+  if (q("SELECT 1 FROM tasks WHERE line_id = ? AND status = 'open' AND auto_status IN ('sending','sent')").get(l.id)) {
+    fail(409, 'لهذا الخط طلب يُنفَّذ الآن عند المورّد — انتظر نتيجته قبل الحذف');
+  }
   const agent = D.getUser(l.agent_id);
   if (query.refund === '1') {
     D.changeBalance(agent, l.price, { type: 'line_delete', actor: user, number: l.number, cost: -l.cost, profit: -(l.price - l.cost),

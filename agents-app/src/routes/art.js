@@ -56,6 +56,8 @@ async function syncKind(creds, kind) {
     let added = 0;
     let updated = 0;
     const companyIds = new Set();
+    // Companies that already had art-topup cards: their automation is the manager's choice from now on.
+    const known = new Set(q(`SELECT DISTINCT company_id FROM packages WHERE ${REF.card}`).all().map((r) => r.company_id));
     for (const c of items) {
       const companyId = companyFor(c.company);
       companyIds.add(companyId);
@@ -76,7 +78,8 @@ async function syncKind(creds, kind) {
     const off = items.hidden ? 0
       : q(`UPDATE packages SET active = 0 WHERE ${REF[kind]} AND active = 1 AND art_card_id NOT IN (${refs.map(() => '?').join(',')})`).run(...refs).changes;
     // Card recharges can be carried out automatically; invoices stay requests for the manager.
-    if (kind === 'card') for (const id of companyIds) q("UPDATE companies SET activation = 'auto' WHERE id = ? AND activation = 'manual'").run(id);
+    // Only a company's first cards switch it to auto; a manager's "manual" afterwards stays.
+    if (kind === 'card') for (const id of companyIds) if (!known.has(id)) q("UPDATE companies SET activation = 'auto' WHERE id = ? AND activation = 'manual'").run(id);
     setSetting(`art_synced_${kind}`, now());
     return { kind, total: items.length, hidden: items.hidden || 0, added, updated, switchedOff: off, pending: pendingCount(kind), markup: markupFor(kind) };
   });

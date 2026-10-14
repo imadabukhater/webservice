@@ -384,7 +384,62 @@ async function mirrorLine(lineId) {
     }
   }
 }
-D.events.on('line-supplier', (id) => setImmediate(() => mirrorLine(id).catch((e) => console.error('ql mirror', e))));
+// ---------- QuickLine: a new SIM put on a line here goes on it there too ----------
+// Same safety as above: QuickLine's current SIM is read first, a refusal goes to the manager, a dropped connection
+// is tried again, and a line still «جديد» there waits.
+const simming = new Set();
+async function mirrorSim(lineId) {
+  if (!getSettings().qlConfigured || simming.has(lineId)) return;
+  const line = q(`SELECT l.id, l.number, l.agent_id, l.package_label, l.ql_sim, l.updated_at, p.art_card_id
+                  FROM lines l LEFT JOIN packages p ON p.id = l.package_id WHERE l.id = ?`).get(lineId);
+  if (!line || !line.ql_sim) return;
+  simming.add(lineId);
+  const iccid = line.ql_sim;
+  let again = false;
+  q("UPDATE lines SET ql_sim = '' WHERE id = ? AND ql_sim = ?").run(lineId, iccid);
+  const requeue = () => { if (q("UPDATE lines SET ql_sim = ? WHERE id = ? AND ql_sim = ''").run(iccid, lineId).changes) again = true; };
+  const agent = q('SELECT id, name, balance FROM users WHERE id = ?').get(line.agent_id);
+  const log = (detail) => D.logLineOp('supplier_sync', line, agent, QL_ACTOR, detail, { package: line.package_label });
+  const problem = (detail) => { log(detail); tellManager('QuickLine: تعذّر تبديل الشريحة', `${line.number}: ${detail}`); };
+  try {
+    const creds = qlCredentials();
+    const qlPkg = ql.supplierOfRef(line.art_card_id).qlPackage;
+    const rule = (qlPkg && require('./routes/quickline').simRuleFor(qlPkg))
+      || (await ql.catalog(creds, 'invoice')).find((x) => x.packageId === qlPkg);
+    if (!rule) return problem('لم أجد قاعدة شرائح رزمة هذا الخط في QuickLine — بدّل الشريحة هناك يدوياً');
+    const number = ql.localNumber(line.number);
+    const sub = (await ql.subscriptions(creds)).find((s) => s.number === number && s.statusValue !== ql.STATUS.closed);
+    if (!sub) return problem('الرقم غير موجود في QuickLine تحت هذه الوكالة (أو مفصول هناك) — لم يتغيّر شيء');
+    if (sub.sim === iccid) return log(`الشريحة ${iccid} على الخط في QuickLine (كانت كذلك مسبقاً)`);
+    if (sub.statusValue === NOT_YET) {
+      if (now() - line.updated_at > WAIT_MS) return problem(`ما زال الخط «${sub.status}» في QuickLine بعد يوم، ولم تُبدَّل الشريحة — بدّلها هناك يدوياً`);
+      requeue();
+      const key = `${lineId}:sim:${iccid}`;
+      if (!waitLogged.has(key)) { waitLogged.add(key); log(`تبديل الشريحة بانتظار أن يفعّل QuickLine الخط (حالته الآن «${sub.status}»)`); }
+      return undefined;
+    }
+    await ql.changeSim(creds, sub.id, iccid, rule);
+    const after = (await ql.subscriptions(creds)).find((s) => s.id === sub.id);
+    if (after && after.sim !== iccid) return problem(`أُرسلت الشريحة الجديدة لكن QuickLine ما زال يعرض ${after.sim || 'غيرها'} — افحصه هناك`);
+    return log(`وُضعت الشريحة ${iccid} على الخط في QuickLine (اشتراك #${sub.id})`);
+  } catch (e) {
+    if (!(e instanceof ql.QuickLineError)) throw e;
+    if (e.refused) return problem(`رفض QuickLine تبديل الشريحة: ${e.message}`);
+    requeue();
+    return undefined;
+  } finally {
+    simming.delete(lineId);
+    // A newer SIM put on meanwhile goes now.
+    if (!again && q('SELECT ql_sim FROM lines WHERE id = ?').get(lineId)?.ql_sim) {
+      setImmediate(() => mirrorSim(lineId).catch((e) => console.error('ql sim', e)));
+    }
+  }
+}
+
+D.events.on('line-supplier', (id) => setImmediate(() => {
+  mirrorLine(id).catch((e) => console.error('ql mirror', e));
+  mirrorSim(id).catch((e) => console.error('ql sim', e));
+}));
 
 // New sale requests are sent right after their transaction commits.
 D.events.on('sale-task', (id) => setImmediate(() => send(id).catch((e) => console.error('auto send', e))));
@@ -409,6 +464,7 @@ async function sweep() {
     }
     if (s.qlConfigured) {
       for (const { id } of q("SELECT id FROM lines WHERE ql_pending != ''").all()) await mirrorLine(id).catch((e) => console.error('ql mirror', e));
+      for (const { id } of q("SELECT id FROM lines WHERE ql_sim != ''").all()) await mirrorSim(id).catch((e) => console.error('ql sim', e));
     }
   } finally {
     busy = false;
@@ -416,4 +472,4 @@ async function sweep() {
 }
 setInterval(() => { sweep().catch((e) => console.error('auto sweep', e)); }, LOOP_MS).unref();
 
-module.exports = { send, check, sweep, mirrorLine };
+module.exports = { send, check, sweep, mirrorLine, mirrorSim };
