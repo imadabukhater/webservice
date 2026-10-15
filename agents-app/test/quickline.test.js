@@ -305,20 +305,21 @@ test('QuickLine: a new line, an eSIM and a ported number are activated automatic
   await ok(call(admin, 'POST', '/api/agents', { name: 'وكيل خطوط', username: 'agent2', password: 'secret2', balance: 1000 }));
   const t = await login('agent2', 'secret2');
   const agentPkg = (await ok(call(t, 'GET', '/api/catalog'))).packages.find((p) => p.id === pk.id);
-  assert.equal(agentPkg.ql, true, 'the agent knows its number comes from QuickLine');
+  assert.equal(agentPkg.pool, true, 'the agent knows its number is picked from a list');
+  assert.ok(!('supplier' in agentPkg) && !('ql' in agentPkg), 'but not who activates it');
 
   // ----- the agent picks one of QuickLine's free numbers -----
-  const nums = await ok(call(t, 'GET', `/api/quickline/numbers?packageId=${pk.id}`));
+  const nums = await ok(call(t, 'GET', `/api/numbers/free?packageId=${pk.id}`));
   assert.deepEqual(nums.map((n) => n.phone), ['0528170777', '0584922255']);
-  assert.deepEqual((await ok(call(t, 'GET', `/api/quickline/numbers?packageId=${pk.id}&exclude=9001`))).map((n) => n.id), [9002]);
+  assert.deepEqual((await ok(call(t, 'GET', `/api/numbers/free?packageId=${pk.id}&exclude=9001`))).map((n) => n.id), [9002]);
   const sale = { kind: 'new', packageId: pk.id, number: '0528170777', qlNumberId: 9001, sim: '899720201111111111', customerName: 'علاء عدنان' };
 
   // ----- everything QuickLine checks is checked before the agent pays -----
   const before = (await ok(call(t, 'GET', '/api/me'))).user.balance;
   const bad = async (body, re) => { const r = await call(t, 'POST', '/api/lines', body); assert.equal(r.status, 400, JSON.stringify(r.body)); assert.match(r.body.error, re); };
   await bad({ ...sale, customerName: '' }, /اسم الزبون/);
-  await bad({ ...sale, number: '0521234567' }, /قائمة أرقام QuickLine/);
-  await bad({ ...sale, qlNumberId: 9002 }, /قائمة أرقام QuickLine/);
+  await bad({ ...sale, number: '0521234567' }, /قائمة الأرقام المتاحة/);
+  await bad({ ...sale, qlNumberId: 9002 }, /قائمة الأرقام المتاحة/);
   await bad({ ...sale, sim: '8997202011111111111' }, /18 رقماً وتبدأ بـ 89972020/);
   assert.equal((await ok(call(t, 'GET', '/api/me'))).user.balance, before, 'nothing was charged');
   assert.equal(fake.created.length, 0);
@@ -340,7 +341,7 @@ test('QuickLine: a new line, an eSIM and a ported number are activated automatic
   assert.deepEqual([done.status, done.autoStatus, done.resolvedBy], ['done', 'done', 'QuickLine (تلقائي)']);
 
   // ----- an eSIM: its number brings its own eSIM, and the QR code reaches the line -----
-  const enums = await ok(call(t, 'GET', `/api/quickline/numbers?packageId=${pk.id}&esim=1`));
+  const enums = await ok(call(t, 'GET', `/api/numbers/free?packageId=${pk.id}&esim=1`));
   assert.deepEqual(enums.map((n) => n.id), [9101]);
   const re = await ok(call(t, 'POST', '/api/lines', { kind: 'new', esim: true, packageId: pk.id, number: '0581112222', qlNumberId: 9101, customerName: 'زبون eSIM' }));
   const esimLine = await until(async () => { const l = (await ok(call(t, 'GET', `/api/lines/${re.line.id}`))).line; return l.status === 'active' && l; });
@@ -349,7 +350,7 @@ test('QuickLine: a new line, an eSIM and a ported number are activated automatic
   assert.deepEqual([fake.created[1].newSubscriptionType, fake.created[1].numberId, fake.created[1].simNumber], ['newEsimSubscription', '9101', '1234567890']);
 
   // ----- a ported number names the company it leaves -----
-  const cos = await ok(call(t, 'GET', '/api/quickline/port-companies'));
+  const cos = await ok(call(t, 'GET', '/api/numbers/port-companies'));
   assert.ok(cos.some((c) => c.id === 2 && c.name === 'Golan'));
   const port = { kind: 'new', port: true, packageId: pk.id, number: '0547777777', sim: '899720202222222222', customerName: 'محمد' };
   await bad(port, /الشركة التي يُحوَّل منها/);
@@ -360,7 +361,7 @@ test('QuickLine: a new line, an eSIM and a ported number are activated automatic
 
   // ----- QuickLine refusing: nothing was activated, the manager refunds, and it is never resent -----
   fake.newAnswer = 'الشريحة مستعملة';
-  await ok(call(t, 'GET', `/api/quickline/numbers?packageId=${pk.id}`));
+  await ok(call(t, 'GET', `/api/numbers/free?packageId=${pk.id}`));
   const rf = await ok(call(t, 'POST', '/api/lines', { ...sale, number: '0584922255', qlNumberId: 9002, sim: '899720203333333333' }));
   const refused = await until(async () => (await ok(call(admin, 'GET', '/api/tasks'))).find((x) => x.lineId === rf.line.id && !['', 'sending'].includes(x.autoStatus)));
   assert.deepEqual([refused.status, refused.autoStatus], ['open', 'failed']);
@@ -416,7 +417,7 @@ test('QuickLine: sales by the manager go through QuickLine, renewals fit the lin
   const agentId = (await ok(call(admin, 'GET', '/api/agents'))).find((a) => a.username === 'agent2').id;
 
   // ----- the manager sells a QuickLine line: it waits for QuickLine like an agent's -----
-  await ok(call(admin, 'GET', `/api/quickline/numbers?packageId=${pk.id}`));
+  await ok(call(admin, 'GET', `/api/numbers/free?packageId=${pk.id}`));
   fake.holdNew = true;
   const sale = await ok(call(admin, 'POST', '/api/lines', { agentId, kind: 'new', packageId: pk.id, number: '0584922255', qlNumberId: 9002, sim: '899720204444444444', customerName: 'زبون المدير' }));
   assert.equal(sale.line.status, 'pending', 'not active before QuickLine has it');
@@ -431,10 +432,10 @@ test('QuickLine: sales by the manager go through QuickLine, renewals fit the lin
 
   // ----- a QuickLine line is extended only by its own package's extension -----
   const line = (await ok(call(t, 'GET', `/api/lines/${sale.line.id}`))).line;
-  assert.deepEqual([line.supplier, line.qlPackage], ['ql', 2564]);
+  assert.ok(!('supplier' in line) && !('qlPackage' in line), 'the agent is not told who activates the line');
   const renew = (packageId) => call(t, 'POST', `/api/lines/${sale.line.id}/renew`, { packageId });
-  if (manualPkg) assert.match((await renew(manualPkg.id)).body.error, /خط QuickLine/);
-  assert.match((await renew(otherExt.id)).body.error, /خط QuickLine/);
+  if (manualPkg) assert.match((await renew(manualPkg.id)).body.error, /رزمة التمديد الخاصة به/);
+  assert.match((await renew(otherExt.id)).body.error, /رزمة التمديد الخاصة به/);
   assert.match((await renew(pk.id)).body.error, /تفعيل خط جديد/);
   const ok1 = await ok(renew(ext.id));
   assert.equal(ok1.pending, true, 'waits for QuickLine');
@@ -498,7 +499,7 @@ test('QuickLine: a SIM swap reaches QuickLine, the manager can stop automation, 
   await ok(call(admin, 'PUT', `/api/companies/${pk.companyId}`, { activation: 'auto' }));
 
   // ----- a line whose activation QuickLine is still carrying out cannot be deleted -----
-  await ok(call(t, 'GET', `/api/quickline/numbers?packageId=${pk.id}`));
+  await ok(call(t, 'GET', `/api/numbers/free?packageId=${pk.id}`));
   fake.holdNew = true;
   const r = await ok(call(t, 'POST', '/api/lines', { kind: 'new', packageId: pk.id, number: '0528170777', qlNumberId: 9001, sim: '899720207777777777', customerName: 'زبون جديد' }));
   const task = await until(async () => (await ok(call(admin, 'GET', '/api/tasks'))).find((x) => x.lineId === r.line.id && x.autoStatus === 'sent'));
@@ -578,4 +579,61 @@ test('QuickLine: a SIM swap reaches QuickLine, the manager can stop automation, 
   assert.equal(typeof h.tasks.attention, 'number');
   assert.equal(h.qlPending, 0);
   assert.equal((await call(t, 'GET', '/api/health')).status, 403);
+});
+
+test('the activation source is the manager\u2019s only: no agent response carries it, admin endpoints refuse agents', async () => {
+  const admin = await login('admin', 'admin-pass');
+  const t = await login('agent2', 'secret2');
+  const { q } = require('../src/db');
+  const agentId = (await ok(call(admin, 'GET', '/api/agents'))).find((a) => a.username === 'agent2').id;
+  const line = q("SELECT id FROM lines WHERE agent_id = ? ORDER BY id LIMIT 1").get(agentId).id;
+
+  // Text stored by earlier versions named the supplier: it must not reach the agent either.
+  const task = Number(q(`INSERT INTO tasks (type, status, agent_id, line_id, amount, note, response, resolved_by, created_at, resolved_at)
+    VALUES ('renew', 'done', ?, ?, 10, 'تمديد', 'تم التمديد عبر QuickLine حتى 1/1/2027', 'QuickLine (تلقائي)', ?, ?)`).run(agentId, line, Date.now(), Date.now()).lastInsertRowid);
+  q("INSERT INTO notifications (user_id, kind, title, body, ts) VALUES (?, 'task', 'تم تنفيذ شحن', 'تم الشحن عبر art-topup', ?)").run(agentId, Date.now());
+  q(`INSERT INTO ops (ts, type, agent_id, agent_name, actor_name, line_id, number, detail)
+     VALUES (?, 'renew_done', ?, 'وكيل', 'QuickLine (تلقائي)', ?, '0528170777', 'تم التمديد عبر QuickLine')`).run(Date.now(), agentId, line);
+
+  // ----- every endpoint an agent can read -----
+  const LEAK = /QuickLine|art-topup|"(supplier|qlPackage|source|artCode|art|ql|autoNote|autoStatus|package_ref|art_card_id)"\s*:/i;
+  const lines = await ok(call(t, 'GET', '/api/lines'));
+  const reports = await ok(call(t, 'GET', '/api/reports'));
+  const urls = [
+    '/api/me', '/api/catalog', '/api/lines', '/api/tasks', `/api/tasks/${task}`, '/api/notifications', '/api/ops', '/api/ops?lineId=' + line,
+    '/api/dashboard', '/api/activity?days=30', '/api/search?q=05', '/api/offers', '/api/sims', '/api/messages', '/api/invoices',
+    ...lines.flatMap((l) => [`/api/lines/${l.id}`, `/api/lines/${l.id}/renew-options`]),
+    ...reports.map((r) => `/api/reports/${r.key}?from=0`),
+  ];
+  for (const url of urls) {
+    const r = await call(t, 'GET', url);
+    assert.ok(r.status < 500, `${url}: ${r.status}`);
+    const m = LEAK.exec(JSON.stringify(r.body));
+    assert.equal(m, null, `${url} leaks «${m?.[0]}»`);
+  }
+  // The old texts reach the agent without the name.
+  assert.equal((await ok(call(t, 'GET', `/api/tasks/${task}`))).response, 'تم التمديد حتى 1/1/2027');
+  assert.equal((await ok(call(t, 'GET', `/api/tasks/${task}`))).resolvedBy, 'تلقائي');
+  assert.ok((await ok(call(t, 'GET', '/api/notifications'))).items.some((n) => n.body === 'تم الشحن'));
+  // A line's history keeps its entries, without the supplier's own.
+  const hist = (await ok(call(t, 'GET', `/api/lines/${line}`))).history;
+  assert.ok(hist.length && !hist.some((h) => h.type === 'supplier_sync'));
+
+  // ----- what only the manager may call -----
+  for (const [method, url] of [['GET', '/api/settings'], ['GET', '/api/health'], ['GET', '/api/quickline/lines'], ['GET', '/api/quickline/pending?kind=card'],
+    ['POST', '/api/quickline/sync'], ['POST', '/api/quickline/check'], ['GET', '/api/art/pending?kind=card'], ['GET', `/api/agents/${agentId}/prices`],
+    ['GET', `/api/agents/${agentId}/markups`], ['POST', `/api/lines/${line}/correct`]]) {
+    assert.equal((await call(t, method, url, method === 'POST' ? {} : undefined)).status, 403, `${method} ${url}`);
+  }
+
+  // ----- the manager sees it, and can change it through the package -----
+  const adminTask = (await ok(call(admin, 'GET', '/api/tasks'))).find((x) => x.lineId === line && x.type === 'activate');
+  assert.equal(adminTask.source, 'QuickLine');
+  const adminLine = (await ok(call(admin, 'GET', `/api/lines/${line}`))).line;
+  assert.deepEqual([adminLine.source, adminLine.supplier], ['QuickLine', 'ql']);
+  const manual = (await ok(call(admin, 'GET', '/api/catalog'))).packages.find((p) => !p.supplier && p.companyId === adminLine.companyId);
+  if (manual) {
+    await ok(call(admin, 'POST', `/api/lines/${line}/correct`, { packageId: manual.id, number: adminLine.number, price: adminLine.price }));
+    assert.equal((await ok(call(admin, 'GET', `/api/lines/${line}`))).line.source, 'يدوي');
+  }
 });

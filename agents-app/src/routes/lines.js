@@ -36,7 +36,9 @@ route('GET', '/api/lines/check', ANY, ({ user, query }) => {
 route('GET', '/api/lines/:id', ANY, ({ user, params }) => {
   const l = D.getLine(params.id, user);
   const { esim_qr: esimQr } = q('SELECT esim_qr FROM lines WHERE id = ?').get(l.id);
-  const history = q('SELECT * FROM ops WHERE line_id = ? ORDER BY ts DESC, id DESC LIMIT 100').all(l.id).map(D.opView(user.role));
+  // What the supplier did with the line (QuickLine's state changes) is the manager's only.
+  const history = q(`SELECT * FROM ops WHERE line_id = ? ${user.role === 'agent' ? "AND type != 'supplier_sync'" : ''}
+                     ORDER BY ts DESC, id DESC LIMIT 100`).all(l.id).map(D.opView(user.role));
   return { line: { ...D.lineView(l, user.role), esimQr }, history };
 });
 
@@ -60,8 +62,8 @@ route('POST', '/api/lines', ANY, ({ user, body }) => tx(() => {
 
   const { pkg, offer, unit: quoted } = D.quote(agent.id, { packageId: body.packageId, offerId: body.offerId });
   // QuickLine's two systems cannot stand in for each other: a new-line package opens a line, an extension extends one.
-  if (kind === 'external' && /^qln:/.test(pkg.art_card_id || '')) fail(400, 'هذه رزمة تفعيل خط جديد في QuickLine، وليست شحناً لرقم');
-  if (kind === 'new' && /^ql:/.test(pkg.art_card_id || '')) fail(400, 'هذه رزمة تمديد في QuickLine: اختر رزمة «خط جديد»');
+  if (kind === 'external' && /^qln:/.test(pkg.art_card_id || '')) fail(400, 'هذه رزمة تفعيل خط جديد، وليست شحناً لرقم');
+  if (kind === 'new' && /^ql:/.test(pkg.art_card_id || '')) fail(400, 'هذه رزمة تمديد: اختر رزمة تفعيل خط جديد');
   let unit = quoted;
   if (isAdmin && !isBlank(body.unitPrice)) unit = num(body.unitPrice, 'السعر');
   if (unit < 0) fail(400, 'السعر لا يكون سالباً');
@@ -82,14 +84,14 @@ route('POST', '/api/lines', ANY, ({ user, body }) => tx(() => {
   let sim = { iccid: '', stockId: null };
   if (qlRef) {
     const QL = require('./quickline');
-    if (!str(body.customerName, 80)) fail(400, 'اكتب اسم الزبون — QuickLine يطلبه لتفعيل الخط');
+    if (!str(body.customerName, 80)) fail(400, 'اكتب اسم الزبون — مطلوب لتفعيل هذا الخط');
     if (port) {
       const oldCompany = Number(body.qlOldCompany) || 0;
       if (!oldCompany) fail(400, 'اختر الشركة التي يُحوَّل منها الرقم');
       qlJob = { type: 'neyod', oldCompany };
     } else {
       const picked = QL.servedNumber(qlRef.packageId, esim, Number(body.qlNumberId) || 0);
-      if (!picked || picked.phone !== number) fail(400, 'اختر رقم الهاتف من قائمة أرقام QuickLine');
+      if (!picked || picked.phone !== number) fail(400, 'اختر رقم الهاتف من قائمة الأرقام المتاحة');
       qlJob = { type: esim ? 'newEsimSubscription' : 'newSubscription', numberId: Number(body.qlNumberId) };
       // An eSIM number brings its own eSIM, and the QR code to install it.
       if (esim) { sim = { iccid: picked.sim.replace(/\D/g, ''), stockId: null }; qlJob.qr = picked.qr; }
@@ -146,6 +148,17 @@ route('POST', '/api/lines', ANY, ({ user, body }) => tx(() => {
   }
   return { line: view(lineId, user), balance: round(agent.balance), available: round(agent.balance + agent.credit_limit) };
 }));
+
+// The packages that can renew a line, for the renew screen: its company's, on sale to its agent, and fitting who
+// activates the line (quickline.renewalProblem). Worked out here so no screen needs to know the supplier.
+route('GET', '/api/lines/:id/renew-options', ANY, ({ user, params }) => {
+  const l = D.getLine(params.id, user);
+  const { renewalProblem } = require('../quickline');
+  const packageIds = q(`SELECT id, art_card_id FROM packages WHERE active = 1 AND company_id = ?
+                          AND id NOT IN (SELECT package_id FROM agent_hidden WHERE agent_id = ?)`).all(l.company_id, l.agent_id)
+    .filter((p) => !renewalProblem(l.package_ref, p.art_card_id)).map((p) => p.id);
+  return { packageIds };
+});
 
 // ----- renewal (existing customer, or a card recharge on a known number) -----
 route('POST', '/api/lines/:id/renew', ANY, ({ user, params, body }) => tx(() => renewLine(user, D.getLine(params.id, user), body)));

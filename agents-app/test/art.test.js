@@ -341,3 +341,22 @@ test('art-topup: new prices wait for the manager; each system has its own percen
   assert.equal((await byId(cel3.id)).active, false);
   assert.equal((await pkgs()).filter((p) => p.kind === 'card' && p.active).length, cardsVisible);
 });
+
+test('art-topup: an agent is never told the activation source', async () => {
+  const admin = await login('admin', 'admin-pass');
+  const t = await login('agent1', 'secret1');
+  const LEAK = /QuickLine|art-topup|"(supplier|qlPackage|source|artCode|art|ql|autoNote|autoStatus|package_ref|art_card_id)"\s*:/i;
+  const lines = await ok(call(t, 'GET', '/api/lines'));
+  const reports = await ok(call(t, 'GET', '/api/reports'));
+  const tasks = await ok(call(t, 'GET', '/api/tasks'));
+  assert.ok(tasks.some((x) => x.status === 'done'), 'some were carried out by art-topup');
+  for (const url of ['/api/me', '/api/catalog', '/api/lines', '/api/tasks', '/api/notifications', '/api/ops', '/api/dashboard', '/api/search?q=05',
+    ...tasks.map((x) => `/api/tasks/${x.id}`), ...lines.flatMap((l) => [`/api/lines/${l.id}`, `/api/lines/${l.id}/renew-options`]),
+    ...reports.map((r) => `/api/reports/${r.key}?from=0`)]) {
+    const r = await call(t, 'GET', url);
+    const m = LEAK.exec(JSON.stringify(r.body));
+    assert.equal(m, null, `${url} leaks «${m?.[0]}»`);
+  }
+  // The manager sees which supplier carried each one out.
+  assert.ok((await ok(call(admin, 'GET', '/api/tasks'))).some((x) => x.source === 'art-topup' && /art-topup/.test(x.resolvedBy)));
+});

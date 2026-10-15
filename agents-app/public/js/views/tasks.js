@@ -2,6 +2,7 @@ import {
   api, esc, icon, isAdmin, fmtMoney, fmtDate, phone, sheet, field, changed, fileToDataUrl, relTime, TASK_STATUS, TASK_TYPE, empty, daysText, copyText,
 } from '../core.js';
 import { openRenew } from './renew.js';
+import { openLine } from './subscribers.js';
 import { openTopupRequest } from './payments.js';
 
 const V = { tasks: [], due: [], tab: 'open' };
@@ -18,7 +19,7 @@ function taskCard(t) {
   return `<article class="item">
     <div class="item-top"><span class="tile sm ${color}">${icon(ic)}</span>
       <div class="grow"><b class="item-title">${TASK_TYPE[t.type]}${t.amount !== null ? ` · <span class="ltr">${fmtMoney(t.amount)}</span>` : ''}</b>
-        <div class="item-sub">${admin ? `<span>${esc(t.agentName)}</span>` : ''}<span>${relTime(t.createdAt)}</span>${t.lineNumber ? `<span>${phone(t.lineNumber)}</span>` : ''}</div></div>
+        <div class="item-sub">${admin ? `<span>${esc(t.agentName)}</span>` : ''}<span>${relTime(t.createdAt)}</span>${t.lineNumber ? `<span>${phone(t.lineNumber)}</span>` : ''}${admin && t.source ? `<span>جهة التفعيل: ${esc(t.source)}</span>` : ''}</div></div>
       <span class="pill s-${t.status}">${TASK_STATUS[t.status]}</span></div>
     ${t.note ? `<p class="small" style="color:var(--ink-2)">${esc(t.note)}</p>` : ''}
     ${admin && t.autoStatus ? autoBox(t) : ''}
@@ -26,6 +27,7 @@ function taskCard(t) {
     ${t.response ? `<p class="small muted">الرد: ${esc(t.response)}${t.resolvedBy ? ` — ${esc(t.resolvedBy)}` : ''}</p>` : ''}
     <div class="item-actions">
       ${admin && t.status === 'open' && SALE_TASKS.includes(t.type) ? `<button class="btn btn-sm" data-action="copy-task" data-id="${t.id}">${icon('copy')}نسخ التفاصيل</button>` : ''}
+      ${admin && t.lineId ? `<button class="btn btn-sm" data-action="open-line" data-id="${t.lineId}">${icon('phone')}تفاصيل الخط</button>` : ''}
       ${t.hasAttachment ? `<button class="btn btn-sm" data-action="attachment" data-id="${t.id}">${icon('image')}عرض المرفق</button>` : ''}
       ${admin && t.status === 'open' && !running(t) ? `<button class="btn btn-sm btn-good" data-action="resolve" data-id="${t.id}">${icon('check')}تنفيذ</button>
         <button class="btn btn-sm btn-danger" data-action="reject" data-id="${t.id}">${icon('x')}رفض</button>` : ''}
@@ -169,6 +171,8 @@ export default {
       sheet({ title: 'المرفق', body: `<img class="thumb" style="max-height:70vh" src="${esc(t.attachment)}" alt="مرفق الطلب">` });
     },
     resolve: (btn) => resolveTask(V.tasks.find((t) => t.id === Number(btn.dataset.id))),
+    // The line behind a request: its activation source, and the form to change it.
+    'open-line': (btn) => openLine(Number(btn.dataset.id)),
     'copy-task': (btn) => copyText(V.tasks.find((t) => t.id === Number(btn.dataset.id)).note),
     reject(btn) {
       const t = V.tasks.find((x) => x.id === Number(btn.dataset.id));

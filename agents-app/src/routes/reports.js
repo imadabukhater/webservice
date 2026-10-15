@@ -1,5 +1,6 @@
 'use strict';
 const { q, getSettings } = require('../db');
+const { forAgent } = require('../privacy');
 const { fail, now, round } = require('../util');
 const D = require('../domain');
 const { route, ANY } = require('../router');
@@ -234,5 +235,10 @@ route('GET', '/api/reports/:key', ANY, ({ user, params, query }) => {
   const to = Number(query.to) || now() + 864e5;
   const from = Number(query.from) || to - 31 * 864e5;
   const out = r.build(user, { from, to, agentId: user.role === 'admin' ? Number(query.agentId) || null : null });
+  // An agent's report (and so what it exports as CSV, Excel or PDF) never names the supplier, even in free text such
+  // as a refusal reason (see privacy.js).
+  if (user.role === 'agent') {
+    out.rows = out.rows.map((row) => Object.fromEntries(Object.entries(row).map(([k, v]) => [k, typeof v === 'string' ? forAgent(v) : v])));
+  }
   return { key: r.key, title: r.title, dated: !!r.dated, ...out };
 });

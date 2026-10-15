@@ -61,7 +61,8 @@ function finish(taskId, note, reply, actor = ACTOR, extra = {}) {
     // Another check may have finished it meanwhile.
     const fresh = q("SELECT * FROM tasks WHERE id = ? AND status = 'open' AND auto_status IN ('sending','sent')").get(taskId);
     if (!fresh) return;
-    resolveTask(fresh, actor, { ...extra, status: 'done', response: reply || `نُفّذ تلقائياً عبر ${actor === QL_ACTOR ? 'QuickLine' : 'art-topup'}` });
+    // The reply reaches the agent: it never names the supplier (that stays in auto_note, for the manager).
+    resolveTask(fresh, actor, { ...extra, status: 'done', response: reply || 'نُفّذ تلقائياً' });
     setAuto(taskId, 'done', note);
   });
 }
@@ -139,7 +140,7 @@ async function checkQlNew(t, before) {
   if (sub) {
     const job = JSON.parse(t.payload || '{}').ql || {};
     const extra = t.type === 'esim' && job.qr ? { attachment: `data:image/png;base64,${job.qr}` } : {};
-    finish(t.id, `QuickLine: تم التفعيل — اشتراك #${sub.id} (${sub.status})`, `تم التفعيل عبر QuickLine`, QL_ACTOR, extra);
+    finish(t.id, `QuickLine: تم التفعيل — اشتراك #${sub.id} (${sub.status})`, 'تم التفعيل', QL_ACTOR, extra);
     return;
   }
   if (now() - t.auto_at > GIVE_UP_MS) {
@@ -221,7 +222,7 @@ async function checkQl(t) {
   const sub = (await ql.subscriptions(qlCredentials())).find((s) => s.id === before.id);
   const applied = sub && (sub.cutDate !== before.cutDate || (sub.daysLeft ?? 0) > (before.daysLeft ?? 0));
   if (applied) {
-    finish(t.id, `QuickLine: تم التمديد حتى ${sub.cutDate} (${sub.daysLeft} يوم متبقٍ)`, `تم التمديد عبر QuickLine حتى ${sub.cutDate}`, QL_ACTOR);
+    finish(t.id, `QuickLine: تم التمديد حتى ${sub.cutDate} (${sub.daysLeft} يوم متبقٍ)`, `تم التمديد حتى ${sub.cutDate}`, QL_ACTOR);
     return;
   }
   if (now() - t.auto_at > GIVE_UP_MS) {
@@ -264,7 +265,7 @@ async function sendArt(taskId, j) {
   const lowBalance = /رصيد/.test(r.text) && /كاف|يكفي/.test(r.text);
   if (!r.async) {
     // Palestinian bundles and cash: the answer is final.
-    if (r.ok) return finish(taskId, 'art-topup: success', 'تم الشحن عبر art-topup');
+    if (r.ok) return finish(taskId, 'art-topup: success', 'تم الشحن');
     if (r.error || lowBalance) {
       setAuto(taskId, 'failed', `رفض art-topup: ${r.error || r.text}`);
       tellManager(lowBalance ? 'رصيد art-topup لا يكفي' : 'رفض art-topup الشحن', `${number}: ${r.error || r.text}. نفّذه يدوياً أو ارفضه ليُسترد المبلغ.`);
@@ -311,7 +312,8 @@ async function check(taskId) {
   const result = art.outcome(op.status);
   const note = `art-topup #${op.id}: ${op.status}${op.reply ? ` — ${op.reply}` : ''}`;
   if (result === 'done') {
-    finish(taskId, note, op.reply);
+    // The supplier's own reply (its operation reference) stays in the note for the manager.
+    finish(taskId, note, 'تم الشحن');
   } else if (result === 'failed') {
     setAuto(taskId, 'failed', note);
     tellManager('رفض art-topup الشحن', `${line?.number}: ${op.status}. ارفض الطلب ليُسترد المبلغ أو نفّذه يدوياً.`);

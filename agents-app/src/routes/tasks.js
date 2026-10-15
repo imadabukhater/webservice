@@ -1,5 +1,6 @@
 'use strict';
 const { q, tx } = require('../db');
+const { sourceOf, forAgent } = require('../privacy');
 const { fail, now, round, str, num, isBlank, periodEnd, imageOrEmpty } = require('../util');
 const D = require('../domain');
 const { route, ADMIN, ANY } = require('../router');
@@ -16,16 +17,24 @@ const DONE_OP = { port: 'port_done', esim: 'esim_done', activate: 'activate_done
 // The manager sees how a supplier is carrying a request out (autoStatus, autoNote); an agent only a simple state:
 // running (being carried out automatically), review (waiting for the manager) or '' — never the technical notes.
 const autoStateFor = (s) => (['sending', 'sent'].includes(s) ? 'running' : ['failed', 'unknown'].includes(s) ? 'review' : '');
-const taskView = (t, role = 'admin') => ({
-  id: t.id, type: t.type, status: t.status, agentId: t.agent_id, agentName: t.agent_name || '',
-  lineId: t.line_id, lineNumber: t.line_number || '', linePackage: t.line_package || '',
-  amount: t.amount === null ? null : round(t.amount), note: t.note, response: t.response,
-  hasAttachment: !!t.has_attachment, createdAt: t.created_at, resolvedAt: t.resolved_at, resolvedBy: t.resolved_by,
-  ...(role === 'admin' ? { autoStatus: t.auto_status || '', autoNote: t.auto_note || '' } : { autoState: autoStateFor(t.auto_status) }),
-});
+// The activation source (the supplier) is the manager's only: agents get the request without it (see privacy.js).
+const taskView = (t, role = 'admin') => {
+  const admin = role === 'admin';
+  const text = admin ? (s) => s : forAgent;
+  return {
+    id: t.id, type: t.type, status: t.status, agentId: t.agent_id, agentName: t.agent_name || '',
+    lineId: t.line_id, lineNumber: t.line_number || '', linePackage: t.line_package || '',
+    amount: t.amount === null ? null : round(t.amount), note: text(t.note), response: text(t.response),
+    hasAttachment: !!t.has_attachment, createdAt: t.created_at, resolvedAt: t.resolved_at, resolvedBy: text(t.resolved_by),
+    ...(admin
+      ? { autoStatus: t.auto_status || '', autoNote: t.auto_note || '', source: t.package_ref === null ? '' : sourceOf(t.package_ref) }
+      : { autoState: autoStateFor(t.auto_status) }),
+  };
+};
 
 const TASK_SELECT = `SELECT t.id, t.type, t.status, t.agent_id, t.line_id, t.amount, t.note, t.response, (t.attachment != '') AS has_attachment,
-  t.created_at, t.resolved_at, t.resolved_by, t.auto_status, t.auto_note, u.name AS agent_name, l.number AS line_number, l.package_label AS line_package
+  t.created_at, t.resolved_at, t.resolved_by, t.auto_status, t.auto_note, u.name AS agent_name, l.number AS line_number, l.package_label AS line_package,
+  (SELECT art_card_id FROM packages WHERE id = COALESCE(CASE WHEN json_valid(t.payload) THEN json_extract(t.payload, '$.packageId') END, l.package_id)) AS package_ref
   FROM tasks t LEFT JOIN users u ON u.id = t.agent_id LEFT JOIN lines l ON l.id = t.line_id`;
 
 function getTask(id, user) {

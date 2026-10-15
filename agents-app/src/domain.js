@@ -28,10 +28,12 @@ function logOp(op) {
     round(op.cost), round(op.profit), op.detail || '', op.package || '', op.customerPrice ?? null).lastInsertRowid);
 }
 
+// An agent's history never names the supplier: neither who carried it out nor in the details (see privacy.js).
 const opView = (role) => (o) => ({
-  id: o.id, ts: o.ts, type: o.type, agentId: o.agent_id, agentName: o.agent_name, actorName: o.actor_name,
+  id: o.id, ts: o.ts, type: o.type, agentId: o.agent_id, agentName: o.agent_name,
+  actorName: role === 'admin' ? o.actor_name : require('./privacy').forAgent(o.actor_name),
   lineId: o.line_id, number: o.number, amount: round(o.amount), before: o.balance_before, after: o.balance_after,
-  detail: o.detail, package: o.package, customerPrice: o.customer_price,
+  detail: role === 'admin' ? o.detail : require('./privacy').forAgent(o.detail), package: o.package, customerPrice: o.customer_price,
   ...(role === 'admin' ? { cost: round(o.cost), profit: round(o.profit) } : {}),
 });
 
@@ -191,11 +193,11 @@ function lineView(l, role, warnDays) {
     ...(admin ? { cost: round(l.cost) } : {}),
     status: l.status, state: lineState(l, warnDays),
     customerName: l.customer_name, customerPrice: l.customer_price === null ? null : round(l.customer_price),
-    note: l.note, esimCode: l.esim_code, hasQr: !!l.has_qr,
+    note: admin ? l.note : require('./privacy').forAgent(l.note), esimCode: l.esim_code, hasQr: !!l.has_qr,
     activatedAt: l.activated_at, expiresAt: l.expires_at,
     daysLeft: l.expires_at ? Math.ceil((l.expires_at - now()) / 864e5) : null, updatedAt: l.updated_at,
-    // Who supplies the line, so a renewal can offer only what fits it.
-    ...require('./quickline').supplierOfRef(l.package_ref),
+    // Who activates the line (the supplier) is the manager's only.
+    ...(admin ? { ...require('./quickline').supplierOfRef(l.package_ref), source: require('./privacy').sourceOf(l.package_ref) } : {}),
   };
 }
 

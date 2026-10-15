@@ -146,7 +146,7 @@ export const OP = {
   activate: 'تفعيل خط', renew: 'تمديد', topup: 'شحن رصيد', deduct: 'خصم رصيد', transfer_in: 'رصيد وارد', transfer_out: 'رصيد صادر',
   freeze: 'تجميد', unfreeze: 'إلغاء تجميد', disconnect: 'فصل', swap_sim: 'تبديل شريحة', line_move: 'نقل رقم', line_delete: 'حذف خط', line_edit: 'تعديل خط',
   refund: 'استرجاع', port_done: 'تحويل رقم', esim_done: 'تفعيل eSIM', activate_done: 'تنفيذ تفعيل', renew_done: 'تنفيذ تمديد',
-  supplier_sync: 'QuickLine',
+  supplier_sync: 'عند المورّد',
 };
 export const OP_ICON = {
   activate: ['plus', 'blue'], renew: ['repeat', 'green'], topup: ['wallet', 'green'], deduct: ['wallet', 'red'],

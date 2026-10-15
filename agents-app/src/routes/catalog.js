@@ -18,14 +18,18 @@ function amount(v, label) {
   return Math.round(n);
 }
 
-const packageAttrs = (p) => ({
-  dataGb: p.data_gb, minutes: p.minutes, sms: p.sms, tag: p.tag, description: p.description, art: !!p.art_card_id,
-  kind: p.kind === 'card' ? 'card' : 'invoice', days: p.days ?? null,
-  // A QuickLine new line: its number is chosen from QuickLine's free numbers, and it is activated there automatically.
-  ql: /^qln:/.test(p.art_card_id || ''),
-  // Who supplies it (art, ql or ''), and its package id at QuickLine, so a renewal can offer only what fits a line.
-  ...require('../quickline').supplierOfRef(p.art_card_id),
-});
+// What every screen needs to sell a package. The supplier behind it (who activates it) is the manager's only, so an
+// agent gets what the selling screens need, never a name: auto (a supplier carries it out for "auto" companies),
+// pool (its number is picked from a list of free numbers) and waits (never activated directly: it waits for the supplier).
+const packageAttrs = (p, admin = false) => {
+  const ref = p.art_card_id || '';
+  return {
+    dataGb: p.data_gb, minutes: p.minutes, sms: p.sms, tag: p.tag, description: p.description,
+    kind: p.kind === 'card' ? 'card' : 'invoice', days: p.days ?? null,
+    auto: !!ref, pool: /^qln:/.test(ref), waits: /^qln?:/.test(ref),
+    ...(admin ? { art: !!ref, ql: /^qln:/.test(ref), ...require('../quickline').supplierOfRef(ref) } : {}),
+  };
+};
 // The supplier's code for a package, shown to the manager. art-topup refs end in the code (ic:12345); QuickLine's
 // carry the package id and the duration (ql:2564:30), and the id is what identifies it there.
 const artCode = (ref) => {
@@ -54,7 +58,7 @@ function catalogFor(user) {
       artCode: artCode(p.art_card_id), edited: !!p.edited, gone: !!p.gone_at, artPrice: p.art_price === null ? null : round(p.art_price),
       // The supplier's price changed and the manager has not decided yet.
       artPending: p.art_price !== null && round(p.art_price) !== round(p.cost) && (p.art_ack === null || round(p.art_ack) !== round(p.art_price)),
-      ...packageAttrs(p) }));
+      ...packageAttrs(p, true) }));
   return { companies: companies.map((c) => companyView(c, true)), packages };
 }
 

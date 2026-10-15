@@ -116,7 +116,8 @@ export async function lineAction(line, name) {
         title: `تعديل ${fmtPhone(line.number)}`, subtitle: `خط ${esc(line.agentName)}`,
         body: `<div class="field"><label for="cr-number">رقم الهاتف</label><input class="input ltr" id="cr-number" name="number" inputmode="tel" value="${esc(fmtPhone(line.number))}"></div>
           <div class="field"><label for="cr-pkg">الرزمة</label><select class="input" id="cr-pkg" name="packageId">
-            ${pkgs.map((p) => `<option value="${p.id}" ${p.id === line.packageId ? 'selected' : ''}>${esc(`${p.companyName} ${p.name}`)}</option>`).join('')}</select></div>
+            ${pkgs.map((p) => `<option value="${p.id}" ${p.id === line.packageId ? 'selected' : ''}>${esc(`${p.companyName} ${p.name} — ${{ ql: 'QuickLine', art: 'art-topup' }[p.supplier] || 'يدوي'}`)}</option>`).join('')}</select>
+            <span class="hint">جهة التفعيل تتبع الرزمة: لتغييرها اختر رزمة الجهة المطلوبة.</span></div>
           <div class="field"><label for="cr-price">السعر المخصوم من الوكيل (₪)</label><input class="input ltr" id="cr-price" name="price" type="number" min="0" step="0.01" inputmode="decimal" value="${line.price}">
             <div class="hint" id="cr-diff"></div></div>
           <div class="field"><label for="cr-reason">السبب <span class="opt">(اختياري — يظهر في السجل)</span></label><input class="input" id="cr-reason" name="reason"></div>`,
@@ -204,7 +205,9 @@ export async function openLine(id) {
     ['آخر مدة', monthsText(l.months)],
     ['المبلغ المدفوع', money(l.price)],
     ['سعر الزبون', l.customerPrice !== null ? money(l.customerPrice) : '—'],
-    ...(admin ? [['الوكيل', esc(l.agentName)], ['التكلفة', money(l.cost)]] : []),
+    ...(admin ? [['الوكيل', esc(l.agentName)], ['التكلفة', money(l.cost)],
+      // Who activates the line: the manager's only (the server never sends it to agents).
+      ['جهة التفعيل', `${esc(l.source || 'يدوي')}${l.status !== 'disconnected' ? ` <button type="button" class="btn btn-sm btn-ghost" data-line-act="correct">${icon('edit')}تغيير</button>` : ''}`]] : []),
     ...(l.note ? [['ملاحظة', esc(l.note)]] : []),
   ];
 

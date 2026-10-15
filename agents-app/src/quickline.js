@@ -169,7 +169,7 @@ function simProblem(iccid, { postalCode, simLength, company }) {
   const d = String(iccid || '').replace(/\D/g, '');
   if (!postalCode || !simLength) return '';
   if (!d.startsWith(postalCode) || d.length !== simLength) {
-    return `شريحة ${company || 'هذه الشركة'} في QuickLine يجب أن تكون ${simLength} رقماً وتبدأ بـ ${postalCode} (المُدخلة ${d.length} رقماً)`;
+    return `شريحة ${company || 'هذه الشركة'} يجب أن تكون ${simLength} رقماً وتبدأ بـ ${postalCode} (المُدخلة ${d.length} رقماً)`;
   }
   return '';
 }
@@ -318,9 +318,10 @@ function supplierOfRef(ref) {
 function renewalProblem(lineRef, pkgRef) {
   const line = supplierOfRef(lineRef);
   const pkg = supplierOfRef(pkgRef);
-  if (/^qln:/.test(String(pkgRef || ''))) return 'هذه رزمة تفعيل خط جديد في QuickLine، وليست للتمديد';
-  if (line.supplier === 'ql' && !(pkg.supplier === 'ql' && pkg.qlPackage === line.qlPackage)) return 'هذا خط QuickLine: مدّده برزمة التمديد الخاصة برزمته في QuickLine';
-  if (line.supplier === 'art' && pkg.supplier === 'ql') return 'هذا الخط ليس من QuickLine: اختر كرتاً من كروت الشحن';
+  // Seen by agents: says what to do, never who activates the line.
+  if (/^qln:/.test(String(pkgRef || ''))) return 'هذه رزمة تفعيل خط جديد، وليست للتمديد';
+  if (line.supplier === 'ql' && !(pkg.supplier === 'ql' && pkg.qlPackage === line.qlPackage)) return 'لا يمكن تمديد هذا الخط بهذه الرزمة: اختر رزمة التمديد الخاصة به';
+  if (line.supplier === 'art' && pkg.supplier === 'ql') return 'لا يمكن تمديد هذا الخط بهذه الرزمة: اختر كرتاً آخر';
   return '';
 }
 

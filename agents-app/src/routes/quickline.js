@@ -184,19 +184,28 @@ function servedNumber(qlPackageId, esim, numberId) {
   return v && now() - v.at < SERVED_MS ? v : null;
 }
 
+// What agents call: neutral paths and messages, so neither names who activates their lines (see privacy.js).
 const agentWrap = async (fn) => {
-  if (!getSettings().qlConfigured) fail(503, 'أرقام QuickLine غير متاحة الآن. تواصل مع المدير.');
-  try { return await fn(qlCredentials()); } catch (e) { if (e instanceof ql.QuickLineError) fail(502, e.message); throw e; }
+  if (!getSettings().qlConfigured) fail(503, 'الأرقام غير متاحة الآن. تواصل مع المدير.');
+  try {
+    return await fn(qlCredentials());
+  } catch (e) {
+    if (e instanceof ql.QuickLineError) {
+      console.error('free numbers', e.message);
+      fail(502, 'تعذّر جلب الأرقام الآن. حاول بعد قليل.');
+    }
+    throw e;
+  }
 };
 function newLinePackage(id) {
   const p = q('SELECT id, art_card_id, active FROM packages WHERE id = ?').get(Number(id));
   const ref = p && ql.parseRef(p.art_card_id);
-  if (!p || !p.active || !ref || ref.system !== 'qln') fail(404, 'هذه الرزمة ليست خطاً جديداً من QuickLine');
+  if (!p || !p.active || !ref || ref.system !== 'qln') fail(404, 'هذه الرزمة لا تختار رقمها من قائمة');
   return ref;
 }
 
-// Free numbers of a QuickLine new-line package (esim=1 for eSIM numbers). exclude: ids already shown.
-route('GET', '/api/quickline/numbers', ANY, ({ query }) => {
+// Free numbers of a new-line package that picks its number from a list (esim=1 for eSIM numbers). exclude: ids shown.
+route('GET', '/api/numbers/free', ANY, ({ query }) => {
   const ref = newLinePackage(query.packageId);
   const esim = query.esim === '1';
   const exclude = String(query.exclude || '').split(',').map(Number).filter(Boolean).slice(0, 500);
@@ -207,8 +216,8 @@ route('GET', '/api/quickline/numbers', ANY, ({ query }) => {
   });
 });
 
-// Companies a number can be ported from (QuickLine's list).
-route('GET', '/api/quickline/port-companies', ANY, () => agentWrap(async (creds) => (await ql.companies(creds)).map((c) => ({ id: c.id, name: c.name }))));
+// Companies a number can be ported from.
+route('GET', '/api/numbers/port-companies', ANY, () => agentWrap(async (creds) => (await ql.companies(creds)).map((c) => ({ id: c.id, name: c.name }))));
 
 // The dealer's lines at QuickLine, so the manager can see which numbers an extension can be sold for.
 route('GET', '/api/quickline/lines', ADMIN, () => wrap(async (creds) => {
