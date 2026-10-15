@@ -42,7 +42,8 @@ function catalogFor(user) {
     const packages = q(`SELECT p.*, c.name AS company_name, ${AGENT_PRICE_SQL} AS agent_price, ap.price IS NOT NULL AS custom
                         FROM packages p JOIN companies c ON c.id = p.company_id
                         ${AGENT_PRICE_JOINS}
-                        WHERE p.active = 1 ORDER BY c.sort, c.id, p.sort, p.id`).all(user.id, user.id)
+                        WHERE p.active = 1 AND p.id NOT IN (SELECT package_id FROM agent_hidden WHERE agent_id = ?)
+                        ORDER BY c.sort, c.id, p.sort, p.id`).all(user.id, user.id, user.id)
       .filter((p) => p.agent_price > 0)
       .map((p) => ({ id: p.id, name: p.name, companyId: p.company_id, companyName: p.company_name, price: round(p.agent_price), custom: !!p.custom, active: true, ...packageAttrs(p) }));
     return { companies: companies.map((c) => companyView(c, false)), packages };
@@ -50,7 +51,7 @@ function catalogFor(user) {
   const packages = q(`SELECT p.*, c.name AS company_name FROM packages p JOIN companies c ON c.id = p.company_id
                       ORDER BY c.sort, c.id, p.sort, p.id`).all()
     .map((p) => ({ id: p.id, name: p.name, companyId: p.company_id, companyName: p.company_name, cost: round(p.cost), price: round(p.price), active: !!p.active, sort: p.sort,
-      artCode: artCode(p.art_card_id), edited: !!p.edited, artPrice: p.art_price === null ? null : round(p.art_price),
+      artCode: artCode(p.art_card_id), edited: !!p.edited, gone: !!p.gone_at, artPrice: p.art_price === null ? null : round(p.art_price),
       // The supplier's price changed and the manager has not decided yet.
       artPending: p.art_price !== null && round(p.art_price) !== round(p.cost) && (p.art_ack === null || round(p.art_ack) !== round(p.art_price)),
       ...packageAttrs(p) }));
@@ -139,6 +140,8 @@ route('PUT', '/api/packages/:id', ADMIN, ({ params, body }) => {
   q(`UPDATE packages SET company_id = ?, name = ?, cost = ?, price = ?, active = ?, data_gb = ?, minutes = ?, sms = ?, tag = ?, description = ?,
        kind = ?, days = ?, edited = ? WHERE id = ?`)
     .run(f.companyId, f.name, f.cost, f.price, f.active, f.dataGb, f.minutes, f.sms, f.tag, f.description, f.kind, f.days, edited ? 1 : 0, p.id);
+  // Shown or hidden by the manager: from now on the manager's decision, not something a sync undoes.
+  if (body.active !== undefined) q('UPDATE packages SET gone_at = NULL WHERE id = ?').run(p.id);
   return { ok: true };
 });
 

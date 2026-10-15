@@ -667,3 +667,6 @@ table.data tfoot th { background: var(--surface-2); font: 600 .86rem var(--f-ui)
 .pr-group > summary::-webkit-details-marker { display: none; }
 .pr-group > summary::before { content: '›'; transform: rotate(90deg); color: var(--muted); transition: transform .15s; }
 .pr-group[open] > summary::before { transform: rotate(-90deg); }
+.pr-show { display: grid; justify-items: center; gap: 2px; cursor: pointer; }
+.pr-show small { color: var(--muted); font-size: .7rem; }
+.cp-row { padding: 10px 0; border-bottom: 1px solid var(--line); gap: 8px; flex-wrap: wrap; }

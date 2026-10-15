@@ -1,6 +1,7 @@
 import {
   S, api, esc, icon, money, fmtMoney, sheet, field, changed, loadCatalog, companyLogo, specs, fileToDataUrl, empty, fmtNum, round, relTime, toast,
 } from '../core.js';
+import { openOfferForm } from './offers.js';
 
 // A tab is one supplier's one system. Each has its own packages, its own profit percentage, its own sync and its own
 // list of price changes awaiting the manager. Packages the manager typed by hand belong to no supplier and are shown
@@ -282,9 +283,77 @@ function openPending(key, ctx) {
   });
 }
 
+// ---------- one company: its packages by source, and its offers, edited right there ----------
+const SOURCE_GROUPS = [
+  ['QuickLine — خط جديد', (p) => p.supplier === 'ql' && p.kind === 'invoice'],
+  ['QuickLine — تمديد', (p) => p.supplier === 'ql' && p.kind === 'card'],
+  ['art-topup — فواتير', (p) => p.supplier === 'art' && p.kind === 'invoice'],
+  ['art-topup — كروت', (p) => p.supplier === 'art' && p.kind === 'card'],
+  ['يدوية', (p) => !p.supplier],
+];
+// How many of a company's packages come from where, for its card.
+function sourceCounts(companyId) {
+  const pk = S.catalog.packages.filter((p) => p.companyId === companyId);
+  const n = (test) => pk.filter(test).length;
+  return [['QuickLine', n((p) => p.supplier === 'ql')], ['art-topup', n((p) => p.supplier === 'art')], ['يدوية', n((p) => !p.supplier)]]
+    .filter(([, k]) => k).map(([label, k]) => `${label} ${k}`).join(' · ');
+}
+function companyPackagesHtml(c, offers) {
+  const pk = S.catalog.packages.filter((p) => p.companyId === c.id);
+  const groups = SOURCE_GROUPS.map(([label, test]) => [label, pk.filter(test)]).filter(([, l]) => l.length);
+  const row = (p) => `<div class="item-top cp-row">
+      <div class="grow"><b>${esc(p.name)}</b>${p.active ? '' : p.gone ? ' <span class="pill s-expiring">لم تعد عند المورّد</span>' : ' <span class="pill">مخفية</span>'}
+        <div class="item-sub"><span>${p.days ? `${p.days} يوماً` : 'شهرية'}</span><span>التكلفة ${money(p.cost)}</span><span>للوكيل ${money(p.price)}</span>${p.artCode ? `<span class="mono ltr">${esc(p.artCode)}</span>` : ''}</div></div>
+      <button type="button" class="btn btn-sm" data-cp-toggle="${p.id}">${icon(p.active ? 'eyeOff' : 'eye')}${p.active ? 'إخفاء' : 'إظهار'}</button>
+      <button type="button" class="btn btn-sm" data-cp-edit="${p.id}">${icon('edit')}تعديل</button></div>`;
+  const mine = offers.filter((o) => o.companyId === c.id);
+  return `${groups.map(([label, list]) => `<details class="pr-group" open><summary><b>${label}</b> <span class="muted small">${list.length} · ظاهرة ${list.filter((p) => p.active).length}</span></summary>${list.map(row).join('')}</details>`).join('')
+      || empty('box', 'لا توجد رزم لهذه الشركة', '')}
+    <button type="button" class="btn btn-soft" data-cp-pkg-new>${icon('plus')}رزمة جديدة لهذه الشركة</button>
+    <div class="section-title" style="margin-top:16px"><h3>العروض (${mine.length})</h3><button type="button" class="btn btn-sm btn-soft" data-cp-offer-new>${icon('plus')}عرض جديد</button></div>
+    ${mine.map((o) => `<div class="item-top cp-row"><div class="grow"><b>${esc(o.title)}</b><div class="item-sub">${o.packageLabel ? `<span>${esc(o.packageLabel)}</span>` : ''}${o.offerPrice !== null ? `<span>${money(o.offerPrice)}</span>` : ''}<span>${!o.active ? 'متوقف' : o.live ? 'ظاهر للوكلاء' : 'خارج التاريخ'}</span></div></div>
+      <button type="button" class="btn btn-sm" data-cp-offer="${o.id}">${icon('edit')}تعديل</button></div>`).join('') || '<p class="muted small">لا توجد عروض لهذه الشركة.</p>'}`;
+}
+async function openCompanyPackages(c) {
+  let offers = await api.get('/api/offers');
+  let box;
+  // Edits made from here (or anywhere) show here at once.
+  const redraw = async () => {
+    await loadCatalog(true);
+    offers = await api.get('/api/offers');
+    if (box?.isConnected) box.innerHTML = companyPackagesHtml(c, offers);
+  };
+  const onChanged = () => { redraw().catch(() => {}); };
+  window.addEventListener('app:changed', onChanged);
+  sheet({
+    title: `رزم وعروض ${c.name}`,
+    subtitle: 'كل رزم الشركة حسب مصدرها، وعروضها',
+    wide: true,
+    body: `<div id="cp-body">${companyPackagesHtml(c, offers)}</div>`,
+    onClose: () => window.removeEventListener('app:changed', onChanged),
+    onMount(form) {
+      box = form.querySelector('#cp-body');
+      box.addEventListener('click', async (e) => {
+        const b = e.target.closest('button');
+        if (!b) return;
+        const find = (id) => S.catalog.packages.find((p) => p.id === Number(id));
+        if (b.dataset.cpEdit) openPackageForm(find(b.dataset.cpEdit));
+        else if (b.dataset.cpToggle) {
+          b.disabled = true;
+          const p = find(b.dataset.cpToggle);
+          await api.put(`/api/packages/${p.id}`, { active: !p.active });
+          changed({ keepView: true });
+        } else if (b.dataset.cpOffer) openOfferForm(offers.find((o) => o.id === Number(b.dataset.cpOffer)), () => redraw());
+        else if ('cpOfferNew' in b.dataset) openOfferForm(null, () => redraw());
+        else if ('cpPkgNew' in b.dataset) openPackageForm(null, c.id);
+      });
+    },
+  });
+}
+
 function packageCardAdmin(p) {
   return `<article class="pkg-card ${p.active ? '' : 'inactive'}" style="cursor:default">
-    <div class="pkg-head"><span class="pkg-name">${esc(p.name)}</span>${p.supplier === 'ql' ? `<span class="pill ${p.kind === 'card' ? 's-active' : 'plain'}">${p.kind === 'card' ? 'تمديد' : 'خط جديد'}</span>` : ''}${p.active ? '' : '<span class="pill">مخفية عن الوكلاء</span>'}${!p.price ? '<span class="pill s-expiring">حدد السعر</span>' : ''}${p.artPending ? `<span class="pill s-expiring">سعر ${supplierName(p)} الجديد: ${fmtMoney(p.artPrice)}</span>` : ''}</div>
+    <div class="pkg-head"><span class="pkg-name">${esc(p.name)}</span>${p.supplier === 'ql' ? `<span class="pill ${p.kind === 'card' ? 's-active' : 'plain'}">${p.kind === 'card' ? 'تمديد' : 'خط جديد'}</span>` : ''}${p.active ? '' : p.gone ? `<span class="pill s-expiring" title="تعود تلقائياً عند أول مزامنة يظهر فيها">لم تعد عند ${supplierName(p)}</span>` : '<span class="pill">مخفية عن الوكلاء</span>'}${!p.price ? '<span class="pill s-expiring">حدد السعر</span>' : ''}${p.artPending ? `<span class="pill s-expiring">سعر ${supplierName(p)} الجديد: ${fmtMoney(p.artPrice)}</span>` : ''}</div>
     ${p.dataGb ? `<div class="pkg-data"><b>${fmtNum(p.dataGb)}</b><span>GB</span></div>` : ''}
     ${specs(p) ? `<div class="pkg-specs">${specs(p)}</div>` : ''}
     <div class="kv small"><div>المدة</div><div>${p.days ? `${p.days} يوماً` : 'شهرية'}</div>
@@ -324,9 +393,10 @@ export default {
     if (V.tab === 'companies') {
       return `${tabs}<div class="page-head"><p>الشعار واللون وبادئات الشرائح وطريقة التفعيل لكل شركة.</p><button class="btn btn-primary" data-action="add-company">${icon('plus')}شركة جديدة</button></div>
         ${companies.length ? `<div class="grid-cards">${companies.map((c) => `<article class="item"><div class="item-top">${companyLogo(c, 'sm')}
-          <div class="grow"><b class="item-title">${esc(c.name)}</b><div class="item-sub"><span>${c.packageCount} رزمة</span><span class="mono ltr">${esc((c.prefixes || []).join(', ') || 'بدون بادئة')}</span></div></div>
+          <div class="grow"><b class="item-title">${esc(c.name)}</b><div class="item-sub"><span>${c.packageCount} رزمة${c.packageCount ? ` (${sourceCounts(c.id)})` : ''}</span><span class="mono ltr">${esc((c.prefixes || []).join(', ') || 'بدون بادئة')}</span></div></div>
             <span class="pill ${c.activation === 'direct' ? 's-expiring' : c.activation === 'auto' ? 's-active' : 'plain'}">${{ direct: 'تفعيل مباشر', auto: 'تلقائي' }[c.activation] || 'طلب للمدير'}</span></div>
-          <div class="item-actions"><button class="btn btn-sm" data-action="edit-company" data-id="${c.id}">${icon('edit')}تعديل</button>
+          <div class="item-actions"><button class="btn btn-sm btn-soft" data-action="company-packages" data-id="${c.id}">${icon('box')}الرزم والعروض</button>
+            <button class="btn btn-sm" data-action="edit-company" data-id="${c.id}">${icon('edit')}تعديل</button>
             <button class="btn btn-sm btn-ghost" data-action="delete-company" data-id="${c.id}">${icon('trash')}حذف</button></div></article>`).join('')}</div>`
           : empty('building', 'لا توجد شركات', 'أضف أول شركة اتصالات.')}`;
     }
@@ -339,7 +409,8 @@ export default {
     const mine = packages.filter((p) => inView(p, v) && (!term || `${p.name} ${p.companyName} ${p.artCode}`.toLowerCase().includes(term)));
     const shown = mine.filter((p) => p.active).length;
     // Within a company: extensions first, then new lines.
-    const byKind = (a, b) => (a.kind === b.kind ? 0 : a.kind === 'card' ? -1 : 1);
+    // Packages the supplier no longer lists go last.
+    const byKind = (a, b) => (a.gone - b.gone) || (a.kind === b.kind ? 0 : a.kind === 'card' ? -1 : 1);
     return `${tabs}${vk === 'ql' ? qlBar() : systemBar(v.systems[0])}<div class="page-head"><p><b>${t.label}:</b> ${t.note} ظاهرة للوكلاء ${shown} من ${mine.length}.</p>
         ${canAdd ? `<button class="btn btn-primary" data-action="add-package">${icon('plus')}رزمة جديدة</button>` : ''}</div>
       <div class="search-box">${icon('search', 'i lead')}<input class="input" id="pkg-q" type="search" placeholder="ابحث باسم الرزمة أو الشركة أو رمز المورّد…" value="${esc(V.q)}" aria-label="بحث في الرزم"></div>
@@ -355,6 +426,7 @@ export default {
     tab(btn, e, ctx) { V.tab = btn.dataset.tab; ctx.rerender(); },
     'add-company': () => openCompanyForm(null),
     'edit-company': (btn) => openCompanyForm(S.catalog.companies.find((c) => c.id === Number(btn.dataset.id))),
+    'company-packages': (btn) => openCompanyPackages(S.catalog.companies.find((c) => c.id === Number(btn.dataset.id))),
     'delete-company'(btn) {
       const c = S.catalog.companies.find((x) => x.id === Number(btn.dataset.id));
       sheet({

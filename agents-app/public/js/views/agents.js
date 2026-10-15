@@ -63,7 +63,7 @@ async function openPrices(a) {
   };
   sheet({
     title: `أسعار ${a.name}`,
-    subtitle: 'السعر الذي يراه هذا الوكيل ويُخصم من رصيده. سعر الرزمة الخاص يغلب نسبة الربح، ونسبة الربح تغلب السعر العادي.',
+    subtitle: 'ما يراه هذا الوكيل وبأي سعر. سعر الرزمة الخاص يغلب نسبة الربح، ونسبة الربح تغلب السعر العادي. «ظاهرة» لهذا الوكيل وحده.',
     wide: true,
     body: `
       <div class="card card-pad" style="display:grid;gap:10px;box-shadow:none;background:var(--surface-2)">
@@ -76,11 +76,13 @@ async function openPrices(a) {
       <div class="card card-pad" style="display:grid;gap:10px;box-shadow:none;background:var(--surface-2)">
         <b>تعديل سريع للرزم الظاهرة</b>
         <div class="input-group wrap"><input class="input ltr" id="pr-bulk" type="number" step="0.01" inputmode="decimal" placeholder="مثال: 5">
-          <button type="button" class="btn" data-bulk="minus">خصم ₪ من سعره</button><button type="button" class="btn" data-bulk="clear">إزالة الأسعار الخاصة</button></div></div>
+          <button type="button" class="btn" data-bulk="minus">خصم ₪ من سعره</button><button type="button" class="btn" data-bulk="clear">إزالة الأسعار الخاصة</button></div>
+        <div class="input-group wrap"><button type="button" class="btn" data-show-all="1">${icon('eye')}إظهار الظاهرة هنا</button><button type="button" class="btn" data-show-all="0">${icon('eyeOff')}إخفاؤها عن هذا الوكيل</button></div></div>
       ${[...groups.entries()].map(([name, list]) => `<details class="pr-group" data-group><summary><b>${esc(name)}</b> <span class="muted small" data-count>${list.length}</span></summary>${list.map((r) => `
         <div class="item-top" data-row data-system="${r.system}" data-name="${esc(`${r.name} ${name}`.toLowerCase())}" style="padding:10px 0;border-bottom:1px solid var(--line)">
           <div class="grow"><b>${esc(r.name)}</b>${r.active ? '' : ' <span class="pill">موقوفة</span>'}<div class="item-sub"><span data-base="${r.packageId}"></span><span>التكلفة ${fmtMoney(r.cost)}</span><span data-margin="${r.packageId}"></span></div></div>
-          <input class="input ltr" style="width:120px" type="number" min="0" step="0.01" inputmode="decimal" data-pkg="${r.packageId}" value="${r.customPrice ?? ''}" aria-label="سعر خاص">
+          <label class="pr-show" title="ظاهرة لهذا الوكيل"><input type="checkbox" class="switch" data-show="${r.packageId}" ${r.hidden ? '' : 'checked'}><small>ظاهرة</small></label>
+          <input class="input ltr" style="width:110px" type="number" min="0" step="0.01" inputmode="decimal" data-pkg="${r.packageId}" value="${r.customPrice ?? ''}" aria-label="سعر خاص">
         </div>`).join('')}</details>`).join('') || empty('box', 'لا توجد رزم', 'أضف الرزم من «الشركات والرزم».')}`,
     submit: 'حفظ الأسعار',
     onMount(form) {
@@ -109,6 +111,11 @@ async function openPrices(a) {
       }));
       // With few companies, show them open.
       if (groups.size <= 2) form.querySelectorAll('[data-group]').forEach((g) => { g.open = true; });
+      // Show or hide, for this agent, every package on screen (after search and filter).
+      form.querySelectorAll('[data-show-all]').forEach((b) => b.addEventListener('click', () => {
+        form.querySelectorAll('[data-row]:not([hidden]) input[data-show]').forEach((i) => { i.checked = b.dataset.showAll === '1'; });
+        form.dispatchEvent(new Event('input'));
+      }));
       form.querySelectorAll('[data-bulk]').forEach((b) => b.addEventListener('click', () => {
         const v = Number(form.querySelector('#pr-bulk').value) || 0;
         // Only the packages on screen (after search and filter).
@@ -126,7 +133,9 @@ async function openPrices(a) {
         i.placeholder = String(b);
         const price = i.value === '' ? b : Number(i.value);
         const m = round(price - Number(r.cost));
-        form.querySelector(`[data-base="${r.packageId}"]`).textContent = i.value === '' ? `يدفع ${fmtMoney(b)}` : `سعر خاص · بدونه ${fmtMoney(b)}`;
+        const shown = form.querySelector(`input[data-show="${r.packageId}"]`).checked;
+        form.querySelector(`[data-base="${r.packageId}"]`).textContent = !shown ? 'مخفية عن هذا الوكيل'
+          : i.value === '' ? `يدفع ${fmtMoney(b)}` : `سعر خاص · بدونه ${fmtMoney(b)}`;
         const box = form.querySelector(`[data-margin="${r.packageId}"]`);
         box.innerHTML = `ربحك ${fmtMoney(m)}`;
         box.className = m < 0 ? 'minus' : '';
@@ -135,7 +144,10 @@ async function openPrices(a) {
     async onSubmit(form) {
       const marks = Object.fromEntries([...form.querySelectorAll('[data-markup]')].map((i) => [i.dataset.markup, i.value === '' ? null : i.value]));
       await api.put(`/api/agents/${a.id}/markups`, marks);
-      const prices = [...form.querySelectorAll('input[data-pkg]')].map((i) => ({ packageId: Number(i.dataset.pkg), price: i.value === '' ? null : i.value }));
+      const prices = [...form.querySelectorAll('input[data-pkg]')].map((i) => ({
+        packageId: Number(i.dataset.pkg), price: i.value === '' ? null : i.value,
+        hidden: !form.querySelector(`input[data-show="${i.dataset.pkg}"]`).checked,
+      }));
       await api.put(`/api/agents/${a.id}/prices`, { prices });
       changed();
       return `تم حفظ أسعار ${a.name}`;

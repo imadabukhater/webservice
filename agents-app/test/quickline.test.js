@@ -528,18 +528,47 @@ test('QuickLine: a SIM swap reaches QuickLine, the manager can stop automation, 
   const logged = await until(async () => (await ok(call(admin, 'GET', `/api/lines/${r.line.id}`))).history.find((x) => x.type === 'supplier_sync' && /الشريحة/.test(x.detail)));
   assert.match(logged.detail, /وُضعت الشريحة 899720206666666666/);
 
-  // ----- packages gone from QuickLine: removed when unused, hidden when a line still uses them -----
+  // ----- QuickLine briefly leaves packages out: hidden, then back by themselves at the next sync -----
   const saved = { 2: PACKAGES[2], 3: PACKAGES[3] };
+  const qlInvoices = async () => (await ok(call(admin, 'GET', '/api/catalog'))).packages.filter((x) => x.supplier === 'ql' && x.kind === 'invoice');
   PACKAGES[2] = [];
   PACKAGES[3] = PACKAGES[3].filter((x) => x.id !== 2564);
-  const sync = await ok(call(admin, 'POST', '/api/quickline/sync', { kind: 'invoice' }));
-  assert.equal(sync.removed, 1, 'Golan 2505 was not used: removed');
-  const after = (await ok(call(admin, 'GET', '/api/catalog'))).packages.filter((x) => x.supplier === 'ql' && x.kind === 'invoice');
-  assert.ok(!after.some((x) => x.artCode === '2505'));
-  const kept = after.find((x) => x.artCode === '2564');
-  assert.equal(kept.active, false, 'lines use 2564: kept, hidden from agents');
+  const gap = await ok(call(admin, 'POST', '/api/quickline/sync', { kind: 'invoice' }));
+  assert.deepEqual([gap.switchedOff, gap.removed], [2, 0], 'hidden, not removed');
+  const hiddenNow = (await qlInvoices()).filter((x) => ['2505', '2564'].includes(x.artCode));
+  assert.ok(hiddenNow.every((x) => !x.active && x.gone), 'marked as hidden by the sync');
   PACKAGES[2] = saved[2];
   PACKAGES[3] = saved[3];
+  const back = await ok(call(admin, 'POST', '/api/quickline/sync', { kind: 'invoice' }));
+  assert.equal(back.restored, 2);
+  assert.ok((await qlInvoices()).filter((x) => ['2505', '2564'].includes(x.artCode)).every((x) => x.active && !x.gone), 'back for the agents');
+
+  // ----- a package the manager hid stays hidden through syncs -----
+  const golan = (await qlInvoices()).find((x) => x.artCode === '2505');
+  await ok(call(admin, 'PUT', `/api/packages/${golan.id}`, { active: false }));
+  await ok(call(admin, 'POST', '/api/quickline/sync', { kind: 'invoice' }));
+  assert.equal((await qlInvoices()).find((x) => x.id === golan.id).active, false);
+  await ok(call(admin, 'PUT', `/api/packages/${golan.id}`, { active: true }));
+
+  // ----- gone for a week: removed when unused, kept hidden when a line uses it -----
+  PACKAGES[2] = [];
+  PACKAGES[3] = PACKAGES[3].filter((x) => x.id !== 2564);
+  await ok(call(admin, 'POST', '/api/quickline/sync', { kind: 'invoice' }));
+  require('../src/db').q("UPDATE packages SET gone_at = ? WHERE gone_at IS NOT NULL").run(Date.now() - 8 * 864e5);
+  const week = await ok(call(admin, 'POST', '/api/quickline/sync', { kind: 'invoice' }));
+  assert.equal(week.removed, 1, 'Golan 2505 was not used: removed');
+  const after = await qlInvoices();
+  assert.ok(!after.some((x) => x.artCode === '2505'));
+  assert.equal(after.find((x) => x.artCode === '2564').active, false, 'lines use 2564: kept, hidden from agents');
+  PACKAGES[2] = saved[2];
+  PACKAGES[3] = saved[3];
+
+  // ----- the daily automatic sync brings it back without anyone pressing a button -----
+  const { setSetting } = require('../src/db');
+  setSetting('ql_synced_invoice', Date.now() - 25 * 60 * 60_000);
+  await require('../src/autosync').tick();
+  assert.equal((await qlInvoices()).find((x) => x.artCode === '2564').active, true);
+  assert.ok((await ok(call(admin, 'GET', '/api/notifications'))).items.some((n) => /عادت \d+ رزمة للوكلاء/.test(n.title)));
 
   // ----- the manager's system health -----
   const h = await ok(call(admin, 'GET', '/api/health'));

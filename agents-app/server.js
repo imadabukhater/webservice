@@ -20,6 +20,7 @@ require('./src/routes/invoices');
 require('./src/routes/health');
 require('./src/autoexec');
 require('./src/cloudbackup');
+require('./src/autosync');
 const { dispatch } = require('./src/router');
 const { ApiError } = require('./src/util');
 

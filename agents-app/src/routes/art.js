@@ -63,7 +63,9 @@ async function syncKind(creds, kind) {
       companyIds.add(companyId);
       const p = q('SELECT id FROM packages WHERE art_card_id = ?').get(c.ref);
       if (p) {
-        q('UPDATE packages SET art_price = ? WHERE id = ?').run(c.agentPrice, p.id);
+        // Listed again after a sync hid it: back for the agents. A package the manager hid stays hidden.
+        q('UPDATE packages SET art_price = ?, active = CASE WHEN gone_at IS NOT NULL THEN 1 ELSE active END, gone_at = NULL WHERE id = ?')
+          .run(c.agentPrice, p.id);
         updated++;
       } else {
         const sort = q('SELECT COALESCE(MAX(sort), 0) + 1 AS s FROM packages WHERE company_id = ?').get(companyId).s;
@@ -76,7 +78,7 @@ async function syncKind(creds, kind) {
     // Bundles hidden for lack of balance are not "gone": only switch off when every page was fully read.
     const refs = items.map((c) => c.ref);
     const off = items.hidden ? 0
-      : q(`UPDATE packages SET active = 0 WHERE ${REF[kind]} AND active = 1 AND art_card_id NOT IN (${refs.map(() => '?').join(',')})`).run(...refs).changes;
+      : q(`UPDATE packages SET active = 0, gone_at = ? WHERE ${REF[kind]} AND active = 1 AND art_card_id NOT IN (${refs.map(() => '?').join(',')})`).run(now(), ...refs).changes;
     // Card recharges can be carried out automatically; invoices stay requests for the manager.
     // Only a company's first cards switch it to auto; a manager's "manual" afterwards stays.
     if (kind === 'card') for (const id of companyIds) if (!known.has(id)) q("UPDATE companies SET activation = 'auto' WHERE id = ? AND activation = 'manual'").run(id);

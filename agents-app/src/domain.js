@@ -78,6 +78,8 @@ function priceFor(agentId, packageId) {
                ${AGENT_PRICE_JOINS}
                WHERE p.id = ?`).get(agentId, agentId, Number(packageId));
   if (!p || !p.active) fail(404, 'الرزمة غير متوفرة');
+  // Hidden from this agent by the manager: not on sale to them, whatever screen it comes from.
+  if (q('SELECT 1 FROM agent_hidden WHERE agent_id = ? AND package_id = ?').get(agentId, p.id)) fail(404, 'هذه الرزمة غير متاحة لك');
   return p;
 }
 

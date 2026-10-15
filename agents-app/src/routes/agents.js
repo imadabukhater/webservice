@@ -112,10 +112,11 @@ route('GET', '/api/agents/:id/prices', ADMIN, ({ params }) => {
   const a = D.getAgent(params.id);
   return q(`SELECT p.id AS packageId, p.company_id AS companyId, c.name AS companyName, p.name, p.cost, p.price AS defaultPrice,
               ap.price AS customPrice, ${D.MARKUP_PRICE_SQL} AS markupPrice, ${D.AGENT_PRICE_SQL} AS agentPrice,
-              ${D.SYSTEM_SQL} AS system, p.active
+              ${D.SYSTEM_SQL} AS system, p.active, h.package_id IS NOT NULL AS hidden
             FROM packages p JOIN companies c ON c.id = p.company_id
             ${D.AGENT_PRICE_JOINS}
-            ORDER BY c.sort, c.id, p.sort, p.id`).all(a.id, a.id).map((r) => ({ ...r, active: !!r.active }));
+            LEFT JOIN agent_hidden h ON h.package_id = p.id AND h.agent_id = ?
+            ORDER BY c.sort, c.id, p.sort, p.id`).all(a.id, a.id, a.id).map((r) => ({ ...r, active: !!r.active, hidden: !!r.hidden }));
 });
 
 // The manager's profit percentage for one agent, per pricing system; null = the packages' own prices.
@@ -145,6 +146,13 @@ route('PUT', '/api/agents/:id/prices', ADMIN, ({ params, body }) => tx(() => {
   const a = D.getAgent(params.id);
   for (const item of Array.isArray(body.prices) ? body.prices : []) {
     const pid = Number(item.packageId);
+    // Shown to or hidden from this agent only.
+    if (item.hidden === true && q('SELECT 1 FROM packages WHERE id = ?').get(pid)) {
+      q('INSERT OR IGNORE INTO agent_hidden (agent_id, package_id) VALUES (?, ?)').run(a.id, pid);
+    } else if (item.hidden === false) {
+      q('DELETE FROM agent_hidden WHERE agent_id = ? AND package_id = ?').run(a.id, pid);
+    }
+    if (item.price === undefined) continue;
     if (item.price === null || item.price === '' || item.price === undefined) {
       q('DELETE FROM agent_prices WHERE agent_id = ? AND package_id = ?').run(a.id, pid);
     } else {

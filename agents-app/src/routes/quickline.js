@@ -8,6 +8,7 @@ const ql = require('../quickline');
 const { route, ADMIN, ANY } = require('../router');
 
 const KINDS = ['card', 'invoice'];
+const GONE_DAYS = 7; // a package QuickLine no longer lists is removed after this long (when nothing refers to it)
 const kindOf = (v) => (KINDS.includes(v) ? v : fail(400, 'اختر النظام: تمديد الخطوط أو خطوط جديدة'));
 const markupFor = (kind) => (kind === 'card' ? getSettings().qlMarkupCard : getSettings().qlMarkupInvoice);
 const withMarkup = (cost, kind) => round(cost * (1 + markupFor(kind) / 100));
@@ -56,6 +57,7 @@ async function syncKind(creds, kind) {
   return tx(() => {
     let added = 0;
     let updated = 0;
+    let restored = 0;
     const companyIds = new Set();
     const refs = [];
     // Companies that already had QuickLine packages: their automation is the manager's choice from now on.
@@ -70,9 +72,12 @@ async function syncKind(creds, kind) {
       refs.push(ref);
       const companyId = companyFor(c.company);
       companyIds.add(companyId);
-      const p = q('SELECT id FROM packages WHERE art_card_id = ?').get(ref);
+      const p = q('SELECT id, gone_at FROM packages WHERE art_card_id = ?').get(ref);
       if (p) {
-        q('UPDATE packages SET art_price = ? WHERE id = ?').run(c.agentPrice, p.id);
+        // Listed again after a sync hid it: back for the agents. A package the manager hid stays hidden.
+        if (p.gone_at) restored++;
+        q('UPDATE packages SET art_price = ?, active = CASE WHEN gone_at IS NOT NULL THEN 1 ELSE active END, gone_at = NULL WHERE id = ?')
+          .run(c.agentPrice, p.id);
         updated++;
       } else {
         const sort = q('SELECT COALESCE(MAX(sort), 0) + 1 AS s FROM packages WHERE company_id = ?').get(companyId).s;
@@ -83,22 +88,26 @@ async function syncKind(creds, kind) {
         added++;
       }
     }
-    // Packages gone from QuickLine (or replaced, e.g. an offer whose duration changed): removed when nothing here
-    // refers to them, so the list does not fill up with old copies; kept but hidden when a line, an offer or an open
-    // request still does (a line keeps its QuickLine identity through its package).
+    // Packages QuickLine no longer lists are hidden, marked as the sync's doing (gone_at), so a brief gap in what
+    // QuickLine returns heals at the next sync. Only after a week gone, and when nothing here refers to them (a line —
+    // which keeps its QuickLine identity through its package —, an offer, an open request), are they removed, so the
+    // list does not fill up with old copies and a brief gap never loses the manager's prices.
     let off = 0;
     let removed = 0;
-    const gone = q(`SELECT id, active FROM packages WHERE ${REF[kind]} AND art_card_id NOT IN (${refs.map(() => '?').join(',')})`).all(...refs);
+    const gone = q(`SELECT id, active, gone_at FROM packages WHERE ${REF[kind]} AND art_card_id NOT IN (${refs.map(() => '?').join(',')})`).all(...refs);
     for (const g of gone) {
+      if (g.active) {
+        q('UPDATE packages SET active = 0, gone_at = ? WHERE id = ?').run(now(), g.id);
+        off++;
+        continue;
+      }
+      if (!g.gone_at || now() - g.gone_at < GONE_DAYS * 864e5) continue;
       const used = q(`SELECT 1 FROM lines WHERE package_id = ?1 UNION ALL SELECT 1 FROM offers WHERE package_id = ?1
                       UNION ALL SELECT 1 FROM tasks WHERE status = 'open' AND json_valid(payload) AND json_extract(payload, '$.packageId') = ?1
                       LIMIT 1`).get(g.id);
       if (!used) {
         q('DELETE FROM packages WHERE id = ?').run(g.id);
         removed++;
-      } else if (g.active) {
-        q('UPDATE packages SET active = 0 WHERE id = ?').run(g.id);
-        off++;
       }
     }
     // Extensions and new lines are carried out automatically for "auto" companies. A company getting QuickLine
@@ -106,7 +115,7 @@ async function syncKind(creds, kind) {
     // stopped for a company.
     for (const id of companyIds) if (!known.has(id)) q("UPDATE companies SET activation = 'auto' WHERE id = ? AND activation = 'manual'").run(id);
     setSetting(`ql_synced_${kind}`, now());
-    return { kind, total: items.length, added, updated, switchedOff: off + removed, removed, pending: pendingCount(kind), markup: markupFor(kind) };
+    return { kind, total: items.length, added, updated, restored, switchedOff: off, removed, pending: pendingCount(kind), markup: markupFor(kind) };
   });
 }
 

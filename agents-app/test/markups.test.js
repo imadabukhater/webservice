@@ -70,6 +70,17 @@ test('each agent can have its own profit percentage per system; a price set by h
   assert.equal((await call(t1, 'GET', `/api/agents/${a1}/markups`)).status, 403);
   assert.equal((await call(t1, 'PUT', `/api/agents/${a1}/markups`, { invoice: 0 })).status, 403);
 
+  // ----- a package hidden from one agent only: gone from their list, not on sale to them; the others still see it -----
+  await ok(call(admin, 'PUT', `/api/agents/${a1}/prices`, { prices: [{ packageId: card, price: null, hidden: true }] }));
+  assert.equal(await priceOf(t1, card), undefined, 'not in the list of agent1');
+  assert.equal(await priceOf(t2, card), 44, 'agent2 still sees it');
+  const sell = await call(t1, 'POST', '/api/lines', { kind: 'external', packageId: card, number: '0521110002' });
+  assert.equal(sell.status, 404);
+  assert.match(sell.body.error, /غير متاحة لك/);
+  assert.equal((await ok(call(admin, 'GET', `/api/agents/${a1}/prices`))).find((r) => r.packageId === card).hidden, true);
+  await ok(call(admin, 'PUT', `/api/agents/${a1}/prices`, { prices: [{ packageId: card, price: null, hidden: false }] }));
+  assert.equal(await priceOf(t1, card), 44, 'shown again');
+
   // ----- the developer's 2% of every sale: on the manager's dashboard only -----
   const dash = await ok(call(admin, 'GET', '/api/dashboard'));
   assert.equal(dash.devFeePercent, 2);

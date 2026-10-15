@@ -108,6 +108,12 @@ CREATE TABLE IF NOT EXISTS agent_prices (
   price REAL NOT NULL,
   PRIMARY KEY (agent_id, package_id)
 );
+-- A package the manager hides from one agent only (the others still see it).
+CREATE TABLE IF NOT EXISTS agent_hidden (
+  agent_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  package_id INTEGER NOT NULL REFERENCES packages(id) ON DELETE CASCADE,
+  PRIMARY KEY (agent_id, package_id)
+);
 -- The manager's profit percentage for one agent on one pricing system (see domain.SYSTEM_SQL).
 CREATE TABLE IF NOT EXISTS agent_markups (
   agent_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -286,6 +292,15 @@ ensureColumn('tasks', 'auto_at', 'auto_at INTEGER');
 ensureColumn('lines', 'ql_pending', "ql_pending TEXT NOT NULL DEFAULT ''");
 // QuickLine lines: a new SIM put on the line here, still to be put on it there.
 ensureColumn('lines', 'ql_sim', "ql_sim TEXT NOT NULL DEFAULT ''");
+// gone_at: when a sync hid the package because its supplier no longer listed it. Such a package comes back by itself
+// when the supplier lists it again; a package the manager hid (gone_at NULL) stays hidden.
+ensureColumn('packages', 'gone_at', 'gone_at INTEGER');
+// Before gone_at, a sync that briefly got an incomplete list from QuickLine hid packages for good. The manager hid
+// none of them by hand, so they are marked as the sync's, once, and the next sync brings back those QuickLine lists.
+if (!db.prepare("SELECT 1 FROM settings WHERE key = 'migr_ql_gone'").get()) {
+  db.prepare("UPDATE packages SET gone_at = ? WHERE active = 0 AND gone_at IS NULL AND art_card_id LIKE 'ql%'").run(Date.now());
+  db.prepare("INSERT INTO settings (key, value) VALUES ('migr_ql_gone', '1')").run();
+}
 
 const q = (sql) => db.prepare(sql);
 
