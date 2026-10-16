@@ -2,11 +2,12 @@
 // How the automatic parts are doing, at a glance, for the manager's home page: the suppliers (balance, last sync),
 // the cloud backup, and what waits for the manager or for a supplier. Supplier balances are read at most every
 // 10 minutes, so the home page stays fast.
-const { q, getSettings, artCredentials, qlCredentials } = require('../db');
+const { q, getSettings, artCredentials, qlCredentials, lyCredentials } = require('../db');
 const { now, round } = require('../util');
 const { route, ADMIN } = require('../router');
 const ql = require('../quickline');
 const art = require('../art');
+const ly = require('../layan');
 
 const TTL_MS = 10 * 60_000;
 const cache = new Map();
@@ -28,9 +29,10 @@ const lastSync = (a, b) => (a && b ? Math.min(a, b) : null);
 
 route('GET', '/api/health', ADMIN, async () => {
   const s = getSettings();
-  const [qlBal, artBal] = await Promise.all([
+  const [qlBal, artBal, lyBal] = await Promise.all([
     s.qlConfigured ? cached('ql', () => ql.balance(qlCredentials())) : null,
     s.artConfigured ? cached('art', () => art.balance(artCredentials())) : null,
+    s.lyConfigured ? cached('ly', () => ly.balance(lyCredentials())) : null,
   ]);
   const count = (sql) => q(sql).get().n;
   return {
@@ -41,6 +43,10 @@ route('GET', '/api/health', ADMIN, async () => {
     art: s.artConfigured ? {
       balance: artBal.value === null ? null : round(artBal.value), error: artBal.error,
       synced: lastSync(s.artSyncedCard, s.artSyncedInvoice),
+    } : null,
+    layan: s.lyConfigured ? {
+      balance: lyBal.value === null ? null : round(lyBal.value), error: lyBal.error,
+      synced: lastSync(s.lySyncedCard, s.lySyncedInvoice),
     } : null,
     backup: { bucket: s.backupBucket, lastAt: s.backupLastAt, error: s.backupError },
     tasks: {

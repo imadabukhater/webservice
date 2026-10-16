@@ -17,7 +17,7 @@ const REF = { card: "art_card_id LIKE 'ql:%'", invoice: "art_card_id LIKE 'qln:%
 
 // Our company for a QuickLine company name.
 const COMPANIES = [
-  ['سلكوم', /سي?لكوم|cel+e?com/i], ['جولان', /جولان|golan/i], ['بيلفون', /بيلفون|pelephone/i], ['هوت موبايل', /هوت|hot/i],
+  ['سلكوم', /سي?لكوم|cel+e?com/i], ['جولان', /جولان|golan|gloan/i], ['بيلفون', /بيلفون|pelephone/i], ['هوت موبايل', /هوت|hot/i],
   ['019', /019/], ['رامي ليفي', /رامي|rami/i], ['بارتنر', /بارتنر|partner/i],
   ['جوال', /جوال|jawwal/i], ['أوريدو', /[أا]وريدو|ooredoo|oredoo/i],
   ['WE', /we\s*4\s*g|^\s*وي\s|\bwe\b/i], ['كلام', /كلام|kalam/i], ['X phone', /x\s*-?\s*phone|اكس فون/i],
@@ -206,6 +206,9 @@ function newLinePackage(id) {
 
 // Free numbers of a new-line package that picks its number from a list (esim=1 for eSIM numbers). exclude: ids shown.
 route('GET', '/api/numbers/free', ANY, ({ query }) => {
+  // A Layan new line picks one of the dealer's suspended numbers instead.
+  const lyRef = require('../layan').parseRef(q('SELECT art_card_id FROM packages WHERE id = ? AND active = 1').get(Number(query.packageId))?.art_card_id);
+  if (lyRef?.system === 'lyn') return require('./layan').freeNumbers(lyRef);
   const ref = newLinePackage(query.packageId);
   const esim = query.esim === '1';
   const exclude = String(query.exclude || '').split(',').map(Number).filter(Boolean).slice(0, 500);
@@ -225,4 +228,4 @@ route('GET', '/api/quickline/lines', ADMIN, () => wrap(async (creds) => {
   return { total: subs.length, extendable: subs.filter((s) => s.canExtend).length, lines: subs.slice(0, 500) };
 }));
 
-module.exports = { syncKind, REF, simRuleFor, servedNumber };
+module.exports = { syncKind, REF, simRuleFor, servedNumber, companyFor };

@@ -5,15 +5,17 @@
 //                whose cut date moves when the extension went through.
 // Money safety: a request is sent at most once (claimed with auto_status). Anything unclear (no answer, rejected,
 // no sign it took effect) leaves the task open for the manager, who checks the supplier before acting.
-const { q, tx, getSettings, artCredentials, qlCredentials } = require('./db');
+const { q, tx, getSettings, artCredentials, qlCredentials, lyCredentials } = require('./db');
 const { now } = require('./util');
 const D = require('./domain');
 const art = require('./art');
 const ql = require('./quickline');
+const ly = require('./layan');
 const { resolveTask } = require('./routes/tasks');
 
 const ACTOR = { id: null, name: 'art-topup (تلقائي)', role: 'admin' };
 const QL_ACTOR = { id: null, name: 'QuickLine (تلقائي)', role: 'admin' };
+const LY_ACTOR = { id: null, name: 'ليان (تلقائي)', role: 'admin' };
 const CHECK_MS = Number(process.env.ART_CHECK_MS) || 15_000; // first look at the operations list after sending
 const GIVE_UP_MS = 30 * 60_000; // still not finished after this: hand over to the manager
 const LOOP_MS = Number(process.env.ART_LOOP_MS) || 30_000;
@@ -48,8 +50,8 @@ function job(taskId) {
   // number): QuickLine new lines only — art-topup's invoices (inv:) stay requests for the manager.
   const ref = p.art_card_id;
   const supplier = ['recharge', 'renew'].includes(t.type)
-    ? (/^(ic|pb|pc):/.test(ref) ? 'art' : /^ql:/.test(ref) ? 'ql' : null)
-    : (/^qln:/.test(ref) ? 'qln' : null);
+    ? (/^(ic|pb|pc):/.test(ref) ? 'art' : /^ql:/.test(ref) ? 'ql' : /^ly:/.test(ref) ? 'ly' : null)
+    : (/^qln:/.test(ref) ? 'qln' : /^lyn:/.test(ref) && t.type === 'activate' ? 'lyn' : null);
   if (!supplier) return null;
   // The supplier is paid its own current price, never the cost the manager may have typed.
   return { t, supplier, line, number: line.number, ref, price: p.art_price ?? p.cost };
@@ -71,12 +73,77 @@ async function send(taskId) {
   const j = job(taskId);
   if (!j) return;
   const s = getSettings();
-  if (j.supplier === 'art' ? !s.artConfigured : !s.qlConfigured) return;
+  if (j.supplier === 'art' ? !s.artConfigured : /^ly/.test(j.supplier) ? !s.lyConfigured : !s.qlConfigured) return;
   // Claim it: only one sender, only once.
   if (!q("UPDATE tasks SET auto_status = 'sending', auto_at = ? WHERE id = ? AND status = 'open' AND auto_status = ''").run(now(), taskId).changes) return;
   if (j.supplier === 'ql') return sendQl(taskId, j);
   if (j.supplier === 'qln') return sendQlNew(taskId, j);
+  if (j.supplier === 'ly' || j.supplier === 'lyn') return sendLy(taskId, j);
   return sendArt(taskId, j);
+}
+
+// ---------- Layan: activate a suspended number (new line) or extend an active one ----------
+// Layan quotes its price first: nothing is sent when it is above the price approved for the package. What proves it
+// went through is the number itself, read back: active again (a new line), its end date moved (both).
+async function sendLy(taskId, j) {
+  const activating = j.supplier === 'lyn';
+  const what = activating ? 'التفعيل' : 'التمديد';
+  const number = ly.localNumber(j.number);
+  const ref = ly.parseRef(j.ref);
+  if (!number || !ref) { setAuto(taskId, 'failed', 'ناقصة بيانات ليان لهذا الخط — نفّذه يدوياً'); return undefined; }
+  const creds = lyCredentials();
+  let n;
+  let price;
+  try {
+    n = (await ly.numbers(creds)).find((x) => x.number === number);
+    if (n) price = await ly.quote(creds, { number, days: ref.days, saleId: ref.saleId });
+  } catch (e) {
+    return notSentYet({ ...j.t, number }, taskId, e, `تعذّر ${what} التلقائي`);
+  }
+  const fail = (note) => { setAuto(taskId, 'failed', note); tellManager(`تعذّر ${what} التلقائي`, `${number}: ${note}`); };
+  if (!n) return fail('الرقم غير موجود في ليان تحت هذه الوكالة — نفّذه يدوياً أو ارفضه');
+  const info = require('./routes/layan').packageInfo(ref.packageId);
+  if (info && n.packageName !== info.name) return fail(`الرقم في ليان على رزمة «${n.packageName}» وليس الرزمة المبيعة — نفّذه يدوياً أو ارفضه`);
+  if (activating && !n.suspended) {
+    setAuto(taskId, 'unknown', `الرقم ${number} في ليان «${n.status}» وليس موقوفاً — افحصه هناك قبل أي تنفيذ يدوي.`);
+    tellManager('تفعيل تلقائي غير مؤكد', `${number}: حالته في ليان «${n.status}»`);
+    return undefined;
+  }
+  if (!activating && !n.active) return fail(`الرقم في ليان «${n.status}» — لا يُمدَّد إلا رقم فعّال. نفّذه يدوياً أو ارفضه`);
+  // Never above the approved price: the manager approves a new price first (and the agent was charged by the old one).
+  if (price > Number(j.price) + 0.01) return fail(`سعر ليان الآن ${price} ₪ وهو أعلى من المعتمد ${j.price} ₪ — زامن ليان وراجع السعر، ثم نفّذه يدوياً أو ارفضه`);
+  const before = JSON.stringify({ ly: true, activating, number, endDate: n.endDate });
+  try {
+    await (activating ? ly.activate : ly.extend)(creds, { number, days: ref.days, saleId: ref.saleId });
+  } catch (e) {
+    if (e.refused) {
+      setAuto(taskId, 'failed', `رفض ليان ${what}: ${e.message}`, { ref: before });
+      tellManager(`رفض ليان ${what}`, `${number}: ${e.message}. ارفض الطلب ليُسترد المبلغ أو نفّذه يدوياً.`);
+      return undefined;
+    }
+    setAuto(taskId, 'unknown', `انقطع الاتصال أثناء الإرسال (${e.message}). افحص ليان قبل أي تنفيذ يدوي.`, { ref: before });
+    tellManager(`${what} تلقائي غير مؤكد`, `${number}: افحص ليان قبل التنفيذ`);
+    return undefined;
+  }
+  setAuto(taskId, 'sent', `أُرسل ${what} إلى ليان (${price} ₪${ref.saleId ? '، عرض' : ''})`, { ref: before });
+  later(taskId);
+  return undefined;
+}
+
+async function checkLy(t, before) {
+  const what = before.activating ? 'التفعيل' : 'التمديد';
+  const n = (await ly.numbers(lyCredentials())).find((x) => x.number === before.number);
+  const applied = n && n.active && n.endDate !== before.endDate;
+  if (applied) {
+    finish(t.id, `ليان: تم ${what} حتى ${n.endDate}`, before.activating ? 'تم التفعيل' : `تم التمديد حتى ${n.endDate}`, LY_ACTOR);
+    return;
+  }
+  if (now() - t.auto_at > GIVE_UP_MS) {
+    setAuto(t.id, 'unknown', `لم يظهر أثر ${what} في ليان بعد 30 دقيقة. افحص الرقم هناك قبل أي تنفيذ يدوي.`);
+    tellManager(`${what} تلقائي غير مؤكد`, `${before.number}: لم يظهر أثره في ليان`);
+  } else {
+    later(t.id);
+  }
 }
 
 // ---------- QuickLine: activate a new line (pool number, eSIM, or a ported number) ----------
@@ -296,6 +363,7 @@ async function check(taskId) {
   if (t.auto_ref.startsWith('{')) {
     let before;
     try { before = JSON.parse(t.auto_ref); } catch { before = {}; }
+    if (before.ly) return checkLy(t, before);
     return before.new ? checkQlNew(t, before) : checkQl(t);
   }
   const line = q('SELECT number FROM lines WHERE id = ?').get(t.line_id);
@@ -450,7 +518,7 @@ D.events.on('sale-task', (id) => setImmediate(() => send(id).catch((e) => consol
 let busy = false;
 async function sweep() {
   const s = getSettings();
-  if (busy || !(s.artConfigured || s.qlConfigured)) return;
+  if (busy || !(s.artConfigured || s.qlConfigured || s.lyConfigured)) return;
   busy = true;
   try {
     // A send interrupted midway (e.g. the server restarted) may or may not have reached the supplier: never resend it,

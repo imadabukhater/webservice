@@ -117,7 +117,7 @@ CREATE TABLE IF NOT EXISTS agent_hidden (
 -- The manager's profit percentage for one agent on one pricing system (see domain.SYSTEM_SQL).
 CREATE TABLE IF NOT EXISTS agent_markups (
   agent_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  system TEXT NOT NULL CHECK (system IN ('invoice','card','qlinvoice','qlcard')),
+  system TEXT NOT NULL CHECK (system IN ('invoice','card','qlinvoice','qlcard','lyinvoice','lycard')),
   markup REAL NOT NULL,
   PRIMARY KEY (agent_id, system)
 );
@@ -292,6 +292,20 @@ ensureColumn('tasks', 'auto_at', 'auto_at INTEGER');
 ensureColumn('lines', 'ql_pending', "ql_pending TEXT NOT NULL DEFAULT ''");
 // QuickLine lines: a new SIM put on the line here, still to be put on it there.
 ensureColumn('lines', 'ql_sim', "ql_sim TEXT NOT NULL DEFAULT ''");
+// Layan's two systems came after agent_markups; SQLite cannot change a CHECK, so rebuild that table once.
+if (!/lyinvoice/.test(tableSql('agent_markups') || '')) {
+  db.exec(`BEGIN;
+    ALTER TABLE agent_markups RENAME TO agent_markups_v1;
+    CREATE TABLE agent_markups (
+      agent_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      system TEXT NOT NULL CHECK (system IN ('invoice','card','qlinvoice','qlcard','lyinvoice','lycard')),
+      markup REAL NOT NULL,
+      PRIMARY KEY (agent_id, system)
+    );
+    INSERT INTO agent_markups SELECT * FROM agent_markups_v1;
+    DROP TABLE agent_markups_v1;
+    COMMIT;`);
+}
 // gone_at: when a sync hid the package because its supplier no longer listed it. Such a package comes back by itself
 // when the supplier lists it again; a package the manager hid (gone_at NULL) stays hidden.
 ensureColumn('packages', 'gone_at', 'gone_at INTEGER');
@@ -321,6 +335,7 @@ const DEFAULT_SETTINGS = {
   app_name: 'بوابة الوكلاء', warn_days: '7', low_balance: '50', esim_fee: '7', support_whatsapp: '972567725080',
   art_user: '', art_pass: '', art_markup: '15',
   ql_user: '', ql_pass: '', ql_markup: '15',
+  ly_user: '', ly_pass: '', ly_secret: '', ly_markup: '15',
 };
 function getSettings() {
   const out = { ...DEFAULT_SETTINGS };
@@ -348,6 +363,14 @@ function getSettings() {
     qlMarkupInvoice: Math.max(0, Number(out.ql_markup_invoice ?? out.ql_markup) || 0),
     qlSyncedCard: Number(out.ql_synced_card) || null,
     qlSyncedInvoice: Number(out.ql_synced_invoice) || null,
+    // Layan sign-in: the password and the authenticator secret never leave the server (see lyCredentials).
+    lyUser: out.ly_user,
+    lyConfigured: !!(out.ly_user && out.ly_pass),
+    lyHasSecret: !!out.ly_secret,
+    lyMarkupCard: Math.max(0, Number(out.ly_markup_card ?? out.ly_markup) || 0),
+    lyMarkupInvoice: Math.max(0, Number(out.ly_markup_invoice ?? out.ly_markup) || 0),
+    lySyncedCard: Number(out.ly_synced_card) || null,
+    lySyncedInvoice: Number(out.ly_synced_invoice) || null,
     // The daily copy in Google Cloud Storage (see cloudbackup.js): where, the last good one, and the last failure.
     backupBucket: out.backup_bucket || '',
     backupLastAt: Number(out.backup_last_at) || null,
@@ -359,6 +382,10 @@ function getSettings() {
 function artCredentials() {
   const get = (k) => q('SELECT value FROM settings WHERE key = ?').get(k)?.value || '';
   return { user: get('art_user'), pass: get('art_pass') };
+}
+function lyCredentials() {
+  const get = (k) => q('SELECT value FROM settings WHERE key = ?').get(k)?.value || '';
+  return { user: get('ly_user'), pass: get('ly_pass'), secret: get('ly_secret') };
 }
 function qlCredentials() {
   const get = (k) => q('SELECT value FROM settings WHERE key = ?').get(k)?.value || '';
@@ -396,4 +423,4 @@ function bootstrap() {
 }
 bootstrap();
 
-module.exports = { db, q, tx, getSettings, setSetting, artCredentials, qlCredentials, DB_FILE };
+module.exports = { db, q, tx, getSettings, setSetting, artCredentials, qlCredentials, lyCredentials, DB_FILE };

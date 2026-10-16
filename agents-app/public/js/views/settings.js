@@ -79,6 +79,23 @@ export default {
             <a class="btn" href="#/catalog">${icon('box')}الشركات والرزم</a>
           </div>
         </form>
+        <form class="card card-pad form" id="ly-form" novalidate autocomplete="off">
+          <h2 class="dot-title">البيع التلقائي عبر ليان</h2>
+          <p class="muted small">يمدّد السيرفر أرقام الوكالة الفعّالة في ليان، ويفعّل أرقامها الموقوفة كخطوط جديدة، بعد أن يتأكد من السعر. يدخل إلى ليان بنفسه، ويصنع رمز المصادقة من المفتاح السري.</p>
+          <div class="row2 stack-xs">
+            <div class="field"><label for="ly-user">اسم المستخدم في ليان</label><input class="input ltr" id="ly-user" name="lyUser" value="${esc(s.lyUser || '')}" autocomplete="off"></div>
+            <div class="field"><label for="ly-pass">كلمة المرور</label><input class="input ltr" id="ly-pass" name="lyPass" type="password" autocomplete="new-password" placeholder="${s.lyConfigured ? 'محفوظة — اتركها فارغة للإبقاء' : ''}"></div>
+          </div>
+          <div class="field"><label for="ly-secret">المفتاح السري للمصادقة (Authenticator)</label>
+            <input class="input ltr" id="ly-secret" name="lySecret" type="password" autocomplete="off" placeholder="${s.lyHasSecret ? 'محفوظ — اتركه فارغاً للإبقاء' : 'المفتاح تحت رمز QR، أو رابط otpauth'}">
+            <span class="hint">المفتاح المكتوب تحت رمز QR عند تفعيل المصادقة في ليان (أو رابط التصدير من تطبيق Google Authenticator). يبقى على السيرفر ولا يظهر بعد حفظه.</span></div>
+          <div id="ly-msg"></div>
+          <div class="btn-row">
+            <button class="btn btn-primary" type="submit">${icon('check')}حفظ</button>
+            <button class="btn" type="button" data-action="ly-check" ${s.lyConfigured ? '' : 'disabled'}>${icon('wallet')}اختبار الاتصال والرصيد</button>
+            <a class="btn" href="#/catalog">${icon('box')}الشركات والرزم</a>
+          </div>
+        </form>
 `,
       backup: `
         <section class="card card-pad form">
@@ -103,6 +120,18 @@ export default {
       try {
         S.settings = await api.put('/api/settings', { artUser: field(form, 'artUser'), artPass: form.elements.artPass.value });
         toast('تم حفظ إعدادات art-topup');
+        changed();
+      } catch (err) {
+        msg.innerHTML = `<div class="msg">${icon('alert')}<span>${esc(err.message)}</span></div>`;
+      }
+    });
+    root.querySelector('#ly-form')?.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const form = e.currentTarget;
+      const msg = root.querySelector('#ly-msg');
+      try {
+        S.settings = await api.put('/api/settings', { lyUser: field(form, 'lyUser'), lyPass: form.elements.lyPass.value, lySecret: form.elements.lySecret.value });
+        toast('تم حفظ إعدادات ليان');
         changed();
       } catch (err) {
         msg.innerHTML = `<div class="msg">${icon('alert')}<span>${esc(err.message)}</span></div>`;
@@ -156,6 +185,16 @@ export default {
       try {
         const r = await api.post('/api/quickline/check');
         box.innerHTML = `<div class="msg info">${icon('checkCircle')}<span>تم الاتصال بـ QuickLine باسم ${esc(r.name || '')}. الرصيد: ${r.credit === null ? 'غير معروف' : `${r.credit} ₪`} · خطوط فعّالة: ${r.active ?? '—'} · مدفوعات مفتوحة: ${r.openPayments ?? '—'} ₪</span></div>`;
+      } catch (err) {
+        box.innerHTML = `<div class="msg">${icon('alert')}<span>${esc(err.message)}</span></div>`;
+      } finally { btn.disabled = false; }
+    },
+    async 'ly-check'(btn) {
+      const box = document.getElementById('ly-msg');
+      btn.disabled = true;
+      try {
+        const r = await api.post('/api/layan/check');
+        box.innerHTML = `<div class="msg info">${icon('checkCircle')}<span>تم الدخول إلى ليان. الرصيد: ${r.balance === null ? 'غير معروف' : `${r.balance} ₪`} · أرقام الوكالة: ${r.numbers} (فعّالة ${r.active}، موقوفة ${r.suspended})</span></div>`;
       } catch (err) {
         box.innerHTML = `<div class="msg">${icon('alert')}<span>${esc(err.message)}</span></div>`;
       } finally { btn.disabled = false; }

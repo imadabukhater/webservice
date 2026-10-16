@@ -62,8 +62,8 @@ route('POST', '/api/lines', ANY, ({ user, body }) => tx(() => {
 
   const { pkg, offer, unit: quoted } = D.quote(agent.id, { packageId: body.packageId, offerId: body.offerId });
   // QuickLine's two systems cannot stand in for each other: a new-line package opens a line, an extension extends one.
-  if (kind === 'external' && /^qln:/.test(pkg.art_card_id || '')) fail(400, 'هذه رزمة تفعيل خط جديد، وليست شحناً لرقم');
-  if (kind === 'new' && /^ql:/.test(pkg.art_card_id || '')) fail(400, 'هذه رزمة تمديد: اختر رزمة تفعيل خط جديد');
+  if (kind === 'external' && /^(qln|lyn):/.test(pkg.art_card_id || '')) fail(400, 'هذه رزمة تفعيل خط جديد، وليست شحناً لرقم');
+  if (kind === 'new' && /^(ql|ly):/.test(pkg.art_card_id || '')) fail(400, 'هذه رزمة تمديد: اختر رزمة تفعيل خط جديد');
   let unit = quoted;
   if (isAdmin && !isBlank(body.unitPrice)) unit = num(body.unitPrice, 'السعر');
   if (unit < 0) fail(400, 'السعر لا يكون سالباً');
@@ -97,7 +97,16 @@ route('POST', '/api/lines', ANY, ({ user, body }) => tx(() => {
       if (esim) { sim = { iccid: picked.sim.replace(/\D/g, ''), stockId: null }; qlJob.qr = picked.qr; }
     }
   }
-  if (kind === 'new' && !esim) {
+  // A Layan new line is one of the dealer's suspended numbers there, which comes with its SIM: the agent picks it from
+  // the list shown, and nothing else (no SIM, no porting, no eSIM switch — an eSIM package brings its eSIM).
+  const lyRef = kind === 'new' && /^lyn:/.test(pkg.art_card_id || '') ? require('../layan').parseRef(pkg.art_card_id) : null;
+  if (lyRef) {
+    if (port || esim) fail(400, 'هذه الرزمة لا تدعم تحويل الرقم أو eSIM');
+    const picked = require('./layan').servedNumber(lyRef.packageId, number);
+    if (!picked) fail(400, 'اختر رقم الهاتف من قائمة الأرقام المتاحة');
+    sim = { iccid: picked.sim.replace(/\D/g, ''), stockId: null };
+  }
+  if (kind === 'new' && !esim && !lyRef) {
     if (isBlank(body.sim) && !body.simId) fail(400, 'أدخل رقم الشريحة أو اخترها من المخزون');
     sim = D.takeSim({ iccid: body.sim, simId: body.simId }, { agentId: agent.id, isAdmin, companyId: pkg.company_id, companyName: pkg.company_name });
   }
@@ -113,7 +122,7 @@ route('POST', '/api/lines', ANY, ({ user, body }) => tx(() => {
   // (the manager's own sales count as already done). eSIM and number porting always go through the manager,
   // or through QuickLine for its packages. A QuickLine new line is never "direct": it must be activated there.
   // Anything sold on a QuickLine package (a new line, or an extension sold as a recharge) is carried out there.
-  const viaQl = !!qlRef || /^ql:/.test(pkg.art_card_id || '');
+  const viaQl = !!qlRef || !!lyRef || /^(ql|ly):/.test(pkg.art_card_id || '');
   const direct = D.directCompany(pkg.company_id) && !port && !esim && !viaQl;
   const manual = !direct && !port && !esim && !isAdmin;
   // The eSIM's QR code is kept with the task; it is shown on the line once QuickLine has activated it.
@@ -193,7 +202,7 @@ function renewLine(user, l, body) {
   const renewal = { packageId: pkg.id, label, companyId: pkg.company_id, months, days, total, cost, offerId: offer?.id ?? null, customerPrice };
   // Manual companies: the agent pays now; the line is extended when the manager marks the request done.
   // A QuickLine extension is always carried out there (the manager's too), so it waits for QuickLine.
-  const manual = (!isAdmin && !D.directCompany(pkg.company_id)) || /^ql:/.test(pkg.art_card_id || '');
+  const manual = (!isAdmin && !D.directCompany(pkg.company_id)) || /^(ql|ly):/.test(pkg.art_card_id || '');
   if (!manual) applyRenewal(l.id, renewal);
   D.changeBalance(agent, -total, {
     type: 'renew', actor: user, lineId: l.id, number: l.number, cost, profit: total - cost, package: label, customerPrice,
@@ -264,6 +273,10 @@ route('POST', '/api/lines/:id/action', ANY, ({ user, params, body }) => tx(() =>
     if (/^qln?:/.test(ref || '')) {
       q('UPDATE lines SET ql_pending = ? WHERE id = ?').run(QL_ACTION[action], l.id);
       D.events.emit('line-supplier', l.id);
+    }
+    // A Layan line's state is not changed there automatically yet: the manager is told to do it.
+    if (/^lyn?:/.test(ref || '')) {
+      D.notify({ role: 'admin', kind: 'task', title: `ليان: ${a.label} ${l.number}`, body: `غيّر حالة الرقم في ليان يدوياً (${a.label}).`, link: '#/tasks' });
     }
   }
   return { line: view(l.id, user) };

@@ -49,6 +49,10 @@ const directSale = () => !isAdmin() && !W.esim && !W.port && company()?.activati
 // A QuickLine new line sold by an agent: the number comes from QuickLine (or is ported), and it is activated there.
 const qlSale = () => !external() && !!pkg()?.pool;
 const poolSale = () => qlSale() && !W.port;
+// The number comes with its SIM (picked from the dealer's own numbers): no SIM, no eSIM or porting switch.
+const ownSim = () => !external() && !!pkg()?.ownSim;
+// The customer's name is required where the activation asks for it (not for a number that comes with its SIM).
+const needsName = () => qlSale() && !ownSim();
 // Card recharges of art-topup cards for an "auto" company are carried out automatically within a minute,
 // and so are QuickLine new lines (also eSIM and ported numbers).
 const autoSale = () => company()?.activation === 'auto' && ((manualSale() && external() && !!pkg()?.auto) || qlSale());
@@ -63,8 +67,9 @@ function modeNote() {
 const step3Valid = () => {
   const numberOk = W.numberState === 'ok' && (!poolSale() || !!W.ql.numberId);
   if (qlSale() && W.port && !W.ql.oldCompany) return false;
-  if (qlSale() && !W.customerName.trim()) return false;
-  if (external() || W.esim) return numberOk;
+  if (needsName() && !W.customerName.trim()) return false;
+  // A number that comes with its SIM needs only the number.
+  if (external() || W.esim || ownSim()) return numberOk;
   return numberOk && W.sim.valid;
 };
 
@@ -182,21 +187,21 @@ function step3() {
   const fee = Number(S.settings.esimFee) || 0;
   return `<section class="card card-pad" style="display:grid;gap:18px">
     <h2 class="dot-title">إعدادات الشريحة ورقم الهاتف</h2>
-    <div class="switches">
+    ${ownSim() ? `<div class="msg info">${icon('sim')}<span>اختر الرقم من القائمة: شريحته جاهزة معه، ولا حاجة لمسح شريحة.</span></div>` : `<div class="switches">
       <label class="switch-row"><span class="tile sm cyan">${icon('qr')}</span><span class="grow"><b>eSIM</b><small>بدون شريحة — ${qlSale() ? 'رمز QR يصل تلقائياً' : 'يرسل المدير رمز QR'}${fee ? ` · رسوم التفعيل ${fmtMoney(fee)}` : ''}</small></span>
         <input class="switch" type="checkbox" id="wz-esim" ${W.esim ? 'checked' : ''}></label>
       <label class="switch-row"><span class="tile sm amber">${icon('repeat')}</span><span class="grow"><b>تحويل رقم</b><small>الزبون ينقل رقمه من شركة أخرى</small></span>
         <input class="switch" type="checkbox" id="wz-port" ${W.port ? 'checked' : ''}></label>
-    </div>
+    </div>`}
     ${(W.esim || W.port) && !qlSale() ? `<div class="msg warn">${icon('clock')}<span>يُرسَل الطلب إلى المدير لتنفيذه، ويبدأ احتساب مدة الرزمة من لحظة التنفيذ. يُسترد المبلغ كاملاً إن رُفض الطلب.</span></div>` : ''}
-    ${W.esim ? '' : `<div id="wz-sim-box">${simFieldHtml({ id: 'wz-sim', label: 'رقم الشريحة — امسحه بالكاميرا أو اكتبه', value: W.sim.iccid })}</div>`}
+    ${W.esim || ownSim() ? '' : `<div id="wz-sim-box">${simFieldHtml({ id: 'wz-sim', label: 'رقم الشريحة — امسحه بالكاميرا أو اكتبه', value: W.sim.iccid })}</div>`}
     ${poolSale() ? `<div class="field"><span class="label">رقم الهاتف — اختر من الأرقام المتاحة${W.esim ? ' (eSIM)' : ''}</span>${poolHtml()}</div>`
       : `<div class="field"><label for="wz-number">${W.port ? 'الرقم المراد تحويله' : 'رقم الهاتف'}</label>
       <input class="input ltr big" id="wz-number" inputmode="tel" autocomplete="off" placeholder="05X-XXX-XXXX" value="${esc(W.number)}">
       <div class="hint" id="wz-number-hint"></div></div>`}
     ${qlSale() && W.port ? `<div class="field"><label for="wz-oldco">الشركة التي يُحوَّل منها الرقم</label>
       <select class="input" id="wz-oldco"><option value="">اختر الشركة</option>${(W.ql.companies || []).map((c) => `<option value="${c.id}" ${String(c.id) === String(W.ql.oldCompany) ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select></div>` : ''}
-    <div class="field"><label for="wz-cname">اسم الزبون ${qlSale() ? '<span class="opt">(مطلوب — الاسم والعائلة)</span>' : '<span class="opt">(اختياري)</span>'}</label>
+    <div class="field"><label for="wz-cname">اسم الزبون ${needsName() ? '<span class="opt">(مطلوب — الاسم والعائلة)</span>' : '<span class="opt">(اختياري)</span>'}</label>
       <input class="input" id="wz-cname" value="${esc(W.customerName)}" autocomplete="off"></div>
     ${pkg()?.days ? `<div class="field"><span class="label">المدة</span><div class="msg info">${icon('cal')}<span>${pkg().days} يوماً — مدة ثابتة لهذه الرزمة</span></div></div>`
       : `<div class="field"><span class="label">المدة</span>
@@ -261,7 +266,7 @@ function rows() {
   if (isAdmin()) r.push(['الوكيل', agent() ? esc(agent().name) : unset]);
   r.push(['المشغّل', c ? esc(c.name) : unset]);
   r.push(['الرزمة', o ? `${esc(o.title)} <span class="pill campaign">حملة</span>` : p ? esc(`${p.companyName} ${p.name}`) : unset]);
-  if (!external()) r.push(['الشريحة', W.esim ? 'eSIM' : W.sim.valid ? `<span class="mono ltr">${fmtIccid(W.sim.iccid)}</span>` : unset]);
+  if (!external()) r.push(['الشريحة', ownSim() ? 'مع الرقم' : W.esim ? 'eSIM' : W.sim.valid ? `<span class="mono ltr">${fmtIccid(W.sim.iccid)}</span>` : unset]);
   r.push([W.port ? 'الرقم المحوَّل' : 'رقم الهاتف', W.numberState === 'ok' ? phone(normalizePhone(W.number)) : unset]);
   r.push(['مدة الخدمة', pkg()?.days ? `${pkg().days} يوماً` : monthsText(W.months)]);
   if (esimFee()) r.push(['رسوم تفعيل eSIM', fmtMoney(esimFee())]);
@@ -395,7 +400,7 @@ export default {
         api.get('/api/numbers/port-companies').then((list) => { W.ql.companies = list; this.rerenderSelf(); })
           .catch((err) => { W.error = err.message; this.rerenderSelf(); });
       }
-      if (!external() && !W.esim) {
+      if (!external() && !W.esim && !ownSim()) {
         bindSimField(root, {
           id: 'wz-sim', companyId: W.companyId,
           onChange: (s) => { W.sim = s; refreshSummary(); },
@@ -479,7 +484,7 @@ export default {
     'wz-next'(btn, e, ctx) { if (step3Valid()) { W.step = 4; ctx.rerender(); window.scrollTo({ top: 0, behavior: 'smooth' }); } },
     async 'wz-confirm'(btn, e, ctx) {
       W.error = '';
-      if (qlSale() && !W.customerName.trim()) {
+      if (needsName() && !W.customerName.trim()) {
         W.error = 'اكتب اسم الزبون — مطلوب لتفعيل هذا الخط';
         ctx.rerender();
         return;
@@ -491,7 +496,7 @@ export default {
       };
       if (poolSale()) body.qlNumberId = W.ql.numberId;
       if (qlSale() && W.port) body.qlOldCompany = W.ql.oldCompany;
-      if (!external() && !W.esim) Object.assign(body, W.sim.simId ? { simId: W.sim.simId } : { sim: W.sim.iccid });
+      if (!external() && !W.esim && !ownSim()) Object.assign(body, W.sim.simId ? { simId: W.sim.simId } : { sim: W.sim.iccid });
       if (isAdmin()) { body.agentId = W.agentId; if (W.unitPrice !== '') body.unitPrice = W.unitPrice; }
       try {
         W.result = await api.post('/api/lines', body);

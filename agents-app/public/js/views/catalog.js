@@ -12,8 +12,10 @@ const TABS = {
   card: { label: 'كروت الشحن', icon: 'card', color: 'green', supplier: 'art', kind: 'card', note: 'كروت وحزم ورصيد لرقم موجود. تظهر للوكيل في «زبون دفع مسبق» و«تمديد».' },
   qlcard: { label: 'تمديد QuickLine', short: 'التمديد', icon: 'refresh', color: 'green', supplier: 'ql', kind: 'card', note: 'تمديد خط موجود في QuickLine تحت وكالتك. يُنفَّذ تلقائياً. تظهر للوكيل في «تمديد».' },
   qlinvoice: { label: 'خطوط QuickLine', short: 'الخط الجديد', icon: 'sim', color: '', supplier: 'ql', kind: 'invoice', note: 'تفعيل خط جديد في QuickLine: رقم من أرقامهم المتاحة، eSIM، أو تحويل رقم. يُنفَّذ تلقائياً. تظهر للوكيل في «اشتراك فاتورة جديدة».' },
+  lycard: { label: 'تمديد ليان', short: 'التمديد', icon: 'refresh', color: 'green', supplier: 'ly', kind: 'card', note: 'تمديد رقم فعّال للوكالة في ليان. يُنفَّذ تلقائياً.' },
+  lyinvoice: { label: 'خطوط ليان', short: 'الخط الجديد', icon: 'sim', color: '', supplier: 'ly', kind: 'invoice', note: 'تفعيل رقم موقوف من أرقام الوكالة في ليان (مع شريحته). يُنفَّذ تلقائياً.' },
 };
-// What the manager sees: art-topup's two systems each in its own tab, and QuickLine's two together in one tab.
+// What the manager sees: art-topup's two systems each in its own tab, and each other supplier's two together in one.
 const VIEWS = {
   invoice: { systems: ['invoice'] },
   card: { systems: ['card'] },
@@ -21,16 +23,28 @@ const VIEWS = {
     label: 'QuickLine', icon: 'refresh', systems: ['qlcard', 'qlinvoice'],
     note: 'تمديد الخطوط الموجودة وتفعيل خطوط جديدة (شريحة، eSIM، تحويل رقم) — كلها تُنفَّذ تلقائياً.',
   },
+  ly: {
+    label: 'ليان', icon: 'refresh', systems: ['lycard', 'lyinvoice'],
+    note: 'تمديد أرقام الوكالة الفعّالة في ليان، وتفعيل أرقامها الموقوفة كخطوط جديدة — تُنفَّذ تلقائياً بعد فحص السعر.',
+  },
 };
-const viewKey = () => (VIEWS[V.tab] ? V.tab : /^ql/.test(V.tab) ? 'ql' : 'invoice');
+const viewKey = () => (VIEWS[V.tab] ? V.tab : /^ql/.test(V.tab) ? 'ql' : /^ly/.test(V.tab) ? 'ly' : 'invoice');
 // The tab a system's messages show in.
-const viewOf = (systemKey) => (/^ql/.test(systemKey) ? 'ql' : systemKey);
+const viewOf = (systemKey) => (/^ql/.test(systemKey) ? 'ql' : /^ly/.test(systemKey) ? 'ly' : systemKey);
+// Tabs that show one supplier's two systems together.
+const isSupplierView = (vk) => vk === 'ql' || vk === 'ly';
 const SUPPLIERS = {
   art: {
     name: 'art-topup', api: 'art', configured: () => S.settings.artConfigured,
     markup: (k) => (k === 'card' ? S.settings.artMarkupCard : S.settings.artMarkupInvoice) ?? 0,
     synced: (k) => (k === 'card' ? S.settings.artSyncedCard : S.settings.artSyncedInvoice),
     markupField: (k) => (k === 'card' ? 'artMarkupCard' : 'artMarkupInvoice'),
+  },
+  ly: {
+    name: 'ليان', api: 'layan', configured: () => S.settings.lyConfigured,
+    markup: (k) => (k === 'card' ? S.settings.lyMarkupCard : S.settings.lyMarkupInvoice) ?? 0,
+    synced: (k) => (k === 'card' ? S.settings.lySyncedCard : S.settings.lySyncedInvoice),
+    markupField: (k) => (k === 'card' ? 'lyMarkupCard' : 'lyMarkupInvoice'),
   },
   ql: {
     name: 'QuickLine', api: 'quickline', configured: () => S.settings.qlConfigured,
@@ -171,12 +185,12 @@ function systemBar(key) {
 }
 
 // QuickLine's tab: both systems' percentages, one sync for both, and each system's price changes to review.
-function qlBar() {
-  const sup = SUPPLIERS.ql;
-  const keys = VIEWS.ql.systems;
+function supplierBar(vk) {
+  const keys = VIEWS[vk].systems;
+  const sup = SUPPLIERS[TABS[keys[0]].supplier];
   const synced = keys.map((k) => sup.synced(TABS[k].kind));
   const last = synced.every(Boolean) ? Math.min(...synced) : null;
-  const msg = V.msg.ql;
+  const msg = V.msg[vk];
   const pending = keys.map((k) => [k, S.catalog.packages.filter((p) => inTab(p, TABS[k]) && p.artPending).length]).filter(([, n]) => n);
   return `<section class="card card-pad sys-bar">
     <div class="sys-row"><span class="tile sm green">${icon('percent')}</span>
@@ -184,9 +198,9 @@ function qlBar() {
         <small>سعر الوكيل = التكلفة + النسبة، ولكل نوع نسبته.</small></div>
       <div style="display:flex;gap:6px;flex-wrap:wrap">${keys.map((k) => `<button class="btn btn-sm" data-action="set-markup" data-tab="${k}">${icon('edit')}${TABS[k].short}</button>`).join('')}</div></div>
     <div class="sys-row"><span class="tile sm">${icon('refresh')}</span>
-      <div class="grow"><b>المزامنة من QuickLine</b><small>${last ? `آخر مزامنة ${relTime(last)}` : 'لم تتم بعد'} · التمديد والخطوط الجديدة معاً · تضيف الجديد ولا تغيّر أسعارك الحالية</small></div>
-      <button class="btn btn-sm" data-action="sync-ql" ${sup.configured() ? '' : 'disabled title="أدخل بيانات QuickLine في الإعدادات"'}>${icon('refresh')}مزامنة QuickLine</button></div>
-    ${pending.map(([k, n]) => `<div class="msg warn" style="align-items:center">${icon('alert')}<span class="grow"><b>${n} رزمة ${TABS[k].short} تغيّر سعرها في QuickLine</b> — لن تتغيّر أسعارك إلا بموافقتك.</span>
+      <div class="grow"><b>المزامنة من ${sup.name}</b><small>${last ? `آخر مزامنة ${relTime(last)}` : 'لم تتم بعد'} · التمديد والخطوط الجديدة معاً · تضيف الجديد ولا تغيّر أسعارك الحالية</small></div>
+      <button class="btn btn-sm" data-action="sync-ql" data-view="${vk}" ${sup.configured() ? '' : `disabled title="أدخل بيانات ${sup.name} في الإعدادات"`}>${icon('refresh')}مزامنة ${sup.name}</button></div>
+    ${pending.map(([k, n]) => `<div class="msg warn" style="align-items:center">${icon('alert')}<span class="grow"><b>${n} رزمة ${TABS[k].short} تغيّر سعرها في ${sup.name}</b> — لن تتغيّر أسعارك إلا بموافقتك.</span>
       <button class="btn btn-sm" data-action="pending" data-tab="${k}">مراجعة</button></div>`).join('')}
     ${msg ? `<div class="msg ${msg.error ? '' : 'info'}">${icon(msg.error ? 'alert' : 'checkCircle')}<span>${esc(msg.text)}</span></div>` : ''}
   </section>`;
@@ -287,6 +301,8 @@ function openPending(key, ctx) {
 const SOURCE_GROUPS = [
   ['QuickLine — خط جديد', (p) => p.supplier === 'ql' && p.kind === 'invoice'],
   ['QuickLine — تمديد', (p) => p.supplier === 'ql' && p.kind === 'card'],
+  ['ليان — خط جديد', (p) => p.supplier === 'ly' && p.kind === 'invoice'],
+  ['ليان — تمديد', (p) => p.supplier === 'ly' && p.kind === 'card'],
   ['art-topup — فواتير', (p) => p.supplier === 'art' && p.kind === 'invoice'],
   ['art-topup — كروت', (p) => p.supplier === 'art' && p.kind === 'card'],
   ['يدوية', (p) => !p.supplier],
@@ -295,7 +311,7 @@ const SOURCE_GROUPS = [
 function sourceCounts(companyId) {
   const pk = S.catalog.packages.filter((p) => p.companyId === companyId);
   const n = (test) => pk.filter(test).length;
-  return [['QuickLine', n((p) => p.supplier === 'ql')], ['art-topup', n((p) => p.supplier === 'art')], ['يدوية', n((p) => !p.supplier)]]
+  return [['QuickLine', n((p) => p.supplier === 'ql')], ['ليان', n((p) => p.supplier === 'ly')], ['art-topup', n((p) => p.supplier === 'art')], ['يدوية', n((p) => !p.supplier)]]
     .filter(([, k]) => k).map(([label, k]) => `${label} ${k}`).join(' · ');
 }
 function companyPackagesHtml(c, offers) {
@@ -362,7 +378,7 @@ function similarBanner() {
   const groups = openGroups();
   if (!groups.length) return '';
   const saving = groups.reduce((t, g) => t + g.saving, 0);
-  return `<div class="msg warn" style="align-items:center">${icon('coins')}<span class="grow"><b>${groups.length} خط جديد متوفّر عند art-topup وQuickLine معاً</b>
+  return `<div class="msg warn" style="align-items:center">${icon('coins')}<span class="grow"><b>${groups.length} خط جديد متوفّر عند أكثر من مورّد</b>
     — نفس الشركة ونفس الإنترنت والمدة، وأحدهما أرخص عليك${saving > 0 ? ` (توفير حتى ${fmtMoney(saving)} في الخط)` : ''}.</span>
     <button class="btn btn-sm" data-action="similar">مراجعة</button></div>`;
 }
@@ -468,14 +484,14 @@ export default {
     const v = VIEWS[vk];
     const t = v.label ? v : TABS[v.systems[0]];
     // QuickLine's packages come from its sync only; hand-typed packages go in art-topup's tabs.
-    const canAdd = vk !== 'ql';
+    const canAdd = !isSupplierView(vk);
     const term = V.q.trim().toLowerCase();
     const mine = packages.filter((p) => inView(p, v) && (!term || `${p.name} ${p.companyName} ${p.artCode}`.toLowerCase().includes(term)));
     const shown = mine.filter((p) => p.active).length;
     // Within a company: extensions first, then new lines.
     // Packages the supplier no longer lists go last.
     const byKind = (a, b) => (a.gone - b.gone) || (a.kind === b.kind ? 0 : a.kind === 'card' ? -1 : 1);
-    return `${tabs}${similarBanner()}${vk === 'ql' ? qlBar() : systemBar(v.systems[0])}<div class="page-head"><p><b>${t.label}:</b> ${t.note} ظاهرة للوكلاء ${shown} من ${mine.length}.</p>
+    return `${tabs}${similarBanner()}${isSupplierView(vk) ? supplierBar(vk) : systemBar(v.systems[0])}<div class="page-head"><p><b>${t.label}:</b> ${t.note} ظاهرة للوكلاء ${shown} من ${mine.length}.</p>
         ${canAdd ? `<button class="btn btn-primary" data-action="add-package">${icon('plus')}رزمة جديدة</button>` : ''}</div>
       <div class="search-box">${icon('search', 'i lead')}<input class="input" id="pkg-q" type="search" placeholder="ابحث باسم الرزمة أو الشركة أو رمز المورّد…" value="${esc(V.q)}" aria-label="بحث في الرزم"></div>
       ${companies.map((c) => {
@@ -484,7 +500,7 @@ export default {
         return `<section class="list"><div class="section-title"><h2 style="display:flex;align-items:center;gap:10px">${companyLogo(c, 'xs')}${esc(c.name)}</h2>
           ${canAdd ? `<button class="btn btn-sm btn-soft" data-action="add-package" data-company="${c.id}">${icon('plus')}رزمة</button>` : ''}</div>
           <div class="pkg-grid">${list.map(packageCardAdmin).join('')}</div></section>`;
-      }).join('') || empty(t.icon, term ? 'لا نتائج' : `لا توجد رزم في ${t.label}`, term ? '' : canAdd ? `أضفها يدوياً، أو اضغط «مزامنة ${t.label}» أعلى الصفحة.` : 'اضغط «مزامنة QuickLine» أعلى الصفحة.')}`;
+      }).join('') || empty(t.icon, term ? 'لا نتائج' : `لا توجد رزم في ${t.label}`, term ? '' : canAdd ? `أضفها يدوياً، أو اضغط «مزامنة ${t.label}» أعلى الصفحة.` : `اضغط «مزامنة ${t.label}» أعلى الصفحة.`)}`;
   },
   actions: {
     tab(btn, e, ctx) { V.tab = btn.dataset.tab; ctx.rerender(); },
@@ -501,22 +517,26 @@ export default {
     },
     'add-package': (btn) => openPackageForm(null, Number(btn.dataset.company) || undefined, TABS[VIEWS[viewKey()].systems[0]].kind),
     // Both QuickLine systems, one after the other, reported together.
+    // Both systems of a supplier (QuickLine or Layan), one after the other, reported together.
     async 'sync-ql'(btn, e, ctx) {
+      const vk = btn.dataset.view || 'ql';
+      const keys = VIEWS[vk].systems;
+      const sup = SUPPLIERS[TABS[keys[0]].supplier];
       btn.disabled = true;
-      btn.innerHTML = `${icon('clock')}جاري القراءة من QuickLine…`;
+      btn.innerHTML = `${icon('clock')}جاري القراءة من ${sup.name}…`;
       try {
         const parts = [];
         let pending = 0;
         let off = 0;
-        for (const k of VIEWS.ql.systems) {
-          const r = await api.post('/api/quickline/sync', { kind: TABS[k].kind });
+        for (const k of keys) {
+          const r = await api.post(`/api/${sup.api}/sync`, { kind: TABS[k].kind });
           parts.push(`${TABS[k].short}: ${r.total}، أُضيف ${r.added} بسعر التكلفة + ${r.markup}%`);
           pending += r.pending;
           off += r.switchedOff;
         }
-        V.msg.ql = { text: `من QuickLine — ${parts.join(' · ')}${off ? `، أُخفيت ${off} لم تعد موجودة` : ''}. أسعارك الحالية لم تتغيّر${pending ? `، و${pending} تغيّر سعرها بانتظار موافقتك` : ''}.` };
+        V.msg[vk] = { text: `من ${sup.name} — ${parts.join(' · ')}${off ? `، أُخفيت ${off} لم تعد موجودة` : ''}. أسعارك الحالية لم تتغيّر${pending ? `، و${pending} تغيّر سعرها بانتظار موافقتك` : ''}.` };
       } catch (err) {
-        V.msg.ql = { text: err.message, error: true };
+        V.msg[vk] = { text: err.message, error: true };
       }
       await refreshAll(ctx);
     },

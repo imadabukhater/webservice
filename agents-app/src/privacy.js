@@ -8,12 +8,13 @@
 function sourceOf(ref) {
   const r = String(ref || '');
   if (/^qln?:/.test(r)) return 'QuickLine';
+  if (/^lyn?:/.test(r)) return 'ليان';
   if (/^(ic|pb|pc|inv):/.test(r)) return 'art-topup';
   return 'يدوي';
 }
 
 // Free text for an agent, without any supplier's name.
-const NAMES = '(?:QuickLine|art-topup)';
+const NAMES = '(?:QuickLine|art-topup|Layan|LayanT|ليان)';
 function forAgent(text) {
   if (text === null || text === undefined) return text;
   return String(text)

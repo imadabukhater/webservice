@@ -308,6 +308,9 @@ function localNumber(n) {
 function supplierOfRef(ref) {
   const r = String(ref || '');
   if (/^(ic|pb|pc|inv):/.test(r)) return { supplier: 'art', qlPackage: null };
+  // Layan: its package id (a GUID) plays the part of QuickLine's package number.
+  const l = /^lyn?:([0-9a-f-]{36}):/i.exec(r);
+  if (l) return { supplier: 'ly', qlPackage: l[1] };
   const m = /^qln?:(\d+):/.exec(r);
   return m ? { supplier: 'ql', qlPackage: Number(m[1]) } : { supplier: '', qlPackage: null };
 }
@@ -319,9 +322,13 @@ function renewalProblem(lineRef, pkgRef) {
   const line = supplierOfRef(lineRef);
   const pkg = supplierOfRef(pkgRef);
   // Seen by agents: says what to do, never who activates the line.
-  if (/^qln:/.test(String(pkgRef || ''))) return 'هذه رزمة تفعيل خط جديد، وليست للتمديد';
-  if (line.supplier === 'ql' && !(pkg.supplier === 'ql' && pkg.qlPackage === line.qlPackage)) return 'لا يمكن تمديد هذا الخط بهذه الرزمة: اختر رزمة التمديد الخاصة به';
-  if (line.supplier === 'art' && pkg.supplier === 'ql') return 'لا يمكن تمديد هذا الخط بهذه الرزمة: اختر كرتاً آخر';
+  if (/^(qln|lyn):/.test(String(pkgRef || ''))) return 'هذه رزمة تفعيل خط جديد، وليست للتمديد';
+  // A QuickLine or Layan line is extended there, on its own package: only that package's extension fits.
+  if (['ql', 'ly'].includes(line.supplier) && !(pkg.supplier === line.supplier && pkg.qlPackage === line.qlPackage)) {
+    return 'لا يمكن تمديد هذا الخط بهذه الرزمة: اختر رزمة التمديد الخاصة به';
+  }
+  // A line from another supplier is not extended by QuickLine or Layan (a line typed by hand may be: an older customer).
+  if (line.supplier && line.supplier !== pkg.supplier && ['ql', 'ly'].includes(pkg.supplier)) return 'لا يمكن تمديد هذا الخط بهذه الرزمة: اختر كرتاً آخر';
   return '';
 }
 

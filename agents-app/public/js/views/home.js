@@ -67,6 +67,7 @@ export function healthHtml(h) {
   };
   supplier('QuickLine', h.quickline);
   supplier('art-topup', h.art);
+  supplier('ليان', h.layan);
   const b = h.backup;
   if (b.error) row('bad', 'النسخ الاحتياطي', esc(b.error), '#/settings');
   else if (b.lastAt) row(Date.now() - b.lastAt < 1.5 * DAY ? 'ok' : 'warn', 'النسخ الاحتياطي', `آخر نسخة ${relTime(b.lastAt)}`, '#/settings');

@@ -16,6 +16,7 @@ require('./src/routes/reports');
 require('./src/routes/messages');
 require('./src/routes/art');
 require('./src/routes/quickline');
+require('./src/routes/layan');
 require('./src/routes/invoices');
 require('./src/routes/health');
 require('./src/autoexec');
