@@ -61,7 +61,7 @@ export function healthHtml(h) {
     <span class="grow"><b>${label}</b><small>${text}</small></span>${icon('arrowL')}</a>`);
   const supplier = (name, x) => {
     if (!x) return;
-    if (x.error) return row('bad', name, `تعذّر الاتصال: ${esc(x.error)}`, '#/settings');
+    if (x.error) return row('bad', name, `تعذّر الاتصال: ${esc(x.error)}`, '#/settings?tab=suppliers');
     const synced = x.synced ? `آخر مزامنة ${relTime(x.synced)}` : 'لم تتم المزامنة بعد';
     row(x.synced && Date.now() - x.synced < 7 * DAY ? 'ok' : 'warn', name, `الرصيد ${x.balance === null ? '—' : money(x.balance)} · ${synced}`, '#/catalog');
   };

@@ -18,7 +18,10 @@ const TABS = [['general', 'عام', 'sliders'], ['suppliers', 'المورّدو�
 export default {
   admin: true,
   title: () => ({ title: 'الإعدادات', subtitle: 'اسم التطبيق، الرسوم، الدعم الفني والنسخ الاحتياطي' }),
-  async load() { S.settings = await api.get('/api/settings'); },
+  async load(ctx) {
+    if (TABS.some(([k]) => k === ctx?.query?.tab)) V.tab = ctx.query.tab;
+    S.settings = await api.get('/api/settings');
+  },
   render() {
     const s = S.settings;
     const tab = TABS.some(([k]) => k === V.tab) ? V.tab : 'general';

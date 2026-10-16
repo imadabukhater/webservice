@@ -53,6 +53,9 @@ const SUPPLIERS = {
     markupField: (k) => (k === 'card' ? 'qlMarkupCard' : 'qlMarkupInvoice'),
   },
 };
+// Not connected yet: a plain way to the supplier's account settings, instead of a button that does nothing.
+const setupLink = (sup) => `<a class="btn btn-sm btn-primary" href="#/settings?tab=suppliers">${icon('sliders')}أدخل بيانات ${sup.name}</a>`;
+
 const tabOf = (key) => TABS[key] || TABS.invoice;
 // The supplier a package came from, for the labels on its card and form.
 const supplierName = (p) => SUPPLIERS[p?.supplier]?.name || 'المورّد';
@@ -177,7 +180,7 @@ function systemBar(key) {
       <button class="btn btn-sm" data-action="set-markup" data-tab="${key}">${icon('edit')}تغيير</button></div>
     <div class="sys-row"><span class="tile sm">${icon('refresh')}</span>
       <div class="grow"><b>المزامنة من ${sup.name}</b><small>${synced ? `آخر مزامنة ${relTime(synced)}` : 'لم تتم بعد'} · تضيف الجديد ولا تغيّر أسعارك الحالية</small></div>
-      <button class="btn btn-sm" data-action="sync" data-tab="${key}" ${sup.configured() ? '' : `disabled title="أدخل بيانات ${sup.name} في الإعدادات"`}>${icon('refresh')}مزامنة ${t.label}</button></div>
+      ${sup.configured() ? `<button class="btn btn-sm" data-action="sync" data-tab="${key}">${icon('refresh')}مزامنة ${t.label}</button>` : setupLink(sup)}</div>
     ${pending ? `<div class="msg warn" style="align-items:center">${icon('alert')}<span class="grow"><b>${pending} رزمة تغيّر سعرها في ${sup.name}</b> — لن تتغيّر أسعارك إلا بموافقتك.</span>
       <button class="btn btn-sm" data-action="pending" data-tab="${key}">مراجعة</button></div>` : ''}
     ${msg ? `<div class="msg ${msg.error ? '' : 'info'}">${icon(msg.error ? 'alert' : 'checkCircle')}<span>${esc(msg.text)}</span></div>` : ''}
@@ -199,7 +202,7 @@ function supplierBar(vk) {
       <div style="display:flex;gap:6px;flex-wrap:wrap">${keys.map((k) => `<button class="btn btn-sm" data-action="set-markup" data-tab="${k}">${icon('edit')}${TABS[k].short}</button>`).join('')}</div></div>
     <div class="sys-row"><span class="tile sm">${icon('refresh')}</span>
       <div class="grow"><b>المزامنة من ${sup.name}</b><small>${last ? `آخر مزامنة ${relTime(last)}` : 'لم تتم بعد'} · التمديد والخطوط الجديدة معاً · تضيف الجديد ولا تغيّر أسعارك الحالية</small></div>
-      <button class="btn btn-sm" data-action="sync-ql" data-view="${vk}" ${sup.configured() ? '' : `disabled title="أدخل بيانات ${sup.name} في الإعدادات"`}>${icon('refresh')}مزامنة ${sup.name}</button></div>
+      ${sup.configured() ? `<button class="btn btn-sm" data-action="sync-ql" data-view="${vk}">${icon('refresh')}مزامنة ${sup.name}</button>` : setupLink(sup)}</div>
     ${pending.map(([k, n]) => `<div class="msg warn" style="align-items:center">${icon('alert')}<span class="grow"><b>${n} رزمة ${TABS[k].short} تغيّر سعرها في ${sup.name}</b> — لن تتغيّر أسعارك إلا بموافقتك.</span>
       <button class="btn btn-sm" data-action="pending" data-tab="${k}">مراجعة</button></div>`).join('')}
     ${msg ? `<div class="msg ${msg.error ? '' : 'info'}">${icon(msg.error ? 'alert' : 'checkCircle')}<span>${esc(msg.text)}</span></div>` : ''}
