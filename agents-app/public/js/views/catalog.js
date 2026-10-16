@@ -351,6 +351,70 @@ async function openCompanyPackages(c) {
   });
 }
 
+// ---------- the same new line from two suppliers: keep the cheaper one for the agents ----------
+// Groups the manager chose to keep as they are (this browser only), until their prices change.
+const IGNORED_KEY = 'agents-similar-ignored';
+const ignored = () => { try { return JSON.parse(localStorage.getItem(IGNORED_KEY) || '[]'); } catch { return []; } };
+const groupSig = (g) => `${g.key}|${g.packages.map((p) => `${p.id}:${p.cost}:${p.active ? 1 : 0}`).join(',')}`;
+const openGroups = () => (V.similar || []).filter((g) => !ignored().includes(groupSig(g)));
+
+function similarBanner() {
+  const groups = openGroups();
+  if (!groups.length) return '';
+  const saving = groups.reduce((t, g) => t + g.saving, 0);
+  return `<div class="msg warn" style="align-items:center">${icon('coins')}<span class="grow"><b>${groups.length} خط جديد متوفّر عند art-topup وQuickLine معاً</b>
+    — نفس الشركة ونفس الإنترنت والمدة، وأحدهما أرخص عليك${saving > 0 ? ` (توفير حتى ${fmtMoney(saving)} في الخط)` : ''}.</span>
+    <button class="btn btn-sm" data-action="similar">مراجعة</button></div>`;
+}
+
+function similarHtml() {
+  const groups = openGroups();
+  if (!groups.length) return empty('checkCircle', 'لا توجد خطوط متشابهة تحتاج قراراً', '');
+  return groups.map((g) => `<section class="card card-pad" style="display:grid;gap:8px;box-shadow:none;background:var(--surface-2)">
+    <b>${esc(g.companyName)} · ${fmtNum(g.dataGb)} جيجا · ${g.days} يوماً</b>
+    ${g.packages.map((p) => `<div class="item-top cp-row"><div class="grow"><b>${esc(p.name)}</b>
+      <div class="item-sub"><span>${p.source}</span><span>التكلفة ${money(p.cost)}</span><span>للوكيل ${money(p.price)}</span><span>${p.active ? 'ظاهرة للوكلاء' : 'مخفية'}</span></div></div>
+      ${p.id === g.cheapestId ? '<span class="pill s-active">الأرخص عليك</span>' : ''}</div>`).join('')}
+    <div class="btn-row"><button type="button" class="btn btn-primary btn-sm" data-sim-pick="${esc(g.key)}">${icon('check')}اعتمد الأرخص للوكلاء</button>
+      <button type="button" class="btn btn-ghost btn-sm" data-sim-ignore="${esc(g.key)}">تجاهل</button></div>
+    <small class="muted">«اعتمد الأرخص»: يُظهر الأرخص لكل الوكلاء ويُخفي الأخرى عنهم. تبقى كلها في القائمة عندك.</small>
+  </section>`).join('');
+}
+
+function openSimilar(ctx) {
+  let box;
+  const redraw = async () => {
+    [, V.similar] = await Promise.all([loadCatalog(true), api.get('/api/catalog/similar')]);
+    if (box?.isConnected) box.innerHTML = similarHtml();
+    ctx.rerender();
+  };
+  sheet({
+    title: 'خطوط متشابهة من مورّدَين',
+    subtitle: 'نفس الشركة ونفس الإنترنت والمدة: الأرخص عليك يربحك أكثر بنفس سعر الوكيل',
+    wide: true,
+    body: `<div id="sim-body" style="display:grid;gap:12px">${similarHtml()}</div>`,
+    onMount(form) {
+      box = form.querySelector('#sim-body');
+      box.addEventListener('click', async (e) => {
+        const b = e.target.closest('button');
+        const g = b && (V.similar || []).find((x) => x.key === (b.dataset.simPick || b.dataset.simIgnore));
+        if (!g) return;
+        b.disabled = true;
+        if (b.dataset.simIgnore) {
+          try { localStorage.setItem(IGNORED_KEY, JSON.stringify([...ignored(), groupSig(g)])); } catch { /* storage blocked */ }
+        } else {
+          for (const p of g.packages) {
+            const want = p.id === g.cheapestId;
+            if (p.active !== want) await api.put(`/api/packages/${p.id}`, { active: want });
+          }
+          toast('صار الأرخص هو الظاهر للوكلاء');
+        }
+        await redraw();
+      });
+    },
+  });
+}
+
 function packageCardAdmin(p) {
   return `<article class="pkg-card ${p.active ? '' : 'inactive'}" style="cursor:default">
     <div class="pkg-head"><span class="pkg-name">${esc(p.name)}</span>${p.supplier === 'ql' ? `<span class="pill ${p.kind === 'card' ? 's-active' : 'plain'}">${p.kind === 'card' ? 'تمديد' : 'خط جديد'}</span>` : ''}${p.active ? '' : p.gone ? `<span class="pill s-expiring" title="تعود تلقائياً عند أول مزامنة يظهر فيها">لم تعد عند ${supplierName(p)}</span>` : '<span class="pill">مخفية عن الوكلاء</span>'}${!p.price ? '<span class="pill s-expiring">حدد السعر</span>' : ''}${p.artPending ? `<span class="pill s-expiring">سعر ${supplierName(p)} الجديد: ${fmtMoney(p.artPrice)}</span>` : ''}</div>
@@ -370,7 +434,7 @@ function packageCardAdmin(p) {
 export default {
   admin: true,
   title: () => ({ title: 'الشركات والرزم', subtitle: 'الفواتير وكروت الشحن: الأسعار والأحجام وما يظهر للوكلاء' }),
-  async load() { [S.settings] = await Promise.all([api.get('/api/settings'), loadCatalog(true)]); },
+  async load() { [S.settings, , V.similar] = await Promise.all([api.get('/api/settings'), loadCatalog(true), api.get('/api/catalog/similar')]); },
   mount(root, ctx) {
     const box = root.querySelector('#pkg-q');
     box?.addEventListener('input', () => {
@@ -411,7 +475,7 @@ export default {
     // Within a company: extensions first, then new lines.
     // Packages the supplier no longer lists go last.
     const byKind = (a, b) => (a.gone - b.gone) || (a.kind === b.kind ? 0 : a.kind === 'card' ? -1 : 1);
-    return `${tabs}${vk === 'ql' ? qlBar() : systemBar(v.systems[0])}<div class="page-head"><p><b>${t.label}:</b> ${t.note} ظاهرة للوكلاء ${shown} من ${mine.length}.</p>
+    return `${tabs}${similarBanner()}${vk === 'ql' ? qlBar() : systemBar(v.systems[0])}<div class="page-head"><p><b>${t.label}:</b> ${t.note} ظاهرة للوكلاء ${shown} من ${mine.length}.</p>
         ${canAdd ? `<button class="btn btn-primary" data-action="add-package">${icon('plus')}رزمة جديدة</button>` : ''}</div>
       <div class="search-box">${icon('search', 'i lead')}<input class="input" id="pkg-q" type="search" placeholder="ابحث باسم الرزمة أو الشركة أو رمز المورّد…" value="${esc(V.q)}" aria-label="بحث في الرزم"></div>
       ${companies.map((c) => {
@@ -426,6 +490,7 @@ export default {
     tab(btn, e, ctx) { V.tab = btn.dataset.tab; ctx.rerender(); },
     'add-company': () => openCompanyForm(null),
     'edit-company': (btn) => openCompanyForm(S.catalog.companies.find((c) => c.id === Number(btn.dataset.id))),
+    similar: (btn, e, ctx) => openSimilar(ctx),
     'company-packages': (btn) => openCompanyPackages(S.catalog.companies.find((c) => c.id === Number(btn.dataset.id))),
     'delete-company'(btn) {
       const c = S.catalog.companies.find((x) => x.id === Number(btn.dataset.id));

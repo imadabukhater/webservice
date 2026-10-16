@@ -64,6 +64,38 @@ function catalogFor(user) {
 
 route('GET', '/api/catalog', ANY, ({ user }) => catalogFor(user));
 
+// The same new line on offer from two suppliers (same company, same data, same duration): the manager is told which
+// is cheaper to activate, and can keep that one for the agents. Only new lines compare: a recharge card (art-topup,
+// any prepaid number) and an extension (QuickLine, only its own lines) are not the same service.
+// A group is listed while acting on it saves something: a pricier one is on sale, or the cheapest is hidden.
+route('GET', '/api/catalog/similar', ADMIN, () => {
+  const rows = q(`SELECT p.id, p.name, p.cost, p.price, p.active, p.days, p.data_gb, p.art_card_id, p.company_id, c.name AS company_name
+                  FROM packages p JOIN companies c ON c.id = p.company_id
+                  WHERE p.kind = 'invoice' AND p.cost > 0 AND p.data_gb > 0 AND (p.art_card_id LIKE 'inv:%' OR p.art_card_id LIKE 'qln:%')`).all();
+  const groups = new Map();
+  for (const r of rows) {
+    const key = `${r.company_id}|${r.data_gb}|${r.days || 30}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(r);
+  }
+  const source = (ref) => (/^qln:/.test(ref) ? 'QuickLine' : 'art-topup');
+  const out = [];
+  for (const [key, list] of groups) {
+    if (new Set(list.map((r) => source(r.art_card_id))).size < 2) continue;
+    list.sort((a, b) => a.cost - b.cost);
+    const cheapest = list[0];
+    const pricierOnSale = list.filter((r) => r.active && r.cost > cheapest.cost);
+    if (!pricierOnSale.length && cheapest.active) continue;
+    out.push({
+      key, companyId: cheapest.company_id, companyName: cheapest.company_name, dataGb: cheapest.data_gb, days: cheapest.days || 30,
+      cheapestId: cheapest.id,
+      saving: round(Math.max(0, ...pricierOnSale.map((r) => r.cost)) - cheapest.cost),
+      packages: list.map((r) => ({ id: r.id, name: r.name, source: source(r.art_card_id), cost: round(r.cost), price: round(r.price), active: !!r.active })),
+    });
+  }
+  return out.sort((a, b) => b.saving - a.saving);
+});
+
 // ----- companies -----
 function companyFields(body, existing = {}) {
   const name = str(body.name ?? existing.name, 60);
