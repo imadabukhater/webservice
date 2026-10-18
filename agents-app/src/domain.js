@@ -28,10 +28,12 @@ function logOp(op) {
     round(op.cost), round(op.profit), op.detail || '', op.package || '', op.customerPrice ?? null).lastInsertRowid);
 }
 
+// An agent's history never names the supplier: neither who carried it out nor in the details (see privacy.js).
 const opView = (role) => (o) => ({
-  id: o.id, ts: o.ts, type: o.type, agentId: o.agent_id, agentName: o.agent_name, actorName: o.actor_name,
+  id: o.id, ts: o.ts, type: o.type, agentId: o.agent_id, agentName: o.agent_name,
+  actorName: role === 'admin' ? o.actor_name : require('./privacy').forAgent(o.actor_name),
   lineId: o.line_id, number: o.number, amount: round(o.amount), before: o.balance_before, after: o.balance_after,
-  detail: o.detail, package: o.package, customerPrice: o.customer_price,
+  detail: role === 'admin' ? o.detail : require('./privacy').forAgent(o.detail), package: o.package, customerPrice: o.customer_price,
   ...(role === 'admin' ? { cost: round(o.cost), profit: round(o.profit) } : {}),
 });
 
@@ -61,12 +63,26 @@ function notify({ userId = null, role = null, kind, title, body = '', link = '' 
 // ---------- pricing ----------
 const LIVE_OFFER = '(o.active = 1 AND (o.starts_at IS NULL OR o.starts_at <= ?) AND (o.ends_at IS NULL OR o.ends_at >= ?))';
 
+// The manager's pricing systems; each can have its own profit percentage for each agent.
+const SYSTEMS = ['invoice', 'card', 'qlinvoice', 'qlcard', 'lyinvoice', 'lycard'];
+const SYSTEM_SQL = `CASE WHEN p.art_card_id LIKE 'qln:%' THEN 'qlinvoice' WHEN p.art_card_id LIKE 'ql:%' THEN 'qlcard'
+  WHEN p.art_card_id LIKE 'lyn:%' THEN 'lyinvoice' WHEN p.art_card_id LIKE 'ly:%' THEN 'lycard'
+  WHEN p.kind = 'card' THEN 'card' ELSE 'invoice' END`;
+// An agent's price for a package: a price set for that package > the agent's percentage for its system, on the cost
+// (only when there is a cost) > the package's own price. The joins take the agent id twice.
+const AGENT_PRICE_JOINS = `LEFT JOIN agent_prices ap ON ap.package_id = p.id AND ap.agent_id = ?
+  LEFT JOIN agent_markups am ON am.agent_id = ? AND am.system = ${SYSTEM_SQL}`;
+const MARKUP_PRICE_SQL = 'CASE WHEN am.markup IS NOT NULL AND p.cost > 0 THEN ROUND(p.cost * (1 + am.markup / 100.0), 2) END';
+const AGENT_PRICE_SQL = `COALESCE(ap.price, ${MARKUP_PRICE_SQL}, p.price)`;
+
 function priceFor(agentId, packageId) {
-  const p = q(`SELECT p.*, c.name AS company_name, COALESCE(ap.price, p.price) AS agent_price
+  const p = q(`SELECT p.*, c.name AS company_name, ${AGENT_PRICE_SQL} AS agent_price
                FROM packages p JOIN companies c ON c.id = p.company_id
-               LEFT JOIN agent_prices ap ON ap.package_id = p.id AND ap.agent_id = ?
-               WHERE p.id = ?`).get(agentId, Number(packageId));
-  if (!p || !p.active) fail(404, 'الباقة غير متوفرة');
+               ${AGENT_PRICE_JOINS}
+               WHERE p.id = ?`).get(agentId, agentId, Number(packageId));
+  if (!p || !p.active) fail(404, 'الرزمة غير متوفرة');
+  // Hidden from this agent by the manager: not on sale to them, whatever screen it comes from.
+  if (q('SELECT 1 FROM agent_hidden WHERE agent_id = ? AND package_id = ?').get(agentId, p.id)) fail(404, 'هذه الرزمة غير متاحة لك');
   return p;
 }
 
@@ -83,7 +99,7 @@ function quote(agentId, { packageId, offerId }) {
     const pkg = priceFor(agentId, offer.package_id);
     return { pkg, offer, unit: round(offer.offer_price ?? pkg.agent_price) };
   }
-  if (!packageId) fail(400, 'اختر الباقة');
+  if (!packageId) fail(400, 'اختر الرزمة');
   const pkg = priceFor(agentId, packageId);
   return { pkg, offer: null, unit: round(pkg.agent_price) };
 }
@@ -155,7 +171,8 @@ function markSimUsed(stockId, lineId) {
 // ---------- lines ----------
 const LINE_SELECT = `SELECT l.id, l.number, l.sim, l.company_id, l.package_id, l.package_label, l.agent_id, l.kind, l.esim, l.port, l.direct,
   l.months, l.price, l.cost, l.offer_id, l.status, l.customer_name, l.customer_price, l.note, l.esim_code, (l.esim_qr != '') AS has_qr,
-  l.activated_at, l.expires_at, l.updated_at, u.name AS agent_name, c.name AS company_name, c.color AS company_color
+  l.activated_at, l.expires_at, l.updated_at, u.name AS agent_name, c.name AS company_name, c.color AS company_color,
+  (SELECT art_card_id FROM packages WHERE id = l.package_id) AS package_ref
   FROM lines l JOIN users u ON u.id = l.agent_id LEFT JOIN companies c ON c.id = l.company_id`;
 
 // Display state: active lines past their end date are "expired", close to it "expiring".
@@ -177,9 +194,11 @@ function lineView(l, role, warnDays) {
     ...(admin ? { cost: round(l.cost) } : {}),
     status: l.status, state: lineState(l, warnDays),
     customerName: l.customer_name, customerPrice: l.customer_price === null ? null : round(l.customer_price),
-    note: l.note, esimCode: l.esim_code, hasQr: !!l.has_qr,
+    note: admin ? l.note : require('./privacy').forAgent(l.note), esimCode: l.esim_code, hasQr: !!l.has_qr,
     activatedAt: l.activated_at, expiresAt: l.expires_at,
     daysLeft: l.expires_at ? Math.ceil((l.expires_at - now()) / 864e5) : null, updatedAt: l.updated_at,
+    // Who activates the line (the supplier) is the manager's only.
+    ...(admin ? { ...require('./quickline').supplierOfRef(l.package_ref), source: require('./privacy').sourceOf(l.package_ref) } : {}),
   };
 }
 
@@ -193,5 +212,5 @@ module.exports = {
   getUser, getAgent, publicUser, logOp, opView, logLineOp, changeBalance, notify,
   LIVE_OFFER, priceFor, liveOffer, quote, packageLabel, directCompany, openSaleTask, events,
   prefixesOf, companyForIccid, learnPrefix, takeSim, markSimUsed,
-  LINE_SELECT, lineState, lineView, getLine,
+  LINE_SELECT, lineState, lineView, getLine, SYSTEMS, SYSTEM_SQL, AGENT_PRICE_JOINS, AGENT_PRICE_SQL, MARKUP_PRICE_SQL,
 };

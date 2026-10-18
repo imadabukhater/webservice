@@ -63,6 +63,9 @@ function addMonths(ts, months) {
   return d.getTime();
 }
 
+// End of a period: a fixed number of days (packages with a set duration) or calendar months.
+const periodEnd = (ts, months, days) => (days ? ts + days * 864e5 : addMonths(ts, months));
+
 // Day boundaries in the viewer's time zone. tzOffset is Date#getTimezoneOffset() (minutes, UTC - local).
 function dayStart(ts, tzOffset) {
   const shift = tzOffset * 60000;
@@ -99,6 +102,6 @@ function arCount(n, { one, two, few, many }) {
 module.exports = {
   arCount,
   ApiError, fail, now, round, str, isBlank, num, optNum, int, dateOrNull,
-  normalizePhone, validPhone, normalizeIccid, validIccid, addMonths,
+  normalizePhone, validPhone, normalizeIccid, validIccid, addMonths, periodEnd,
   dayStart, monthStart, tzFrom, imageOrEmpty,
 };

@@ -140,18 +140,20 @@ export const STATE = {
 export const statePill = (state) => `<span class="pill s-${state}">${STATE[state] || state}</span>`;
 export const TASK_STATUS = { open: 'بانتظار التنفيذ', done: 'تم', rejected: 'مرفوض' };
 export const TASK_TYPE = {
-  topup: 'طلب شحن رصيد', port: 'تحويل رقم', esim: 'تفعيل eSIM', general: 'طلب عام', activate: 'تفعيل خط', recharge: 'شحن كرت', renew: 'تمديد رزمة',
+  topup: 'طلب شحن رصيد', port: 'تحويل رقم', esim: 'تفعيل eSIM', general: 'طلب عام', activate: 'تفعيل خط', recharge: 'زبون دفع مسبق', renew: 'تمديد رزمة',
 };
 export const OP = {
   activate: 'تفعيل خط', renew: 'تمديد', topup: 'شحن رصيد', deduct: 'خصم رصيد', transfer_in: 'رصيد وارد', transfer_out: 'رصيد صادر',
   freeze: 'تجميد', unfreeze: 'إلغاء تجميد', disconnect: 'فصل', swap_sim: 'تبديل شريحة', line_move: 'نقل رقم', line_delete: 'حذف خط', line_edit: 'تعديل خط',
   refund: 'استرجاع', port_done: 'تحويل رقم', esim_done: 'تفعيل eSIM', activate_done: 'تنفيذ تفعيل', renew_done: 'تنفيذ تمديد',
+  supplier_sync: 'عند المورّد',
 };
 export const OP_ICON = {
   activate: ['plus', 'blue'], renew: ['repeat', 'green'], topup: ['wallet', 'green'], deduct: ['wallet', 'red'],
   transfer_in: ['swap', 'green'], transfer_out: ['swap', 'red'], freeze: ['snow', 'violet'], unfreeze: ['play', 'green'],
   disconnect: ['power', 'red'], swap_sim: ['sim', 'amber'], line_move: ['swap', 'amber'], line_delete: ['trash', 'red'], line_edit: ['edit', 'amber'],
   refund: ['undo', 'green'], port_done: ['repeat', 'cyan'], esim_done: ['qr', 'cyan'], activate_done: ['checkCircle', 'cyan'], renew_done: ['checkCircle', 'cyan'],
+  supplier_sync: ['refresh', 'cyan'],
 };
 
 // Uploaded logo when there is one; otherwise the name as a wordmark (large tiles) or its first letter (small badges).

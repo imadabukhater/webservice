@@ -22,15 +22,15 @@ const tileCls = (c) => (c === 'blue' ? '' : c);
 function quickActions() {
   if (isAdmin()) {
     return `<div class="quick">
-      <a class="btn btn-primary" href="#/new">${icon('userPlus')}مشترك جديد لوكيل</a>
+      <a class="btn btn-primary" href="#/new">${icon('userPlus')}اشتراك فاتورة جديدة لوكيل</a>
       <button class="btn" data-action="add-agent">${icon('users')}إضافة وكيل</button>
       <button class="btn" data-action="agent-balance">${icon('wallet')}شحن رصيد وكيل</button>
-      <a class="btn" href="#/new?type=external">${icon('card')}شحن كرت لوكيل</a>
+      <a class="btn" href="#/new?type=external">${icon('card')}زبون دفع مسبق لوكيل</a>
     </div>`;
   }
   return `<div class="quick">
-    <a class="btn btn-primary" href="#/new">${icon('userPlus')}مشترك جديد</a>
-    <a class="btn" href="#/new?type=external">${icon('card')}شحن كرت</a>
+    <a class="btn btn-primary" href="#/new">${icon('userPlus')}اشتراك فاتورة جديدة</a>
+    <a class="btn" href="#/new?type=external">${icon('card')}زبون دفع مسبق</a>
     <a class="btn" href="#/renew">${icon('repeat')}زبون قائم</a>
     <a class="btn" href="#/messages">${icon('msg')}مراسلة المدير</a>
   </div>`;
@@ -53,12 +53,37 @@ function stats() {
   </div>`;
 }
 
+// The manager's "is everything running?" card: suppliers, backups, and what waits.
+const DAY = 864e5;
+export function healthHtml(h) {
+  const rows = [];
+  const row = (state, label, text, href) => rows.push(`<a class="health-row" href="${href}"><span class="pill ${{ ok: 's-active', warn: 's-expiring', bad: 's-expired' }[state]}">${{ ok: 'سليم', warn: 'انتبه', bad: 'مشكلة' }[state]}</span>
+    <span class="grow"><b>${label}</b><small>${text}</small></span>${icon('arrowL')}</a>`);
+  const supplier = (name, x) => {
+    if (!x) return;
+    if (x.error) return row('bad', name, `تعذّر الاتصال: ${esc(x.error)}`, '#/settings?tab=suppliers');
+    const synced = x.synced ? `آخر مزامنة ${relTime(x.synced)}` : 'لم تتم المزامنة بعد';
+    row(x.synced && Date.now() - x.synced < 7 * DAY ? 'ok' : 'warn', name, `الرصيد ${x.balance === null ? '—' : money(x.balance)} · ${synced}`, '#/catalog');
+  };
+  supplier('QuickLine', h.quickline);
+  supplier('art-topup', h.art);
+  supplier('ليان', h.layan);
+  const b = h.backup;
+  if (b.error) row('bad', 'النسخ الاحتياطي', esc(b.error), '#/settings');
+  else if (b.lastAt) row(Date.now() - b.lastAt < 1.5 * DAY ? 'ok' : 'warn', 'النسخ الاحتياطي', `آخر نسخة ${relTime(b.lastAt)}`, '#/settings');
+  else row('warn', 'النسخ الاحتياطي', b.bucket ? 'لم تُحفظ نسخة بعد' : 'النسخ السحابي غير مفعّل', '#/settings');
+  row(h.tasks.attention ? 'warn' : 'ok', 'الطلبات', `${h.tasks.attention ? `${h.tasks.attention} تحتاج تدخلك` : 'لا شيء ينتظرك'}${h.tasks.running ? ` · ${h.tasks.running} تُنفَّذ تلقائياً` : ''}`, '#/tasks');
+  if (h.qlPending) row('warn', 'تغييرات بانتظار QuickLine', `${h.qlPending} خط (فصل أو تجميد أو شريحة) لم تُنفَّذ هناك بعد`, '#/subscribers');
+  return `<h2 class="dot-title">حالة النظام</h2><div class="health">${rows.join('')}</div>`;
+}
+
 function kpis() {
   const d = D.dash;
   const k = (label, value) => `<div class="kpi"><span>${label}</span><b>${value}</b></div>`;
   if (isAdmin()) {
     return `<div class="kpis">${k('أرباح اليوم', money(d.today.profit))}${k('أرباح هذا الشهر', money(d.month.profit))}
-      ${k('مجموع أرصدة الوكلاء', money(d.balances))}${k('ديون الوكلاء', money(d.debt))}</div>`;
+      ${k('مجموع أرصدة الوكلاء', money(d.balances))}${k('ديون الوكلاء', money(d.debt))}
+      ${k(`حصة المطور هذا الشهر (${d.devFeePercent}% من المبيعات)`, money(d.month.devFee))}${k('صافي ربحك هذا الشهر', money(d.month.net))}</div>`;
   }
   return `<div class="kpis">${k('الرصيد المتاح', money(d.available))}${k('مبيعات اليوم', `${d.today.activations + d.today.renewals}`)}
     ${k('ربحك هذا الشهر', money(d.month.margin))}${k('مبيعات هذا الشهر', `${d.month.activations + d.month.renewals}`)}</div>`;
@@ -116,6 +141,7 @@ export default {
         <input class="input" id="global-q" type="search" placeholder="${isAdmin() ? 'ابحث برقم، اسم زبون، شريحة أو وكيل…' : 'ابحث برقم، اسم زبون أو رقم شريحة…'}" autocomplete="off" aria-label="بحث">
         <div class="search-results" id="search-results" hidden></div></div>
       ${quickActions()}
+      ${isAdmin() ? '<section class="card card-pad" id="health"><h2 class="dot-title">حالة النظام</h2><p class="muted small">جاري الفحص…</p></section>' : ''}
       ${stats()}
       ${kpis()}
       ${chartCard()}
@@ -124,6 +150,8 @@ export default {
       ${opsCard()}`;
   },
   mount(root) {
+    const health = root.querySelector('#health');
+    if (health) api.get('/api/health').then((h) => { if (health.isConnected) health.innerHTML = healthHtml(h); }).catch(() => { health.hidden = true; });
     const chart = root.querySelector('#activity-chart');
     const draw = () => drawActivity(chart, D.activity.days, D.series, SERIES);
     draw();

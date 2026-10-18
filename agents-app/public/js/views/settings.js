@@ -1,13 +1,32 @@
-import { S, api, icon, esc, field, toast, downloadBlob, changed, loadCatalog } from '../core.js';
+import { S, api, icon, esc, field, toast, downloadBlob, changed, relTime, fmtDateTime } from '../core.js';
+
+// The daily copy in Google Cloud Storage: when the last one was made, and why the last attempt failed if it did.
+function cloudBackupHtml(s) {
+  if (!s.backupBucket && !s.backupError) {
+    return `<p class="muted small">يحفظ السيرفر نسخة كاملة كل يوم في Google Cloud Storage. لم يُضبط مكان الحفظ على هذا السيرفر بعد.</p>`;
+  }
+  const kb = s.backupLastBytes ? ` · ${Math.max(1, Math.round(s.backupLastBytes / 1024))} KB` : '';
+  return `<p class="muted small">نسخة كاملة كل يوم في <span class="ltr mono">${esc(s.backupBucket)}</span>، تُحفظ 30 يوماً ولا يستطيع السيرفر حذفها.</p>
+    ${s.backupLastAt ? `<div class="msg info">${icon('checkCircle')}<span>آخر نسخة ${relTime(s.backupLastAt)} (${fmtDateTime(s.backupLastAt)})${kb}</span></div>` : ''}
+    ${s.backupError ? `<div class="msg">${icon('alert')}<span>فشلت آخر محاولة: ${esc(s.backupError)}</span></div>` : ''}`;
+}
+
+// Three tabs, so each part is short: the app itself, the suppliers' accounts, and the backups.
+const V = { tab: 'general' };
+const TABS = [['general', 'عام', 'sliders'], ['suppliers', 'المورّدون', 'refresh'], ['backup', 'النسخ الاحتياطي', 'download']];
 
 export default {
   admin: true,
   title: () => ({ title: 'الإعدادات', subtitle: 'اسم التطبيق، الرسوم، الدعم الفني والنسخ الاحتياطي' }),
-  async load() { S.settings = await api.get('/api/settings'); },
+  async load(ctx) {
+    if (TABS.some(([k]) => k === ctx?.query?.tab)) V.tab = ctx.query.tab;
+    S.settings = await api.get('/api/settings');
+  },
   render() {
     const s = S.settings;
-    return `
-      <div class="two-col">
+    const tab = TABS.some(([k]) => k === V.tab) ? V.tab : 'general';
+    const parts = {
+      general: `
         <form class="card card-pad form" id="settings-form" novalidate>
           <h2 class="dot-title">عام</h2>
           <div class="field"><label for="st-name">اسم التطبيق</label><input class="input" id="st-name" name="appName" value="${esc(s.appName)}">
@@ -27,6 +46,12 @@ export default {
           <div id="settings-msg"></div>
           <button class="btn btn-primary" type="submit">${icon('check')}حفظ الإعدادات</button>
         </form>
+        <section class="card card-pad form">
+          <h2 class="dot-title">تثبيت التطبيق على الهاتف</h2>
+          <p class="muted">افتح الرابط في Chrome على أندرويد أو Safari على آيفون، ثم اختر «إضافة إلى الشاشة الرئيسية». يعمل التطبيق بعدها بأيقونته وبملء الشاشة.</p>
+        </section>
+`,
+      suppliers: `
         <form class="card card-pad form" id="art-form" novalidate autocomplete="off">
           <h2 class="dot-title">الشحن التلقائي عبر art-topup</h2>
           <p class="muted small">يشحن السيرفر كروت الشركات المضبوطة على «تلقائي» من حسابك في art-topup، ويُكمل الطلب بنفسه. إن تعذّر، يبقى الطلب عندك.</p>
@@ -34,39 +59,100 @@ export default {
             <div class="field"><label for="art-user">اسم المستخدم في art-topup</label><input class="input ltr" id="art-user" name="artUser" value="${esc(s.artUser || '')}" autocomplete="off"></div>
             <div class="field"><label for="art-pass">كلمة المرور</label><input class="input ltr" id="art-pass" name="artPass" type="password" autocomplete="new-password" placeholder="${s.artConfigured ? 'محفوظة — اتركها فارغة للإبقاء' : ''}"></div>
           </div>
-          <div class="field"><label for="art-markup">زيادة سعر الوكيل على سعر art-topup (%)</label><input class="input ltr" id="art-markup" name="artMarkup" type="number" min="0" max="200" step="0.5" value="${s.artMarkup}">
-            <span class="hint">تُطبَّق عند «مزامنة الكروت»، وتستبدل أسعار كروت art-topup في «الشركات والرزم».</span></div>
+          <div class="msg info">${icon('info')}<span>المزامنة ونسبة الربح منفصلتان لكل نظام: افتح «الشركات والرزم» ← تبويب «كروت الشحن» أو «الفواتير».</span></div>
           <div id="art-msg"></div>
           <div class="btn-row">
             <button class="btn btn-primary" type="submit">${icon('check')}حفظ</button>
             <button class="btn" type="button" data-action="art-check" ${s.artConfigured ? '' : 'disabled'}>${icon('wallet')}اختبار الاتصال والرصيد</button>
-            <button class="btn" type="button" data-action="art-sync" ${s.artConfigured ? '' : 'disabled'}>${icon('refresh')}مزامنة الكروت والأسعار</button>
+            <a class="btn" href="#/catalog">${icon('box')}الشركات والرزم</a>
           </div>
         </form>
+        <form class="card card-pad form" id="ql-form" novalidate autocomplete="off">
+          <h2 class="dot-title">البيع التلقائي عبر QuickLine</h2>
+          <p class="muted small">يمدّد السيرفر خطوط الشركات المضبوطة على «تلقائي» من حسابك في QuickLine، ويُكمل الطلب بنفسه. ويفعّل الخطوط الجديدة هناك (رقم من أرقامهم المتاحة، eSIM، أو تحويل رقم). التمديد يحتاج أن يكون الرقم موجوداً في QuickLine تحت وكالتك.</p>
+          <div class="row2 stack-xs">
+            <div class="field"><label for="ql-user">البريد في QuickLine</label><input class="input ltr" id="ql-user" name="qlUser" type="email" value="${esc(s.qlUser || '')}" autocomplete="off"></div>
+            <div class="field"><label for="ql-pass">كلمة المرور</label><input class="input ltr" id="ql-pass" name="qlPass" type="password" autocomplete="new-password" placeholder="${s.qlConfigured ? 'محفوظة — اتركها فارغة للإبقاء' : ''}"></div>
+          </div>
+          <div class="msg info">${icon('info')}<span>المزامنة ونسبة الربح منفصلتان لكل نظام: افتح «الشركات والرزم» ← تبويب «QuickLine».</span></div>
+          <div id="ql-msg"></div>
+          <div class="btn-row">
+            <button class="btn btn-primary" type="submit">${icon('check')}حفظ</button>
+            <button class="btn" type="button" data-action="ql-check" ${s.qlConfigured ? '' : 'disabled'}>${icon('wallet')}اختبار الاتصال والرصيد</button>
+            <a class="btn" href="#/catalog">${icon('box')}الشركات والرزم</a>
+          </div>
+        </form>
+        <form class="card card-pad form" id="ly-form" novalidate autocomplete="off">
+          <h2 class="dot-title">البيع التلقائي عبر ليان</h2>
+          <p class="muted small">يمدّد السيرفر أرقام الوكالة الفعّالة في ليان، ويفعّل أرقامها الموقوفة كخطوط جديدة، بعد أن يتأكد من السعر. يدخل إلى ليان بنفسه، ويصنع رمز المصادقة من المفتاح السري.</p>
+          <div class="row2 stack-xs">
+            <div class="field"><label for="ly-user">اسم المستخدم في ليان</label><input class="input ltr" id="ly-user" name="lyUser" value="${esc(s.lyUser || '')}" autocomplete="off"></div>
+            <div class="field"><label for="ly-pass">كلمة المرور</label><input class="input ltr" id="ly-pass" name="lyPass" type="password" autocomplete="new-password" placeholder="${s.lyConfigured ? 'محفوظة — اتركها فارغة للإبقاء' : ''}"></div>
+          </div>
+          <div class="field"><label for="ly-secret">المفتاح السري للمصادقة (Authenticator)</label>
+            <input class="input ltr" id="ly-secret" name="lySecret" type="password" autocomplete="off" placeholder="${s.lyHasSecret ? 'محفوظ — اتركه فارغاً للإبقاء' : 'المفتاح تحت رمز QR، أو رابط otpauth'}">
+            <span class="hint">المفتاح المكتوب تحت رمز QR عند تفعيل المصادقة في ليان (أو رابط التصدير من تطبيق Google Authenticator). يبقى على السيرفر ولا يظهر بعد حفظه.</span></div>
+          <div id="ly-msg"></div>
+          <div class="btn-row">
+            <button class="btn btn-primary" type="submit">${icon('check')}حفظ</button>
+            <button class="btn" type="button" data-action="ly-check" ${s.lyConfigured ? '' : 'disabled'}>${icon('wallet')}اختبار الاتصال والرصيد</button>
+            <a class="btn" href="#/catalog">${icon('box')}الشركات والرزم</a>
+          </div>
+        </form>
+`,
+      backup: `
         <section class="card card-pad form">
           <h2 class="dot-title">النسخ الاحتياطي</h2>
           <p class="muted">كل البيانات (الوكلاء، الأرصدة، الأرقام، السجل) في ملف واحد. نزّل نسخة بانتظام واحفظها في مكان آمن.</p>
           <button class="btn" data-action="backup">${icon('download')}تنزيل نسخة احتياطية</button>
           <div class="divider"></div>
-          <h2 class="dot-title">تثبيت التطبيق على الهاتف</h2>
-          <p class="muted">افتح الرابط في Chrome على أندرويد أو Safari على آيفون، ثم اختر «إضافة إلى الشاشة الرئيسية». يعمل التطبيق بعدها بأيقونته وبملء الشاشة.</p>
+          <h2 class="dot-title">النسخ السحابي التلقائي</h2>
+          <div id="cloud-backup">${cloudBackupHtml(s)}</div>
+          <button class="btn" data-action="cloud-backup" ${s.backupBucket ? '' : 'disabled title="لم يُحدَّد مكان النسخ بعد"'}>${icon('refresh')}نسخة سحابية الآن</button>
         </section>
-      </div>`;
+`,
+    };
+    return `<div class="segmented">${TABS.map(([k, label, ic]) => `<button data-action="tab" data-tab="${k}" aria-pressed="${tab === k}">${icon(ic)}${label}</button>`).join('')}</div>
+      <div class="two-col">${parts[tab]}</div>`;
   },
   mount(root) {
-    root.querySelector('#art-form').addEventListener('submit', async (e) => {
+    root.querySelector('#art-form')?.addEventListener('submit', async (e) => {
       e.preventDefault();
       const form = e.currentTarget;
       const msg = root.querySelector('#art-msg');
       try {
-        S.settings = await api.put('/api/settings', { artUser: field(form, 'artUser'), artPass: form.elements.artPass.value, artMarkup: field(form, 'artMarkup') });
+        S.settings = await api.put('/api/settings', { artUser: field(form, 'artUser'), artPass: form.elements.artPass.value });
         toast('تم حفظ إعدادات art-topup');
         changed();
       } catch (err) {
         msg.innerHTML = `<div class="msg">${icon('alert')}<span>${esc(err.message)}</span></div>`;
       }
     });
-    root.querySelector('#settings-form').addEventListener('submit', async (e) => {
+    root.querySelector('#ly-form')?.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const form = e.currentTarget;
+      const msg = root.querySelector('#ly-msg');
+      try {
+        S.settings = await api.put('/api/settings', { lyUser: field(form, 'lyUser'), lyPass: form.elements.lyPass.value, lySecret: form.elements.lySecret.value });
+        toast('تم حفظ إعدادات ليان');
+        changed();
+      } catch (err) {
+        msg.innerHTML = `<div class="msg">${icon('alert')}<span>${esc(err.message)}</span></div>`;
+      }
+    });
+    root.querySelector('#ql-form')?.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const form = e.currentTarget;
+      const msg = root.querySelector('#ql-msg');
+      try {
+        S.settings = await api.put('/api/settings', { qlUser: field(form, 'qlUser'), qlPass: form.elements.qlPass.value });
+        toast('تم حفظ إعدادات QuickLine');
+        changed();
+      } catch (err) {
+        msg.innerHTML = `<div class="msg">${icon('alert')}<span>${esc(err.message)}</span></div>`;
+      }
+    });
+    root.querySelector('#settings-form')?.addEventListener('submit', async (e) => {
       e.preventDefault();
       const form = e.currentTarget;
       const msg = root.querySelector('#settings-msg');
@@ -85,6 +171,7 @@ export default {
     });
   },
   actions: {
+    tab(btn, e, ctx) { V.tab = btn.dataset.tab; ctx.rerender(); },
     async 'art-check'(btn) {
       const box = document.getElementById('art-msg');
       btn.disabled = true;
@@ -95,17 +182,37 @@ export default {
         box.innerHTML = `<div class="msg">${icon('alert')}<span>${esc(err.message)}</span></div>`;
       } finally { btn.disabled = false; }
     },
-    async 'art-sync'(btn) {
-      const box = document.getElementById('art-msg');
+    async 'ql-check'(btn) {
+      const box = document.getElementById('ql-msg');
       btn.disabled = true;
-      box.innerHTML = `<div class="msg info">${icon('clock')}<span>جاري قراءة الكروت من art-topup…</span></div>`;
       try {
-        const r = await api.post('/api/art/sync');
-        await loadCatalog(true);
-        box.innerHTML = `<div class="msg info">${icon('checkCircle')}<span>${r.cards} كرتاً: أُضيف ${r.added}، حُدّث ${r.updated}${r.switchedOff ? `، أُوقف ${r.switchedOff}` : ''}. سعر الوكيل = سعر art-topup + ${r.markup}%. الشركات صارت «تلقائي».${r.hidden ? ` و${r.hidden} حزمة لم تظهر لأن رصيد art-topup أقل من سعرها: أعد المزامنة بعد شحنه.` : ''}</span></div>`;
+        const r = await api.post('/api/quickline/check');
+        box.innerHTML = `<div class="msg info">${icon('checkCircle')}<span>تم الاتصال بـ QuickLine باسم ${esc(r.name || '')}. الرصيد: ${r.credit === null ? 'غير معروف' : `${r.credit} ₪`} · خطوط فعّالة: ${r.active ?? '—'} · مدفوعات مفتوحة: ${r.openPayments ?? '—'} ₪</span></div>`;
       } catch (err) {
         box.innerHTML = `<div class="msg">${icon('alert')}<span>${esc(err.message)}</span></div>`;
       } finally { btn.disabled = false; }
+    },
+    async 'ly-check'(btn) {
+      const box = document.getElementById('ly-msg');
+      btn.disabled = true;
+      try {
+        const r = await api.post('/api/layan/check');
+        box.innerHTML = `<div class="msg info">${icon('checkCircle')}<span>تم الدخول إلى ليان. الرصيد: ${r.balance === null ? 'غير معروف' : `${r.balance} ₪`} · أرقام الوكالة: ${r.numbers} (فعّالة ${r.active}، موقوفة ${r.suspended})</span></div>`;
+      } catch (err) {
+        box.innerHTML = `<div class="msg">${icon('alert')}<span>${esc(err.message)}</span></div>`;
+      } finally { btn.disabled = false; }
+    },
+    async 'cloud-backup'(btn) {
+      btn.disabled = true;
+      try {
+        const r = await api.post('/api/backup/cloud');
+        toast(`تم حفظ النسخة (${Math.max(1, Math.round(r.bytes / 1024))} KB)`);
+      } catch (err) {
+        toast(err.message, { error: true });
+      }
+      S.settings = await api.get('/api/settings');
+      document.getElementById('cloud-backup').innerHTML = cloudBackupHtml(S.settings);
+      btn.disabled = false;
     },
     async backup() {
       const blob = await api.blob('/api/backup');

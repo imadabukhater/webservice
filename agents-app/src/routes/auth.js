@@ -40,7 +40,7 @@ route('POST', '/api/login', null, ({ body, ip }) => {
   }
   attempts.delete(key);
   if (!u.active) fail(403, 'هذا الحساب موقوف. تواصل مع المدير.');
-  return { token: createSession(u.id), user: publicUser(u), settings: getSettings() };
+  return { token: createSession(u.id), user: publicUser(u), settings: settingsFor(u) };
 });
 
 route('POST', '/api/logout', ANY, ({ token }) => {
@@ -48,7 +48,16 @@ route('POST', '/api/logout', ANY, ({ token }) => {
   return { ok: true };
 });
 
-route('GET', '/api/me', ANY, ({ user }) => ({ user: publicUser(user), settings: getSettings() }));
+route('GET', '/api/me', ANY, ({ user }) => ({ user: publicUser(user), settings: settingsFor(user) }));
+
+// Agents see only what their screens need — never the suppliers' accounts, the manager's profit percentages or the
+// backups. A list of what to show, so a setting added later stays the manager's unless it is added here.
+const AGENT_SETTINGS = ['appName', 'warnDays', 'lowBalance', 'esimFee', 'supportWhatsapp'];
+function settingsFor(user) {
+  const s = getSettings();
+  if (user.role === 'admin') return s;
+  return Object.fromEntries(AGENT_SETTINGS.map((k) => [k, s[k]]));
+}
 
 route('POST', '/api/me/password', ANY, ({ user, body, token }) => {
   if (!verifyPassword(String(body.current || ''), user.password_hash)) fail(400, 'كلمة المرور الحالية غير صحيحة');
@@ -78,10 +87,21 @@ route('PUT', '/api/settings', ADMIN, ({ body }) => {
   if (body.artUser !== undefined) setSetting('art_user', str(body.artUser, 80));
   // Write-only: an empty password keeps the saved one.
   if (body.artPass) setSetting('art_pass', String(body.artPass).slice(0, 200));
-  if (body.artMarkup !== undefined) {
-    const m = num(body.artMarkup, 'نسبة الزيادة');
-    if (m < 0 || m > 200) fail(400, 'نسبة الزيادة بين 0 و200%');
-    setSetting('art_markup', m);
+  if (body.qlUser !== undefined) setSetting('ql_user', str(body.qlUser, 120));
+  if (body.qlPass) setSetting('ql_pass', String(body.qlPass).slice(0, 200));
+  if (body.lyUser !== undefined) setSetting('ly_user', str(body.lyUser, 120));
+  if (body.lyPass) setSetting('ly_pass', String(body.lyPass).slice(0, 200));
+  // The authenticator secret, as a key or the app's export link: stored as a base32 key, never sent back.
+  if (body.lySecret) {
+    try { setSetting('ly_secret', require('../layan').normalizeSecret(body.lySecret)); } catch (e) { fail(400, e.message); }
+  }
+  for (const [field, key] of [['artMarkupCard', 'art_markup_card'], ['artMarkupInvoice', 'art_markup_invoice'],
+    ['qlMarkupCard', 'ql_markup_card'], ['qlMarkupInvoice', 'ql_markup_invoice'],
+    ['lyMarkupCard', 'ly_markup_card'], ['lyMarkupInvoice', 'ly_markup_invoice']]) {
+    if (body[field] === undefined) continue;
+    const m = num(body[field], 'نسبة الربح');
+    if (m < 0 || m > 200) fail(400, 'نسبة الربح بين 0 و200%');
+    setSetting(key, m);
   }
   if (body.shopEnabled !== undefined) setSetting('shop_enabled', body.shopEnabled ? '1' : '0');
   if (body.jawwalpayNumber !== undefined) {
@@ -103,6 +123,16 @@ route('PUT', '/api/settings', ADMIN, ({ body }) => {
 });
 
 // A consistent copy of the whole database, made with VACUUM INTO.
+// A copy in Google Cloud Storage now (the same one the server makes every day).
+route('POST', '/api/backup/cloud', ADMIN, async () => {
+  try {
+    return await require('../cloudbackup').backupNow();
+  } catch (e) {
+    setSetting('backup_error', String(e.message).slice(0, 300));
+    return fail(502, e.message);
+  }
+});
+
 route('GET', '/api/backup', ADMIN, ({ res }) => {
   const file = path.join(os.tmpdir(), `agents-backup-${process.pid}-${now()}.db`);
   db.exec(`VACUUM INTO '${file.replace(/'/g, "''")}'`);

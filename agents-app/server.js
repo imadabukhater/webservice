@@ -15,10 +15,15 @@ require('./src/routes/dashboard');
 require('./src/routes/reports');
 require('./src/routes/messages');
 require('./src/routes/art');
+require('./src/routes/quickline');
+require('./src/routes/layan');
 require('./src/routes/invoices');
 require('./src/routes/shop');
 require('./src/routes/sync');
+require('./src/routes/health');
 require('./src/autoexec');
+require('./src/cloudbackup');
+require('./src/autosync');
 const { dispatch } = require('./src/router');
 const { ApiError } = require('./src/util');
 
@@ -53,7 +58,8 @@ function serveStatic(req, res, pathname) {
   // The customer shop is its own page: /shop and anything under it.
   const page = pathname === '/' ? 'index.html' : /^\/shop(\/|$)/.test(pathname) ? 'shop.html' : pathname;
   let file = path.normalize(path.join(PUBLIC_DIR, page));
-  if (!file.startsWith(PUBLIC_DIR)) {
+  // Inside public/ only (with the separator, so a sibling folder whose name starts with "public" is not inside).
+  if (!file.startsWith(PUBLIC_DIR + path.sep)) {
     res.writeHead(403);
     return res.end();
   }
@@ -67,17 +73,26 @@ function serveStatic(req, res, pathname) {
     ...SECURITY_HEADERS,
     ...(ext === '.html' ? { 'Content-Security-Policy': CSP } : {}),
   });
-  fs.createReadStream(file).pipe(res);
+  fs.createReadStream(file).on('error', () => res.destroy()).pipe(res);
 }
 
 async function handle(req, res) {
-  const url = new URL(req.url, 'http://x');
-  if (!url.pathname.startsWith('/api/')) {
-    if (req.method !== 'GET' && req.method !== 'HEAD') {
-      res.writeHead(405);
-      return res.end();
+  // Nothing a request carries may take the server down: an unhandled error here would end the whole process.
+  let url;
+  try {
+    url = new URL(req.url, 'http://x');
+    if (!url.pathname.startsWith('/api/')) {
+      if (req.method !== 'GET' && req.method !== 'HEAD') {
+        res.writeHead(405);
+        return res.end();
+      }
+      return serveStatic(req, res, decodeURIComponent(url.pathname));
     }
-    return serveStatic(req, res, decodeURIComponent(url.pathname));
+  } catch {
+    // A malformed address (e.g. a broken %-escape).
+    if (res.headersSent) return res.destroy();
+    res.writeHead(400);
+    return res.end();
   }
   try {
     const out = await dispatch(req, res, url);

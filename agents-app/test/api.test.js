@@ -401,13 +401,16 @@ test('manual companies: sales become requests the manager carries out; direct li
   const mine = await ok(call(admin, 'POST', '/api/lines', { agentId: agent.id, packageId: p500.id, number: '0589000003', sim: '8997202000000000094' }));
   assert.equal(mine.line.status, 'active');
 
-  // ----- direct: active at once, the agent cannot disconnect -----
+  // ----- direct: active at once; a final disconnect is the manager's -----
   await ok(call(admin, 'PUT', `/api/companies/${cellcom.id}`, { activation: 'direct' }));
   const direct = await ok(call(t, 'POST', '/api/lines', { packageId: p500.id, number: '0589000004', sim: '8997202000000000102' }));
   assert.equal(direct.line.status, 'active');
   assert.equal(direct.line.direct, true);
   const cut = await call(t, 'POST', `/api/lines/${direct.line.id}/action`, { action: 'disconnect' });
-  assert.equal(cut.status, 400);
-  assert.match(cut.body.error, /تفعيلاً مباشراً/);
+  assert.equal(cut.status, 403);
+  assert.match(cut.body.error, /الفصل النهائي عند المدير/);
+  // Freezing (a temporary disconnect) stays the agent's.
+  assert.equal((await ok(call(t, 'POST', `/api/lines/${direct.line.id}/action`, { action: 'freeze' }))).line.status, 'frozen');
+  await ok(call(t, 'POST', `/api/lines/${direct.line.id}/action`, { action: 'unfreeze' }));
   assert.equal((await ok(call(t, 'POST', `/api/lines/${direct.line.id}/renew`, { months: 1 }))).pending, false);
 });

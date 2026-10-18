@@ -16,7 +16,10 @@ const fresh = (mode, query) => ({
   mode, step: 1, agentId: null, companyId: null, packageId: null, offerId: null,
   esim: false, port: false, sim: { iccid: '', simId: null, valid: false }, months: 1, number: '', numberState: 'idle',
   customerName: '', customerPrice: '', note: '', unitPrice: '', result: null, error: '', query,
+  // QuickLine new line: the number picked from QuickLine's free numbers, or the company a ported number leaves.
+  ql: { numbers: [], state: 'idle', numberId: null, more: true, oldCompany: '' },
 });
+const resetQl = () => { W.ql = { numbers: [], state: 'idle', numberId: null, more: true, oldCompany: W.ql?.oldCompany || '' }; };
 
 const external = () => W.mode === 'external';
 const company = () => companyById(W.companyId);
@@ -30,17 +33,31 @@ const unit = () => {
   if (o) return o.offerPrice ?? priceOf(pkg());
   return pkg() ? priceOf(pkg()) : 0;
 };
+// The two systems have separate packages: a new subscriber takes an invoice, a card recharge takes a card.
+const sellable = (p) => p.active && priceOf(p) > 0 && (p.kind || 'invoice') === (external() ? 'card' : 'invoice');
 const esimFee = () => (W.esim && !external() ? Number(S.settings.esimFee) || 0 : 0);
-const total = () => round(unit() * W.months + esimFee());
+// A package with a fixed duration (days) is sold once.
+const months = () => (pkg()?.days ? 1 : W.months);
+const total = () => round(unit() * months() + esimFee());
 const available = () => (isAdmin() ? agent()?.available ?? 0 : D.me?.available ?? 0);
 const STEPS = () => (external() ? ['الشركة', 'الشحن', 'رقم الزبون'] : ['الشركة', 'الرزمة', 'الشريحة والرقم', 'التأكيد']);
 
 // An agent's sale for a "manual" company becomes a request the manager carries out on the company's site.
 const manualSale = () => !isAdmin() && !W.esim && !W.port && company()?.activation !== 'direct';
-const directSale = () => !isAdmin() && !W.esim && !W.port && company()?.activation === 'direct';
-// Card recharges of art-topup cards for an "auto" company are carried out automatically within a minute.
-const autoSale = () => manualSale() && external() && company()?.activation === 'auto' && !!pkg()?.art;
+// A QuickLine sale is never direct: it waits for QuickLine.
+const directSale = () => !isAdmin() && !W.esim && !W.port && company()?.activation === 'direct' && !pkg()?.waits;
+// A QuickLine new line sold by an agent: the number comes from QuickLine (or is ported), and it is activated there.
+const qlSale = () => !external() && !!pkg()?.pool;
+const poolSale = () => qlSale() && !W.port;
+// The number comes with its SIM (picked from the dealer's own numbers): no SIM, no eSIM or porting switch.
+const ownSim = () => !external() && !!pkg()?.ownSim;
+// The customer's name is required where the activation asks for it (not for a number that comes with its SIM).
+const needsName = () => qlSale() && !ownSim();
+// Card recharges of art-topup cards for an "auto" company are carried out automatically within a minute,
+// and so are QuickLine new lines (also eSIM and ported numbers).
+const autoSale = () => company()?.activation === 'auto' && ((manualSale() && external() && !!pkg()?.auto) || qlSale());
 function modeNote() {
+  if (autoSale() && qlSale()) return `<div class="msg info">${icon('refresh')}<span>يُفعَّل الخط تلقائياً خلال دقيقة تقريباً${W.esim ? '، ويظهر رمز QR للـ eSIM في صفحة الرقم' : ''}. إن تعذّر، يُكمله المدير أو يُسترد المبلغ.</span></div>`;
   if (autoSale()) return `<div class="msg info">${icon('refresh')}<span>يُشحن الكرت تلقائياً خلال دقيقة تقريباً. إن تعذّر، يُكمله المدير أو يُسترد المبلغ.</span></div>`;
   if (directSale()) return `<div class="msg warn">${icon('bolt')}<span>تفعيل مباشر: بعد التأكيد يصبح الخط فعّالاً فوراً، ولا يمكن فصله أو استرداد المبلغ.</span></div>`;
   if (manualSale()) return `<div class="msg info">${icon('tasks')}<span>يُرسَل الطلب إلى المدير لتنفيذه على موقع الشركة. يُسترد المبلغ كاملاً إن رُفض.</span></div>`;
@@ -48,10 +65,39 @@ function modeNote() {
 }
 
 const step3Valid = () => {
-  const numberOk = W.numberState === 'ok';
-  if (external() || W.esim) return numberOk;
+  const numberOk = W.numberState === 'ok' && (!poolSale() || !!W.ql.numberId);
+  if (qlSale() && W.port && !W.ql.oldCompany) return false;
+  if (needsName() && !W.customerName.trim()) return false;
+  // A number that comes with its SIM needs only the number.
+  if (external() || W.esim || ownSim()) return numberOk;
   return numberOk && W.sim.valid;
 };
+
+// QuickLine's free numbers for the chosen package (eSIM numbers when eSIM is on), ten at a time.
+async function loadPool(rerender, more = false) {
+  W.ql.state = 'loading';
+  if (!more) rerender();
+  try {
+    const exclude = more ? W.ql.numbers.map((n) => n.id).join(',') : '';
+    const list = await api.get(`/api/numbers/free?packageId=${W.packageId}&esim=${W.esim ? 1 : 0}${exclude ? `&exclude=${exclude}` : ''}`);
+    W.ql.numbers = more ? [...W.ql.numbers, ...list] : list;
+    W.ql.more = list.length >= 10;
+    W.ql.state = 'ready';
+  } catch (err) {
+    W.ql.state = 'error';
+    W.error = err.message;
+  }
+  rerender();
+}
+
+function poolHtml() {
+  const s = W.ql;
+  if (s.state === 'loading' && !s.numbers.length) return `<div class="hint">${icon('clock')}<span>جاري جلب الأرقام المتاحة…</span></div>`;
+  if (s.state === 'error') return `<div class="msg">${icon('alert')}<span>${esc(W.error || 'تعذّر جلب الأرقام')}</span></div><button type="button" class="btn btn-sm" data-action="wz-pool-reload">${icon('refresh')}حاول مجدداً</button>`;
+  if (!s.numbers.length) return `<div class="msg warn">${icon('alert')}<span>لا توجد أرقام ${W.esim ? 'eSIM ' : ''}متاحة لهذه الرزمة الآن.</span></div>`;
+  return `<div class="months" style="grid-template-columns:repeat(auto-fill,minmax(140px,1fr))">${s.numbers.map((n) => `<button type="button" class="ltr" data-action="wz-pool-pick" data-id="${n.id}" data-phone="${esc(n.phone)}" aria-pressed="${n.id === s.numberId}">${esc(fmtPhone(n.phone))}</button>`).join('')}</div>
+    ${s.more ? `<button type="button" class="btn btn-sm btn-ghost" data-action="wz-pool-more" ${s.state === 'loading' ? 'disabled' : ''}>${icon('plus')}أرقام أخرى</button>` : ''}`;
+}
 
 // ---------- step views ----------
 function stepper() {
@@ -74,7 +120,7 @@ function agentPicker() {
 }
 
 function step1() {
-  const cos = S.catalog.companies.filter((c) => S.catalog.packages.some((p) => p.companyId === c.id && p.active && priceOf(p) > 0));
+  const cos = S.catalog.companies.filter((c) => S.catalog.packages.some((p) => p.companyId === c.id && sellable(p)));
   const last = lastUsed();
   return `${agentPicker()}
     <section class="card card-pad" style="display:grid;gap:16px">
@@ -82,7 +128,7 @@ function step1() {
       ${last ? `<button class="alert-card" data-action="wz-last" style="text-align:start">${companyLogo(companyById(last.companyId), 'xs')}
         <span class="grow"><b>آخر رزمة استعملتها</b><small>${esc(last.label)}</small></span>${icon('arrowL')}</button>` : ''}
       ${cos.length ? `<div class="co-grid">${cos.map((c) => {
-        const n = S.catalog.packages.filter((p) => p.companyId === c.id && p.active && priceOf(p) > 0).length;
+        const n = S.catalog.packages.filter((p) => p.companyId === c.id && sellable(p)).length;
         return `<button class="co-tile" data-action="wz-company" data-id="${c.id}" aria-pressed="${c.id === W.companyId}">
           ${companyLogo(c)}<b>${esc(c.name)}</b><small>${n} ${n === 1 ? 'رزمة' : n === 2 ? 'رزمتان' : n <= 10 ? 'رزم' : 'رزمة'}</small></button>`;
       }).join('')}</div>` : empty('box', 'لا توجد رزم متاحة', isAdmin() ? 'حدّد أسعار الرزم من «الشركات والرزم».' : 'لم يحدد المدير أسعار الرزم بعد.')}
@@ -102,7 +148,7 @@ function packageCard({ id, offerId, name, p, price, regular, campaign, tagNote }
 }
 
 function step2() {
-  const pk = S.catalog.packages.filter((p) => p.companyId === W.companyId && p.active && priceOf(p) > 0);
+  const pk = S.catalog.packages.filter((p) => p.companyId === W.companyId && sellable(p));
   const offers = D.offers.filter((o) => pk.some((p) => p.id === o.packageId));
   const c = company();
   return `<section class="card card-pad" style="display:grid;gap:16px">
@@ -141,19 +187,25 @@ function step3() {
   const fee = Number(S.settings.esimFee) || 0;
   return `<section class="card card-pad" style="display:grid;gap:18px">
     <h2 class="dot-title">إعدادات الشريحة ورقم الهاتف</h2>
-    <div class="switches">
-      <label class="switch-row"><span class="tile sm cyan">${icon('qr')}</span><span class="grow"><b>eSIM</b><small>بدون شريحة — يرسل المدير رمز QR${fee ? ` · رسوم التفعيل ${fmtMoney(fee)}` : ''}</small></span>
+    ${ownSim() ? `<div class="msg info">${icon('sim')}<span>اختر الرقم من القائمة: شريحته جاهزة معه، ولا حاجة لمسح شريحة.</span></div>` : `<div class="switches">
+      <label class="switch-row"><span class="tile sm cyan">${icon('qr')}</span><span class="grow"><b>eSIM</b><small>بدون شريحة — ${qlSale() ? 'رمز QR يصل تلقائياً' : 'يرسل المدير رمز QR'}${fee ? ` · رسوم التفعيل ${fmtMoney(fee)}` : ''}</small></span>
         <input class="switch" type="checkbox" id="wz-esim" ${W.esim ? 'checked' : ''}></label>
       <label class="switch-row"><span class="tile sm amber">${icon('repeat')}</span><span class="grow"><b>تحويل رقم</b><small>الزبون ينقل رقمه من شركة أخرى</small></span>
         <input class="switch" type="checkbox" id="wz-port" ${W.port ? 'checked' : ''}></label>
-    </div>
-    ${W.esim || W.port ? `<div class="msg warn">${icon('clock')}<span>يُرسَل الطلب إلى المدير لتنفيذه، ويبدأ احتساب مدة الرزمة من لحظة التنفيذ. يُسترد المبلغ كاملاً إن رُفض الطلب.</span></div>` : ''}
-    ${W.esim ? '' : `<div id="wz-sim-box">${simFieldHtml({ id: 'wz-sim', label: 'رقم الشريحة — امسحه بالكاميرا أو اكتبه', value: W.sim.iccid })}</div>`}
-    <div class="field"><label for="wz-number">${W.port ? 'الرقم المراد تحويله' : 'رقم الهاتف'}</label>
+    </div>`}
+    ${(W.esim || W.port) && !qlSale() ? `<div class="msg warn">${icon('clock')}<span>يُرسَل الطلب إلى المدير لتنفيذه، ويبدأ احتساب مدة الرزمة من لحظة التنفيذ. يُسترد المبلغ كاملاً إن رُفض الطلب.</span></div>` : ''}
+    ${W.esim || ownSim() ? '' : `<div id="wz-sim-box">${simFieldHtml({ id: 'wz-sim', label: 'رقم الشريحة — امسحه بالكاميرا أو اكتبه', value: W.sim.iccid })}</div>`}
+    ${poolSale() ? `<div class="field"><span class="label">رقم الهاتف — اختر من الأرقام المتاحة${W.esim ? ' (eSIM)' : ''}</span>${poolHtml()}</div>`
+      : `<div class="field"><label for="wz-number">${W.port ? 'الرقم المراد تحويله' : 'رقم الهاتف'}</label>
       <input class="input ltr big" id="wz-number" inputmode="tel" autocomplete="off" placeholder="05X-XXX-XXXX" value="${esc(W.number)}">
-      <div class="hint" id="wz-number-hint"></div></div>
-    <div class="field"><span class="label">المدة</span>
-      <div class="months">${MONTHS.map((m) => `<button type="button" data-action="wz-months" data-m="${m}" aria-pressed="${m === W.months}">${m}<small>${m === 1 ? 'شهر' : m === 2 ? 'شهران' : m <= 10 ? 'أشهر' : 'شهراً'}</small></button>`).join('')}</div></div>
+      <div class="hint" id="wz-number-hint"></div></div>`}
+    ${qlSale() && W.port ? `<div class="field"><label for="wz-oldco">الشركة التي يُحوَّل منها الرقم</label>
+      <select class="input" id="wz-oldco"><option value="">اختر الشركة</option>${(W.ql.companies || []).map((c) => `<option value="${c.id}" ${String(c.id) === String(W.ql.oldCompany) ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select></div>` : ''}
+    <div class="field"><label for="wz-cname">اسم الزبون ${needsName() ? '<span class="opt">(مطلوب — الاسم والعائلة)</span>' : '<span class="opt">(اختياري)</span>'}</label>
+      <input class="input" id="wz-cname" value="${esc(W.customerName)}" autocomplete="off"></div>
+    ${pkg()?.days ? `<div class="field"><span class="label">المدة</span><div class="msg info">${icon('cal')}<span>${pkg().days} يوماً — مدة ثابتة لهذه الرزمة</span></div></div>`
+      : `<div class="field"><span class="label">المدة</span>
+      <div class="months">${MONTHS.map((m) => `<button type="button" data-action="wz-months" data-m="${m}" aria-pressed="${m === W.months}">${m}<small>${m === 1 ? 'شهر' : m === 2 ? 'شهران' : m <= 10 ? 'أشهر' : 'شهراً'}</small></button>`).join('')}</div></div>`}
     <div class="step-foot"><button class="btn" data-action="wz-back">${icon('arrowR')}السابق</button>
       <button class="btn btn-primary" data-action="wz-next" id="wz-next" ${step3Valid() ? '' : 'disabled'}>التالي${icon('arrowL')}</button></div>
   </section>`;
@@ -166,7 +218,6 @@ function step4() {
     <h2 class="dot-title">تلخيص الطلبية</h2>
     <div class="kv">${rows().map(([k, v]) => `<div>${k}</div><div>${v}</div>`).join('')}</div>
     <div class="row2 stack-xs">
-      <div class="field"><label for="wz-cname">اسم الزبون</label><input class="input" id="wz-cname" value="${esc(W.customerName)}" placeholder="اختياري"></div>
       <div class="field"><label for="wz-cprice">سعر الزبون (₪)</label><input class="input ltr" id="wz-cprice" type="number" min="0" step="0.01" inputmode="decimal" value="${esc(W.customerPrice)}" placeholder="اختياري"></div>
     </div>
     <div class="hint" id="wz-margin"></div>
@@ -193,15 +244,15 @@ function resultView() {
   const pending = l.status === 'pending' || W.result.pending;
   return `<section class="card card-pad"><div class="success">
     <div class="success-mark ${pending ? 'pending' : ''}">${icon(pending ? 'clock' : 'check')}</div>
-    <h2>${pending ? (autoSale() ? 'جاري الشحن تلقائياً' : 'أُرسل الطلب إلى المدير') : external() ? 'تم شحن الرقم' : 'تم تفعيل الخط'}</h2>
-    ${pending ? `<p class="small muted">${autoSale() ? 'يصلك تنبيه عند اكتمال الشحن خلال دقيقة تقريباً.' : 'ستصلك رسالة عند التنفيذ.'} يُسترد المبلغ كاملاً إن رُفض الطلب.</p>` : ''}
+    <h2>${pending ? (autoSale() ? (qlSale() ? 'جاري التفعيل تلقائياً' : 'جاري الشحن تلقائياً') : 'أُرسل الطلب إلى المدير') : external() ? 'تم شحن الرقم' : 'تم تفعيل الخط'}</h2>
+    ${pending ? `<p class="small muted">${autoSale() ? `يصلك تنبيه عند اكتمال ${qlSale() ? 'التفعيل' : 'الشحن'} خلال دقيقة تقريباً.` : 'ستصلك رسالة عند التنفيذ.'} يُسترد المبلغ كاملاً إن رُفض الطلب.</p>` : ''}
     <p class="muted">${phone(l.number)} · ${esc(l.packageLabel)}${l.expiresAt && !pending ? ` · <span class="nowrap">حتى ${fmtDate(l.expiresAt)}</span>` : ''}</p>
     <p class="small muted">الرصيد المتاح الآن ${fmtMoney(W.result.available)}</p>
     <div class="btn-row" style="width:100%;max-width:420px">
       <button class="btn" data-action="wz-share">${icon('share')}مشاركة مع الزبون</button>
       <button class="btn" data-action="wz-copy">${icon('copy')}نسخ التفاصيل</button></div>
     <div class="btn-row" style="width:100%;max-width:420px">
-      <button class="btn btn-primary" data-action="wz-again">${external() ? `${icon('card')}شحن كرت آخر` : `${icon('userPlus')}مشترك جديد آخر`}</button>
+      <button class="btn btn-primary" data-action="wz-again">${external() ? `${icon('card')}زبون دفع مسبق آخر` : `${icon('userPlus')}اشتراك فاتورة آخر`}</button>
       <a class="btn" href="#/subscribers">${icon('phone')}المشتركون</a></div>
   </div></section>`;
 }
@@ -215,11 +266,11 @@ function rows() {
   if (isAdmin()) r.push(['الوكيل', agent() ? esc(agent().name) : unset]);
   r.push(['المشغّل', c ? esc(c.name) : unset]);
   r.push(['الرزمة', o ? `${esc(o.title)} <span class="pill campaign">حملة</span>` : p ? esc(`${p.companyName} ${p.name}`) : unset]);
-  if (!external()) r.push(['الشريحة', W.esim ? 'eSIM' : W.sim.valid ? `<span class="mono ltr">${fmtIccid(W.sim.iccid)}</span>` : unset]);
+  if (!external()) r.push(['الشريحة', ownSim() ? 'مع الرقم' : W.esim ? 'eSIM' : W.sim.valid ? `<span class="mono ltr">${fmtIccid(W.sim.iccid)}</span>` : unset]);
   r.push([W.port ? 'الرقم المحوَّل' : 'رقم الهاتف', W.numberState === 'ok' ? phone(normalizePhone(W.number)) : unset]);
-  r.push(['مدة الخدمة', monthsText(W.months)]);
+  r.push(['مدة الخدمة', pkg()?.days ? `${pkg().days} يوماً` : monthsText(W.months)]);
   if (esimFee()) r.push(['رسوم تفعيل eSIM', fmtMoney(esimFee())]);
-  if (W.step >= 4 && p) r.push(['تنتهي في', W.esim || W.port || manualSale() ? 'بعد تنفيذ الطلب' : fmtDate(addMonths(Date.now(), W.months))]);
+  if (W.step >= 4 && p) r.push(['تنتهي في', W.esim || W.port || manualSale() || pkg()?.waits ? 'بعد تنفيذ الطلب' : fmtDate(pkg()?.days ? Date.now() + pkg().days * 864e5 : addMonths(Date.now(), W.months))]);
   return r;
 }
 
@@ -281,7 +332,7 @@ function lastUsed() {
   try {
     const v = JSON.parse(localStorage.getItem(LAST_KEY()) || 'null');
     if (!v) return null;
-    const p = S.catalog.packages.find((x) => x.id === v.packageId && x.active && priceOf(x) > 0);
+    const p = S.catalog.packages.find((x) => x.id === v.packageId && sellable(x));
     return p ? { companyId: p.companyId, packageId: p.id, label: `${p.companyName} ${p.name}` } : null;
   } catch { return null; }
 }
@@ -293,7 +344,7 @@ async function loadAgentContext() {
   if (!isAdmin()) return;
   if (!W.agentId) { D.prices = null; return; }
   const prices = await api.get(`/api/agents/${W.agentId}/prices`);
-  D.prices = new Map(prices.map((r) => [r.packageId, r.customPrice ?? r.defaultPrice]));
+  D.prices = new Map(prices.map((r) => [r.packageId, r.agentPrice]));
 }
 
 function shareText() {
@@ -303,7 +354,7 @@ function shareText() {
 }
 
 export default {
-  title: () => ({ title: W?.mode === 'external' ? 'شحن كرت' : 'مشترك جديد', subtitle: W?.result ? 'تم' : `الخطوة ${W?.step || 1} من ${W?.mode === 'external' ? 3 : 4}` }),
+  title: () => ({ title: W?.mode === 'external' ? 'زبون دفع مسبق' : 'اشتراك فاتورة جديدة', subtitle: W?.result ? 'تم' : `الخطوة ${W?.step || 1} من ${W?.mode === 'external' ? 3 : 4}` }),
   async load(ctx) {
     const mode = ctx.query.type === 'external' ? 'external' : 'new';
     if (!W || W.mode !== mode || W.result || JSON.stringify(W.query) !== JSON.stringify(ctx.query)) W = fresh(mode, ctx.query);
@@ -337,25 +388,37 @@ export default {
       this.rerenderSelf();
     });
     if (W.step === 3) {
-      root.querySelector('#wz-esim')?.addEventListener('change', (e) => { W.esim = e.target.checked; this.rerenderSelf(); });
-      root.querySelector('#wz-port')?.addEventListener('change', (e) => { W.port = e.target.checked; this.rerenderSelf(); });
-      if (!external() && !W.esim) {
+      // For a QuickLine line, switching eSIM or porting changes where the number comes from: start it again.
+      const qlSwitch = () => { if (qlSale() || pkg()?.pool) { resetQl(); W.number = ''; W.numberState = 'idle'; } };
+      root.querySelector('#wz-esim')?.addEventListener('change', (e) => { W.esim = e.target.checked; qlSwitch(); this.rerenderSelf(); });
+      root.querySelector('#wz-port')?.addEventListener('change', (e) => { W.port = e.target.checked; qlSwitch(); this.rerenderSelf(); });
+      root.querySelector('#wz-oldco')?.addEventListener('change', (e) => { W.ql.oldCompany = e.target.value; refreshSummary(); });
+      root.querySelector('#wz-cname')?.addEventListener('input', (e) => { W.customerName = e.target.value; refreshSummary(); });
+      if (poolSale() && W.ql.state === 'idle') loadPool(() => this.rerenderSelf());
+      if (qlSale() && W.port && !W.ql.companies) {
+        W.ql.companies = [];
+        api.get('/api/numbers/port-companies').then((list) => { W.ql.companies = list; this.rerenderSelf(); })
+          .catch((err) => { W.error = err.message; this.rerenderSelf(); });
+      }
+      if (!external() && !W.esim && !ownSim()) {
         bindSimField(root, {
           id: 'wz-sim', companyId: W.companyId,
           onChange: (s) => { W.sim = s; refreshSummary(); },
         });
       }
       const num = root.querySelector('#wz-number');
-      num.addEventListener('input', () => { W.number = num.value; W.numberState = 'checking'; refreshSummary(); checkNumber(); });
-      num.addEventListener('blur', () => { const n = normalizePhone(num.value); if (/^0\d{9}$/.test(n)) num.value = fmtPhone(n); });
-      num.addEventListener('keydown', (e) => {
-        if (e.key !== 'Enter' || !step3Valid()) return;
-        e.preventDefault();
-        if (external()) root.querySelector('#wz-confirm')?.click();
-        else { W.step = 4; this.rerenderSelf(); }
-      });
-      if (external() && !W.number) num.focus();
-      checkNumber();
+      if (num) {
+        num.addEventListener('input', () => { W.number = num.value; W.numberState = 'checking'; refreshSummary(); checkNumber(); });
+        num.addEventListener('blur', () => { const n = normalizePhone(num.value); if (/^0\d{9}$/.test(n)) num.value = fmtPhone(n); });
+        num.addEventListener('keydown', (e) => {
+          if (e.key !== 'Enter' || !step3Valid()) return;
+          e.preventDefault();
+          if (external()) root.querySelector('#wz-confirm')?.click();
+          else { W.step = 4; this.rerenderSelf(); }
+        });
+        if (external() && !W.number) num.focus();
+        checkNumber();
+      }
     }
     if (W.step === 4) {
       const bind = (id, key) => root.querySelector(id)?.addEventListener('input', (e) => {
@@ -373,7 +436,11 @@ export default {
     'wz-company'(btn, e, ctx) {
       if (isAdmin() && !W.agentId) return toast('اختر الوكيل أولاً', { error: true });
       const id = Number(btn.dataset.id);
-      if (W.companyId !== id) { W.packageId = null; W.offerId = null; W.sim = { iccid: '', simId: null, valid: false }; }
+      if (W.companyId !== id) {
+        if (pkg()?.pool) { W.number = ''; W.numberState = 'idle'; }
+        W.packageId = null; W.offerId = null; W.sim = { iccid: '', simId: null, valid: false };
+        resetQl();
+      }
       W.companyId = id;
       W.step = 2;
       ctx.rerender();
@@ -384,11 +451,25 @@ export default {
       if (isAdmin() && !W.agentId) return toast('اختر الوكيل أولاً', { error: true });
       const last = lastUsed();
       Object.assign(W, { companyId: last.companyId, packageId: last.packageId, offerId: null, step: 3 });
+      resetQl();
       ctx.rerender();
       return undefined;
     },
+    'wz-pool-pick'(btn) {
+      W.ql.numberId = Number(btn.dataset.id);
+      W.number = btn.dataset.phone;
+      W.numberState = 'ok';
+      document.querySelectorAll('[data-action="wz-pool-pick"]').forEach((b) => b.setAttribute('aria-pressed', String(b === btn)));
+      refreshSummary();
+    },
+    'wz-pool-more'(btn, e, ctx) { loadPool(() => ctx.rerender(), true); },
+    'wz-pool-reload'(btn, e, ctx) { W.error = ''; resetQl(); loadPool(() => ctx.rerender()); },
     'wz-package'(btn, e, ctx) {
+      // A QuickLine number belongs to its package: changing package to or from one starts the number again.
+      const changedPkg = Number(btn.dataset.id) !== W.packageId;
+      const wasQl = !!pkg()?.pool;
       W.packageId = Number(btn.dataset.id);
+      if (changedPkg) { resetQl(); if (wasQl || pkg()?.pool) { W.number = ''; W.numberState = 'idle'; } }
       W.offerId = btn.dataset.offer ? Number(btn.dataset.offer) : null;
       W.step = 3;
       ctx.rerender();
@@ -402,13 +483,20 @@ export default {
     'wz-back'(btn, e, ctx) { W.step = Math.max(1, W.step - 1); W.error = ''; ctx.rerender(); },
     'wz-next'(btn, e, ctx) { if (step3Valid()) { W.step = 4; ctx.rerender(); window.scrollTo({ top: 0, behavior: 'smooth' }); } },
     async 'wz-confirm'(btn, e, ctx) {
-      btn.disabled = true;
       W.error = '';
+      if (needsName() && !W.customerName.trim()) {
+        W.error = 'اكتب اسم الزبون — مطلوب لتفعيل هذا الخط';
+        ctx.rerender();
+        return;
+      }
+      btn.disabled = true;
       const body = {
-        kind: W.mode, packageId: W.packageId, offerId: W.offerId || undefined, months: W.months, number: normalizePhone(W.number),
+        kind: W.mode, packageId: W.packageId, offerId: W.offerId || undefined, months: months(), number: normalizePhone(W.number),
         esim: W.esim, port: W.port, customerName: W.customerName, customerPrice: W.customerPrice, note: W.note,
       };
-      if (!external() && !W.esim) Object.assign(body, W.sim.simId ? { simId: W.sim.simId } : { sim: W.sim.iccid });
+      if (poolSale()) body.qlNumberId = W.ql.numberId;
+      if (qlSale() && W.port) body.qlOldCompany = W.ql.oldCompany;
+      if (!external() && !W.esim && !ownSim()) Object.assign(body, W.sim.simId ? { simId: W.sim.simId } : { sim: W.sim.iccid });
       if (isAdmin()) { body.agentId = W.agentId; if (W.unitPrice !== '') body.unitPrice = W.unitPrice; }
       try {
         W.result = await api.post('/api/lines', body);

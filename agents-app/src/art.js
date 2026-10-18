@@ -123,6 +123,36 @@ function parseCash(html) {
   return product ? amounts.map((a) => ({ ref: `pc:${product}:${a}`, amount: a })) : [];
 }
 
+// Invoice (line activation) packages of one company, from packages_tk_db.php?getIPackages2&id=<company>.
+// Each has hidden inputs i_name2_<id>, i_cust_price2_<id> (agent price) and a details table (offer, days).
+function parseInvoicePackages(html) {
+  const byId = new Map();
+  for (const a of inputs(html)) {
+    const m = /^i_(name2|cust_price2|comp2)_(\d+)$/.exec(a.id || '');
+    if (!m) continue;
+    const p = byId.get(m[2]) || { id: m[2] };
+    p[m[1]] = a.value ?? '';
+    byId.set(m[2], p);
+  }
+  return [...byId.values()].filter((p) => p.name2 && money(p.cust_price2) !== null).map((p) => {
+    const start = html.indexOf(`ISModal2_${p.id}`);
+    const next = start < 0 ? -1 : html.indexOf('showISModal2(', start);
+    const block = textOf(start < 0 ? '' : html.slice(start, next < 0 ? undefined : next));
+    const after = (label, stop) => (block.split(label)[1] || '').split(stop)[0].replace(/\s+/g, ' ').trim();
+    const days = Number((/(\d+)\s*يوم/.exec(after('عدد الأيام', 'رقم الشريحة')) || [])[1]) || null;
+    // Names come HTML-escaped twice (&amp;quot;).
+    return { id: p.id, name: decode(p.name2).replace(/\s+/g, ' ').trim(), agentPrice: money(p.cust_price2), companyPage: p.comp2 || '',
+      description: decode(after('وصف العرض', 'عدد الأيام')).slice(0, 300), days };
+  });
+}
+
+// Invoice companies on invoices.php: showIPackages2(<id>, '<api company or empty>', '<name>').
+function parseInvoiceCompanies(html) {
+  return [...html.matchAll(/showIPackages2\(\s*(\d+)\s*,\s*'([^']*)'\s*,\s*'([^']*)'\s*\)/g)]
+    .map(([, id, api, name]) => ({ id, api, name: decode(name).trim() }))
+    .filter((c, i, all) => all.findIndex((x) => x.id === c.id) === i);
+}
+
 function parseBalance(html) {
   const m = /([\d.,]+)\s*₪\s*رصيدك/.exec(textOf(html));
   return m ? money(m[1]) : null;
@@ -154,8 +184,30 @@ function outcome(status) {
 
 async function companies(creds) { return parseCompanies(await page(creds, '/Portal/index.php')); }
 
-// Everything that can be sold: [{ ref, company, name, agentPrice, description }] plus how many bundles were hidden.
-// ref says how to buy it: ic:<card> (Israeli card), pb:<type>:<id>:<category> (Palestinian bundle), pc:<product>:<amount> (cash).
+// Invoice packages (activating a new line): invoices.php lists the companies, and each company's packages load by POST.
+// ref inv:<api company or empty>:<package id>. In "شركات مشتركة" the package name says which company it is.
+async function invoices(creds) {
+  const companies = parseInvoiceCompanies(await page(creds, '/Portal/invoices.php'));
+  const out = [];
+  for (const c of companies) {
+    const r = await request('POST', `/controllers/packages_tk_db.php?getIPackages2&id=${encodeURIComponent(c.id)}`);
+    if (signedOut(r)) throw new ArtError('art-topup: انتهت الجلسة أثناء قراءة الفواتير');
+    for (const p of parseInvoicePackages(r.text)) {
+      out.push({ ref: `inv:${c.api}:${p.id}`, kind: 'invoice', company: c.api === 'mixed_shared' ? p.name : c.name, name: p.name,
+        agentPrice: p.agentPrice, description: p.description, days: p.days, api: !!c.api });
+    }
+  }
+  return out;
+}
+
+// Everything that can be sold: recharge cards (kind 'card') and invoice packages (kind 'invoice'), plus how many
+// bundles the portal hid. Card refs say how to buy: ic:<card> (Israeli card), pb:<type>:<id>:<category>
+// (Palestinian bundle), pc:<product>:<amount> (cash).
+async function catalog(creds) {
+  const list = await cards(creds);
+  return Object.assign([...list, ...await invoices(creds)], { hidden: list.hidden });
+}
+
 async function cards(creds) {
   const list = await companies(creds);
   if (!list.length) throw new ArtError('art-topup: لم أجد صفحات الشحن. ربما تغيّر تصميم الموقع.');
@@ -164,17 +216,17 @@ async function cards(creds) {
   for (const c of list) {
     const html = await page(creds, `/Portal/${c.page}`);
     if (c.kind === 'israel') {
-      for (const card of parseCards(html)) out.push({ ...card, ref: `ic:${card.cardId}`, company: c.title });
+      for (const card of parseCards(html)) out.push({ ...card, ref: `ic:${card.cardId}`, kind: 'card', company: c.title });
     } else if (c.kind === 'bundles') {
       const type = c.page.split('=')[1];
       const r = parseBundles(html, type);
       hidden += r.hidden;
       // The same bundle can be listed on both the minutes and the internet page.
       const key = (ref) => { const [, t, id] = ref.split(':'); return `${t.split('_')[0]}:${id}`; };
-      for (const b of r.items) if (!out.some((o) => o.ref.startsWith('pb:') && key(o.ref) === key(b.ref))) out.push({ ...b, company: c.title });
+      for (const b of r.items) if (!out.some((o) => o.ref.startsWith('pb:') && key(o.ref) === key(b.ref))) out.push({ ...b, kind: 'card', company: c.title });
     } else {
       for (const x of parseCash(html)) {
-        out.push({ ref: x.ref, company: c.title, name: `${c.title} ${x.amount} ₪`, agentPrice: x.amount, description: 'شحن رصيد نقدي' });
+        out.push({ ref: x.ref, kind: 'card', company: c.title, name: `${c.title} ${x.amount} ₪`, agentPrice: x.amount, description: 'شحن رصيد نقدي' });
       }
     }
   }
@@ -215,6 +267,6 @@ function localNumber(n) {
 }
 
 module.exports = {
-  ArtError, login, cards, balance, operations, recharge, localNumber, outcome,
-  parseCompanies, parseCards, parseBundles, parseCash, parseBalance, parseOperations,
+  ArtError, login, cards, invoices, catalog, balance, operations, recharge, localNumber, outcome,
+  parseCompanies, parseCards, parseBundles, parseCash, parseBalance, parseOperations, parseInvoicePackages, parseInvoiceCompanies,
 };

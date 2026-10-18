@@ -108,6 +108,19 @@ CREATE TABLE IF NOT EXISTS agent_prices (
   price REAL NOT NULL,
   PRIMARY KEY (agent_id, package_id)
 );
+-- A package the manager hides from one agent only (the others still see it).
+CREATE TABLE IF NOT EXISTS agent_hidden (
+  agent_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  package_id INTEGER NOT NULL REFERENCES packages(id) ON DELETE CASCADE,
+  PRIMARY KEY (agent_id, package_id)
+);
+-- The manager's profit percentage for one agent on one pricing system (see domain.SYSTEM_SQL).
+CREATE TABLE IF NOT EXISTS agent_markups (
+  agent_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  system TEXT NOT NULL CHECK (system IN ('invoice','card','qlinvoice','qlcard','lyinvoice','lycard')),
+  markup REAL NOT NULL,
+  PRIMARY KEY (agent_id, system)
+);
 CREATE TABLE IF NOT EXISTS offers (
   id INTEGER PRIMARY KEY,
   title TEXT NOT NULL,
@@ -313,12 +326,55 @@ ensureColumn('lines', 'direct', 'direct INTEGER NOT NULL DEFAULT 0');
 // art-topup: the card a package stands for, and the state of a request sent there automatically
 // (auto_status: '' not sent, sending, sent, done, failed, unknown; auto_ref: last operation id seen before sending).
 ensureColumn('packages', 'art_card_id', "art_card_id TEXT NOT NULL DEFAULT ''");
+// Two separate systems: 'invoice' = activating a new line (SIM), 'card' = recharging a number (card, bundle, cash).
+// days: fixed duration of the package (e.g. a 90-day invoice); null = priced per month.
+// edited: the manager changed it by hand, so an art-topup sync only refreshes its cost.
+ensureColumn('packages', 'kind', "kind TEXT NOT NULL DEFAULT 'invoice'");
+ensureColumn('packages', 'days', 'days INTEGER');
+ensureColumn('packages', 'edited', 'edited INTEGER NOT NULL DEFAULT 0');
+ensureColumn('lines', 'days', 'days INTEGER');
+db.exec("UPDATE packages SET kind = 'card' WHERE kind != 'card' AND (art_card_id LIKE 'ic:%' OR art_card_id LIKE 'pb:%' OR art_card_id LIKE 'pc:%')");
+// art_price: the portal's current price, refreshed by every sync and used when buying there. cost and price change
+// only with the manager's approval; art_ack is a portal price the manager chose to ignore.
+// These three columns serve every supplier, not only art-topup: art_card_id says which one and how to buy.
+//   ic:/pb:/pc: art-topup card, bundle or cash · inv: art-topup invoice
+//   ql:<package>:<days> QuickLine extension · qln:<package>:<days> QuickLine new line
+ensureColumn('packages', 'art_price', 'art_price REAL');
+ensureColumn('packages', 'art_ack', 'art_ack REAL');
+db.exec("UPDATE packages SET art_price = cost WHERE art_card_id != '' AND art_price IS NULL");
 ensureColumn('tasks', 'auto_status', "auto_status TEXT NOT NULL DEFAULT ''");
 ensureColumn('tasks', 'auto_note', "auto_note TEXT NOT NULL DEFAULT ''");
 ensureColumn('tasks', 'auto_ref', "auto_ref TEXT NOT NULL DEFAULT ''");
 ensureColumn('tasks', 'auto_at', 'auto_at INTEGER');
 // Customer shop: the price customers pay (null = not sold in the shop).
 ensureColumn('packages', 'shop_price', 'shop_price REAL');
+// QuickLine lines: a state change made here (close, pause, activate) still to be carried out there.
+ensureColumn('lines', 'ql_pending', "ql_pending TEXT NOT NULL DEFAULT ''");
+// QuickLine lines: a new SIM put on the line here, still to be put on it there.
+ensureColumn('lines', 'ql_sim', "ql_sim TEXT NOT NULL DEFAULT ''");
+// Layan's two systems came after agent_markups; SQLite cannot change a CHECK, so rebuild that table once.
+if (!/lyinvoice/.test(tableSql('agent_markups') || '')) {
+  db.exec(`BEGIN;
+    ALTER TABLE agent_markups RENAME TO agent_markups_v1;
+    CREATE TABLE agent_markups (
+      agent_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      system TEXT NOT NULL CHECK (system IN ('invoice','card','qlinvoice','qlcard','lyinvoice','lycard')),
+      markup REAL NOT NULL,
+      PRIMARY KEY (agent_id, system)
+    );
+    INSERT INTO agent_markups SELECT * FROM agent_markups_v1;
+    DROP TABLE agent_markups_v1;
+    COMMIT;`);
+}
+// gone_at: when a sync hid the package because its supplier no longer listed it. Such a package comes back by itself
+// when the supplier lists it again; a package the manager hid (gone_at NULL) stays hidden.
+ensureColumn('packages', 'gone_at', 'gone_at INTEGER');
+// Before gone_at, a sync that briefly got an incomplete list from QuickLine hid packages for good. The manager hid
+// none of them by hand, so they are marked as the sync's, once, and the next sync brings back those QuickLine lists.
+if (!db.prepare("SELECT 1 FROM settings WHERE key = 'migr_ql_gone'").get()) {
+  db.prepare("UPDATE packages SET gone_at = ? WHERE active = 0 AND gone_at IS NULL AND art_card_id LIKE 'ql%'").run(Date.now());
+  db.prepare("INSERT INTO settings (key, value) VALUES ('migr_ql_gone', '1')").run();
+}
 
 const q = (sql) => db.prepare(sql);
 
@@ -339,6 +395,8 @@ const DEFAULT_SETTINGS = {
   app_name: 'بوابة الوكلاء', warn_days: '7', low_balance: '50', esim_fee: '7', support_whatsapp: '972567725080',
   art_user: '', art_pass: '', art_markup: '15',
   shop_enabled: '0', jawwalpay_number: '', jawwalpay_name: '', gmail_user: '', gmail_pass: '', mail_from: 'jawwal', shop_agent_id: '',
+  ql_user: '', ql_pass: '', ql_markup: '15',
+  ly_user: '', ly_pass: '', ly_secret: '', ly_markup: '15',
 };
 function getSettings() {
   const out = { ...DEFAULT_SETTINGS };
@@ -352,7 +410,34 @@ function getSettings() {
     // art-topup sign-in: the password never leaves the server (see artCredentials).
     artUser: out.art_user,
     artConfigured: !!(out.art_user && out.art_pass),
-    artMarkup: Math.max(0, Number(out.art_markup) || 0),
+    // The manager's profit on top of art-topup's price, separately for recharge cards and for invoices
+    // (both start from the older single art_markup).
+    artMarkupCard: Math.max(0, Number(out.art_markup_card ?? out.art_markup) || 0),
+    artMarkupInvoice: Math.max(0, Number(out.art_markup_invoice ?? out.art_markup) || 0),
+    artSyncedCard: Number(out.art_synced_card) || null,
+    artSyncedInvoice: Number(out.art_synced_invoice) || null,
+    // QuickLine sign-in: the password never leaves the server (see qlCredentials).
+    qlUser: out.ql_user,
+    qlConfigured: !!(out.ql_user && out.ql_pass),
+    // The manager's profit on top of QuickLine's price, separately for extensions ('card') and new lines ('invoice').
+    qlMarkupCard: Math.max(0, Number(out.ql_markup_card ?? out.ql_markup) || 0),
+    qlMarkupInvoice: Math.max(0, Number(out.ql_markup_invoice ?? out.ql_markup) || 0),
+    qlSyncedCard: Number(out.ql_synced_card) || null,
+    qlSyncedInvoice: Number(out.ql_synced_invoice) || null,
+    // Layan sign-in: the password and the authenticator secret never leave the server (see lyCredentials).
+    lyUser: out.ly_user,
+    lyConfigured: !!(out.ly_user && out.ly_pass),
+    lyHasSecret: !!out.ly_secret,
+    lyMarkupCard: Math.max(0, Number(out.ly_markup_card ?? out.ly_markup) || 0),
+    lyMarkupInvoice: Math.max(0, Number(out.ly_markup_invoice ?? out.ly_markup) || 0),
+    lySyncedCard: Number(out.ly_synced_card) || null,
+    lySyncedInvoice: Number(out.ly_synced_invoice) || null,
+    // The daily copy in Google Cloud Storage (see cloudbackup.js): where, the last good one, and the last failure.
+    backupBucket: out.backup_bucket || '',
+    backupLastAt: Number(out.backup_last_at) || null,
+    backupLastName: out.backup_last_name || '',
+    backupLastBytes: Number(out.backup_last_bytes) || null,
+    backupError: out.backup_error || '',
     // Customer shop paid by JawwalPay; transfers are confirmed from the notification emails in Gmail.
     shopEnabled: out.shop_enabled === '1',
     jawwalpayNumber: out.jawwalpay_number,
@@ -369,6 +454,14 @@ function gmailCredentials() {
 function artCredentials() {
   const get = (k) => q('SELECT value FROM settings WHERE key = ?').get(k)?.value || '';
   return { user: get('art_user'), pass: get('art_pass') };
+}
+function lyCredentials() {
+  const get = (k) => q('SELECT value FROM settings WHERE key = ?').get(k)?.value || '';
+  return { user: get('ly_user'), pass: get('ly_pass'), secret: get('ly_secret') };
+}
+function qlCredentials() {
+  const get = (k) => q('SELECT value FROM settings WHERE key = ?').get(k)?.value || '';
+  return { user: get('ql_user'), pass: get('ql_pass') };
 }
 function setSetting(key, value) {
   q('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').run(key, String(value));
@@ -394,12 +487,12 @@ function bootstrap() {
     pk.run(cellcom, '500 جيجا', 1, 500);
     pk.run(cellcom, '300 جيجا', 2, 300);
     pk.run(cellcom, '100 جيجا', 3, 100);
-    pk.run(co.run('بارتنر', 2, '#12a39a', '').lastInsertRowid, 'باقة بارتنر', 1, null);
-    pk.run(co.run('بيلفون', 3, '#0a74c9', '8997250').lastInsertRowid, 'باقة بيلفون', 1, null);
-    pk.run(co.run('هوت موبايل', 4, '#d7192d', '').lastInsertRowid, 'باقة هوت موبايل', 1, null);
+    pk.run(co.run('بارتنر', 2, '#12a39a', '').lastInsertRowid, 'رزمة بارتنر', 1, null);
+    pk.run(co.run('بيلفون', 3, '#0a74c9', '8997250').lastInsertRowid, 'رزمة بيلفون', 1, null);
+    pk.run(co.run('هوت موبايل', 4, '#d7192d', '').lastInsertRowid, 'رزمة هوت موبايل', 1, null);
     pkFull.run(co.run('الكروت', 5, '#ff5722', '').lastInsertRowid, 'كرت 70 شيكل', 1, 70, 70);
   }
 }
 bootstrap();
 
-module.exports = { db, q, tx, getSettings, setSetting, artCredentials, gmailCredentials, DB_FILE };
+module.exports = { db, q, tx, getSettings, setSetting, artCredentials, qlCredentials, lyCredentials, gmailCredentials, DB_FILE };

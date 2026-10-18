@@ -1,7 +1,7 @@
 'use strict';
 const { q } = require('../db');
-const { fail, now, round, str, num, isBlank, dateOrNull, imageOrEmpty } = require('../util');
-const { LIVE_OFFER, priceFor, notify, prefixesOf } = require('../domain');
+const { fail, now, round, str, num, int, isBlank, dateOrNull, imageOrEmpty } = require('../util');
+const { LIVE_OFFER, priceFor, notify, prefixesOf, AGENT_PRICE_SQL, AGENT_PRICE_JOINS } = require('../domain');
 const { route, ADMIN, ANY } = require('../router');
 
 const companyView = (c, admin) => ({
@@ -18,30 +18,85 @@ function amount(v, label) {
   return Math.round(n);
 }
 
-const packageAttrs = (p) => ({
-  dataGb: p.data_gb, minutes: p.minutes, sms: p.sms, tag: p.tag, description: p.description, art: !!p.art_card_id,
-});
+// What every screen needs to sell a package. The supplier behind it (who activates it) is the manager's only, so an
+// agent gets what the selling screens need, never a name: auto (a supplier carries it out for "auto" companies),
+// pool (its number is picked from a list of free numbers) and waits (never activated directly: it waits for the supplier).
+const packageAttrs = (p, admin = false) => {
+  const ref = p.art_card_id || '';
+  return {
+    dataGb: p.data_gb, minutes: p.minutes, sms: p.sms, tag: p.tag, description: p.description,
+    kind: p.kind === 'card' ? 'card' : 'invoice', days: p.days ?? null,
+    // ownSim: the number comes with its SIM (a Layan new line), so no SIM is asked for.
+    auto: !!ref, pool: /^(qln|lyn):/.test(ref), waits: /^(qln?|lyn?):/.test(ref), ownSim: /^lyn:/.test(ref),
+    ...(admin ? { art: !!ref, ql: /^qln:/.test(ref), ...require('../quickline').supplierOfRef(ref) } : {}),
+  };
+};
+// The supplier's code for a package, shown to the manager. art-topup refs end in the code (ic:12345); QuickLine's
+// carry the package id and the duration (ql:2564:30), and the id is what identifies it there.
+const artCode = (ref) => {
+  const parts = String(ref || '').split(':').filter(Boolean);
+  if (!parts.length) return '';
+  return /^qln?$/.test(parts[0]) ? parts[1] || '' : parts.slice(-1)[0] || '';
+};
 
 // Agents see their own price (and never the cost); packages without a price are hidden from them.
 function catalogFor(user) {
   const companies = q(`SELECT c.*, (SELECT COUNT(*) FROM packages p WHERE p.company_id = c.id) AS package_count
                        FROM companies c ORDER BY c.sort, c.id`).all();
   if (user.role === 'agent') {
-    const packages = q(`SELECT p.*, c.name AS company_name, COALESCE(ap.price, p.price) AS agent_price, ap.price IS NOT NULL AS custom
+    const packages = q(`SELECT p.*, c.name AS company_name, ${AGENT_PRICE_SQL} AS agent_price, ap.price IS NOT NULL AS custom
                         FROM packages p JOIN companies c ON c.id = p.company_id
-                        LEFT JOIN agent_prices ap ON ap.package_id = p.id AND ap.agent_id = ?
-                        WHERE p.active = 1 ORDER BY c.sort, c.id, p.sort, p.id`).all(user.id)
+                        ${AGENT_PRICE_JOINS}
+                        WHERE p.active = 1 AND p.id NOT IN (SELECT package_id FROM agent_hidden WHERE agent_id = ?)
+                        ORDER BY c.sort, c.id, p.sort, p.id`).all(user.id, user.id, user.id)
       .filter((p) => p.agent_price > 0)
       .map((p) => ({ id: p.id, name: p.name, companyId: p.company_id, companyName: p.company_name, price: round(p.agent_price), custom: !!p.custom, active: true, ...packageAttrs(p) }));
     return { companies: companies.map((c) => companyView(c, false)), packages };
   }
   const packages = q(`SELECT p.*, c.name AS company_name FROM packages p JOIN companies c ON c.id = p.company_id
                       ORDER BY c.sort, c.id, p.sort, p.id`).all()
-    .map((p) => ({ id: p.id, name: p.name, companyId: p.company_id, companyName: p.company_name, cost: round(p.cost), price: round(p.price), shopPrice: p.shop_price === null ? null : round(p.shop_price), active: !!p.active, sort: p.sort, ...packageAttrs(p) }));
+    .map((p) => ({ id: p.id, name: p.name, companyId: p.company_id, companyName: p.company_name, cost: round(p.cost), price: round(p.price), shopPrice: p.shop_price === null ? null : round(p.shop_price), active: !!p.active, sort: p.sort,
+      artCode: artCode(p.art_card_id), edited: !!p.edited, gone: !!p.gone_at, artPrice: p.art_price === null ? null : round(p.art_price),
+      // The supplier's price changed and the manager has not decided yet.
+      artPending: p.art_price !== null && round(p.art_price) !== round(p.cost) && (p.art_ack === null || round(p.art_ack) !== round(p.art_price)),
+      ...packageAttrs(p, true) }));
   return { companies: companies.map((c) => companyView(c, true)), packages };
 }
 
 route('GET', '/api/catalog', ANY, ({ user }) => catalogFor(user));
+
+// The same new line on offer from two suppliers (same company, same data, same duration): the manager is told which
+// is cheaper to activate, and can keep that one for the agents. Only new lines compare: a recharge card (art-topup,
+// any prepaid number) and an extension (QuickLine, only its own lines) are not the same service.
+// A group is listed while acting on it saves something: a pricier one is on sale, or the cheapest is hidden.
+route('GET', '/api/catalog/similar', ADMIN, () => {
+  const rows = q(`SELECT p.id, p.name, p.cost, p.price, p.active, p.days, p.data_gb, p.art_card_id, p.company_id, c.name AS company_name
+                  FROM packages p JOIN companies c ON c.id = p.company_id
+                  WHERE p.kind = 'invoice' AND p.cost > 0 AND p.data_gb > 0
+                    AND (p.art_card_id LIKE 'inv:%' OR p.art_card_id LIKE 'qln:%' OR p.art_card_id LIKE 'lyn:%')`).all();
+  const groups = new Map();
+  for (const r of rows) {
+    const key = `${r.company_id}|${r.data_gb}|${r.days || 30}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(r);
+  }
+  const source = (ref) => (/^qln:/.test(ref) ? 'QuickLine' : /^lyn:/.test(ref) ? 'ليان' : 'art-topup');
+  const out = [];
+  for (const [key, list] of groups) {
+    if (new Set(list.map((r) => source(r.art_card_id))).size < 2) continue;
+    list.sort((a, b) => a.cost - b.cost);
+    const cheapest = list[0];
+    const pricierOnSale = list.filter((r) => r.active && r.cost > cheapest.cost);
+    if (!pricierOnSale.length && cheapest.active) continue;
+    out.push({
+      key, companyId: cheapest.company_id, companyName: cheapest.company_name, dataGb: cheapest.data_gb, days: cheapest.days || 30,
+      cheapestId: cheapest.id,
+      saving: round(Math.max(0, ...pricierOnSale.map((r) => r.cost)) - cheapest.cost),
+      packages: list.map((r) => ({ id: r.id, name: r.name, source: source(r.art_card_id), cost: round(r.cost), price: round(r.price), active: !!r.active })),
+    });
+  }
+  return out.sort((a, b) => b.saving - a.saving);
+});
 
 // ----- companies -----
 function companyFields(body, existing = {}) {
@@ -75,7 +130,7 @@ route('PUT', '/api/companies/:id', ADMIN, ({ params, body }) => {
 }, { maxBody: 600 * 1024 });
 
 route('DELETE', '/api/companies/:id', ADMIN, ({ params }) => {
-  if (q('SELECT 1 FROM packages WHERE company_id = ?').get(Number(params.id))) fail(400, 'احذف باقات الشركة أولاً');
+  if (q('SELECT 1 FROM packages WHERE company_id = ?').get(Number(params.id))) fail(400, 'احذف رزم الشركة أولاً');
   q('DELETE FROM companies WHERE id = ?').run(Number(params.id));
   return { ok: true };
 });
@@ -86,17 +141,20 @@ function packageFields(body, existing = {}) {
   const companyId = Number(pick('companyId', 'company_id'));
   if (!q('SELECT 1 FROM companies WHERE id = ?').get(companyId)) fail(400, 'اختر الشركة');
   const name = str(pick('name'), 80);
-  if (!name) fail(400, 'اكتب اسم الباقة');
+  if (!name) fail(400, 'اكتب اسم الرزمة');
   const cost = num(pick('cost') ?? 0, 'التكلفة');
   const price = num(pick('price') ?? 0, 'السعر');
   if (cost < 0 || price < 0) fail(400, 'الأسعار لا تكون سالبة');
   const dataRaw = pick('dataGb', 'data_gb');
   const dataGb = isBlank(dataRaw) ? null : num(dataRaw, 'حجم الإنترنت');
+  const kind = pick('kind') === 'card' ? 'card' : 'invoice';
+  const daysRaw = pick('days');
+  const days = isBlank(daysRaw) ? null : int(Number(daysRaw), 'عدد الأيام', 1, 730);
   const shopRaw = pick('shopPrice', 'shop_price');
   const shopPrice = isBlank(shopRaw) ? null : num(shopRaw, 'سعر الزبون');
   if (shopPrice !== null && shopPrice < 0) fail(400, 'الأسعار لا تكون سالبة');
   return {
-    companyId, name, cost, price, dataGb, shopPrice: shopPrice || null,
+    companyId, name, cost, price, dataGb, kind, days, shopPrice: shopPrice || null,
     minutes: body.minutes === undefined ? existing.minutes ?? null : amount(body.minutes, 'الدقائق'),
     sms: body.sms === undefined ? existing.sms ?? null : amount(body.sms, 'الرسائل'),
     tag: str(pick('tag') ?? '', 30),
@@ -108,17 +166,23 @@ function packageFields(body, existing = {}) {
 route('POST', '/api/packages', ADMIN, ({ body }) => {
   const f = packageFields(body);
   const sort = q('SELECT COALESCE(MAX(sort), 0) + 1 AS s FROM packages WHERE company_id = ?').get(f.companyId).s;
-  return { id: Number(q(`INSERT INTO packages (company_id, name, cost, price, active, sort, data_gb, minutes, sms, tag, description, shop_price)
-                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-    .run(f.companyId, f.name, f.cost, f.price, f.active, sort, f.dataGb, f.minutes, f.sms, f.tag, f.description, f.shopPrice).lastInsertRowid) };
+  return { id: Number(q(`INSERT INTO packages (company_id, name, cost, price, active, sort, data_gb, minutes, sms, tag, description, kind, days, edited, shop_price)
+                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`)
+    .run(f.companyId, f.name, f.cost, f.price, f.active, sort, f.dataGb, f.minutes, f.sms, f.tag, f.description, f.kind, f.days, f.shopPrice).lastInsertRowid) };
 });
 
+// Changing what agents see or pay marks the package as edited, so an art-topup sync keeps the manager's version.
+// Showing or hiding it alone does not.
 route('PUT', '/api/packages/:id', ADMIN, ({ params, body }) => {
   const p = q('SELECT * FROM packages WHERE id = ?').get(Number(params.id));
-  if (!p) fail(404, 'الباقة غير موجودة');
+  if (!p) fail(404, 'الرزمة غير موجودة');
   const f = packageFields(body, p);
+  const edited = p.edited || ['name', 'price', 'dataGb', 'description', 'days', 'minutes', 'sms', 'kind'].some((k) => body[k] !== undefined);
   q(`UPDATE packages SET company_id = ?, name = ?, cost = ?, price = ?, active = ?, data_gb = ?, minutes = ?, sms = ?, tag = ?, description = ?,
-     shop_price = ? WHERE id = ?`).run(f.companyId, f.name, f.cost, f.price, f.active, f.dataGb, f.minutes, f.sms, f.tag, f.description, f.shopPrice, p.id);
+       kind = ?, days = ?, edited = ?, shop_price = ? WHERE id = ?`)
+    .run(f.companyId, f.name, f.cost, f.price, f.active, f.dataGb, f.minutes, f.sms, f.tag, f.description, f.kind, f.days, edited ? 1 : 0, f.shopPrice, p.id);
+  // Shown or hidden by the manager: from now on the manager's decision, not something a sync undoes.
+  if (body.active !== undefined) q('UPDATE packages SET gone_at = NULL WHERE id = ?').run(p.id);
   return { ok: true };
 });
 
@@ -156,7 +220,7 @@ function offerFields(body, existing = {}) {
   const title = str(body.title ?? existing.title, 100);
   if (!title) fail(400, 'اكتب عنوان العرض');
   const packageId = body.packageId === undefined ? existing.package_id ?? null : body.packageId ? Number(body.packageId) : null;
-  if (packageId && !q('SELECT 1 FROM packages WHERE id = ?').get(packageId)) fail(400, 'الباقة غير موجودة');
+  if (packageId && !q('SELECT 1 FROM packages WHERE id = ?').get(packageId)) fail(400, 'الرزمة غير موجودة');
   const rawPrice = body.offerPrice === undefined ? existing.offer_price : body.offerPrice;
   const offerPrice = isBlank(rawPrice) ? null : num(rawPrice, 'سعر العرض');
   if (offerPrice !== null && offerPrice < 0) fail(400, 'السعر لا يكون سالباً');

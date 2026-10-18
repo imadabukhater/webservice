@@ -32,7 +32,7 @@ export function lineCard(l) {
   const renewable = ['active', 'frozen'].includes(l.status);
   return `<article class="item clickable" data-action="open-line" data-id="${l.id}">
     <div class="item-top">${companyLogo(companyById(l.companyId) || (l.companyName ? { name: l.companyName, color: l.companyColor } : null), 'xs')}
-      <div class="grow">${phone(l.number)}<div class="item-sub"><span>${esc(l.customerName || 'بدون اسم')}</span><span>${esc(l.packageLabel)}</span>${isAdmin() ? `<span>${esc(l.agentName)}</span>` : ''}${l.esim ? '<span>eSIM</span>' : ''}${l.kind === 'external' ? '<span>شحن كرت</span>' : ''}</div></div>
+      <div class="grow">${phone(l.number)}<div class="item-sub"><span>${esc(l.customerName || 'بدون اسم')}</span><span>${esc(l.packageLabel)}</span>${isAdmin() ? `<span>${esc(l.agentName)}</span>` : ''}${l.esim ? '<span>eSIM</span>' : ''}${l.kind === 'external' ? '<span>دفع مسبق</span>' : ''}</div></div>
       ${statePill(l.state)}</div>
     ${l.status !== 'disconnected' && l.status !== 'pending'
       ? `<div class="line-meter"><div class="meter ${meter}"><i style="width:${pct}%"></i></div>
@@ -89,8 +89,8 @@ export async function lineAction(line, name) {
     }
     case 'disconnect':
       return sheet({
-        title: `فصل ${fmtPhone(line.number)}`,
-        body: `<div class="msg">${icon('alert')}<span>الفصل نهائي: لا يمكن إعادة الخط من التطبيق، ويصبح الرقم متاحاً للتفعيل من جديد.</span></div>
+        title: `فصل نهائي ${fmtPhone(line.number)}`,
+        body: `<div class="msg">${icon('alert')}<span>الفصل نهائي: لا يمكن إعادة الخط من التطبيق، ويصبح الرقم متاحاً للتفعيل من جديد. خطوط QuickLine تُفصل هناك نهائياً أيضاً.</span></div>
           <div class="field"><label for="dc-reason">السبب <span class="opt">(اختياري)</span></label><input class="input" id="dc-reason" name="reason"></div>`,
         submit: 'فصل الرقم', danger: true,
         async onSubmit(form) { await act(line, 'disconnect', { reason: field(form, 'reason') }); return finish('تم فصل الرقم'); },
@@ -116,7 +116,8 @@ export async function lineAction(line, name) {
         title: `تعديل ${fmtPhone(line.number)}`, subtitle: `خط ${esc(line.agentName)}`,
         body: `<div class="field"><label for="cr-number">رقم الهاتف</label><input class="input ltr" id="cr-number" name="number" inputmode="tel" value="${esc(fmtPhone(line.number))}"></div>
           <div class="field"><label for="cr-pkg">الرزمة</label><select class="input" id="cr-pkg" name="packageId">
-            ${pkgs.map((p) => `<option value="${p.id}" ${p.id === line.packageId ? 'selected' : ''}>${esc(`${p.companyName} ${p.name}`)}</option>`).join('')}</select></div>
+            ${pkgs.map((p) => `<option value="${p.id}" ${p.id === line.packageId ? 'selected' : ''}>${esc(`${p.companyName} ${p.name} — ${{ ql: 'QuickLine', art: 'art-topup', ly: 'ليان' }[p.supplier] || 'يدوي'}`)}</option>`).join('')}</select>
+            <span class="hint">جهة التفعيل تتبع الرزمة: لتغييرها اختر رزمة الجهة المطلوبة.</span></div>
           <div class="field"><label for="cr-price">السعر المخصوم من الوكيل (₪)</label><input class="input ltr" id="cr-price" name="price" type="number" min="0" step="0.01" inputmode="decimal" value="${line.price}">
             <div class="hint" id="cr-diff"></div></div>
           <div class="field"><label for="cr-reason">السبب <span class="opt">(اختياري — يظهر في السجل)</span></label><input class="input" id="cr-reason" name="reason"></div>`,
@@ -184,14 +185,15 @@ export async function openLine(id) {
   const actions = [];
   const add = (key, label, ic, color = '', danger = false) => actions.push(`<button type="button" data-line-act="${key}" class="${danger ? 'danger' : ''}"><span class="tile sm ${color}">${icon(ic)}</span>${label}</button>`);
   if (['active', 'frozen'].includes(l.status)) add('renew', 'تمديد الرزمة', 'repeat', 'green');
-  if (l.status === 'active') add('freeze', 'تجميد الرقم', 'snow', 'violet');
+  if (l.status === 'active') add('freeze', 'تجميد الرقم (فصل مؤقت)', 'snow', 'violet');
   if (l.status === 'frozen') add('unfreeze', 'إلغاء التجميد', 'play', 'green');
   if (['active', 'frozen'].includes(l.status)) add('swap', 'تبديل الشريحة', 'sim', 'amber');
   add('edit', 'بيانات الزبون والملاحظات', 'edit');
   if (l.status !== 'disconnected') add('share', 'مشاركة التفاصيل مع الزبون', 'share', 'cyan');
   if (admin && l.status !== 'disconnected') add('correct', 'تعديل الرقم والرزمة والسعر', 'edit', 'amber');
   if (admin && l.status !== 'disconnected') add('move', 'نقل لوكيل آخر', 'swap', 'amber');
-  if (['active', 'frozen'].includes(l.status) && (admin || !l.direct)) add('disconnect', 'فصل الرقم', 'power', 'red', true);
+  // A final disconnect is the manager's; agents freeze (a temporary disconnect).
+  if (['active', 'frozen'].includes(l.status) && admin) add('disconnect', 'فصل نهائي', 'power', 'red', true);
   if (admin) add('delete', 'حذف الخط (تصحيح خطأ)', 'trash', 'red', true);
 
   const kv = [
@@ -203,13 +205,15 @@ export async function openLine(id) {
     ['آخر مدة', monthsText(l.months)],
     ['المبلغ المدفوع', money(l.price)],
     ['سعر الزبون', l.customerPrice !== null ? money(l.customerPrice) : '—'],
-    ...(admin ? [['الوكيل', esc(l.agentName)], ['التكلفة', money(l.cost)]] : []),
+    ...(admin ? [['الوكيل', esc(l.agentName)], ['التكلفة', money(l.cost)],
+      // Who activates the line: the manager's only (the server never sends it to agents).
+      ['جهة التفعيل', `${esc(l.source || 'يدوي')}${l.status !== 'disconnected' ? ` <button type="button" class="btn btn-sm btn-ghost" data-line-act="correct">${icon('edit')}تغيير</button>` : ''}`]] : []),
     ...(l.note ? [['ملاحظة', esc(l.note)]] : []),
   ];
 
   sheet({
     title: fmtPhone(l.number),
-    subtitle: `${statePill(l.state)} ${l.kind === 'external' ? '<span class="pill plain">شحن كرت</span>' : ''} ${l.port ? '<span class="pill plain">تحويل رقم</span>' : ''} ${l.direct ? '<span class="pill plain">تفعيل مباشر</span>' : ''}`,
+    subtitle: `${statePill(l.state)} ${l.kind === 'external' ? '<span class="pill plain">دفع مسبق</span>' : ''} ${l.port ? '<span class="pill plain">تحويل رقم</span>' : ''} ${l.direct ? '<span class="pill plain">تفعيل مباشر</span>' : ''}`,
     wide: true,
     body: `
       <div class="summary-pkg">${companyLogo(co, 'sm')}<div class="grow"><b>${esc(l.packageLabel)}</b><small>${esc(co?.name || '')}</small></div></div>
@@ -248,7 +252,7 @@ function listHtml() {
   const list = filtered();
   if (!list.length) {
     return V.lines.length ? empty('search', 'لا توجد أرقام بهذا الفلتر', 'غيّر الفلتر أو كلمة البحث.')
-      : empty('phone', 'لا يوجد مشتركون بعد', 'فعّل أول خط وسيظهر هنا مع تاريخ انتهاء رزمته.', `<a class="btn btn-primary" href="#/new">${icon('userPlus')}مشترك جديد</a>`);
+      : empty('phone', 'لا يوجد مشتركون بعد', 'فعّل أول خط وسيظهر هنا مع تاريخ انتهاء رزمته.', `<a class="btn btn-primary" href="#/new">${icon('userPlus')}اشتراك فاتورة جديدة</a>`);
   }
   return `<div class="grid-cards">${list.slice(0, V.shown).map(lineCard).join('')}</div>
     ${list.length > V.shown ? `<button class="btn btn-block" data-action="more">عرض المزيد (${list.length - V.shown})</button>` : ''}`;
@@ -279,7 +283,7 @@ export default {
       <div class="toolbar">
         <div class="search-box">${icon('search', 'i lead')}<input class="input" id="sub-q" type="search" placeholder="رقم، اسم زبون، شريحة أو رزمة" value="${esc(V.q)}" autocomplete="off"></div>
         ${isAdmin() ? `<select class="input" id="sub-agent" style="width:auto;min-width:180px"><option value="">كل الوكلاء</option>${V.agents.map((a) => `<option value="${a.id}" ${String(a.id) === String(V.agentId) ? 'selected' : ''}>${esc(a.name)}</option>`).join('')}</select>` : ''}
-        <a class="btn btn-primary" href="#/new">${icon('userPlus')}<span class="hide-xs">مشترك جديد</span></a>
+        <a class="btn btn-primary" href="#/new">${icon('userPlus')}<span class="hide-xs">اشتراك فاتورة جديدة</span></a>
       </div>
       <div class="chips" id="sub-chips">${chipsHtml()}</div>
       <div id="sub-list">${listHtml()}</div>`;

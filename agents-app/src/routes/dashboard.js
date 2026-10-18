@@ -1,5 +1,6 @@
 'use strict';
 const { q, getSettings } = require('../db');
+const { forAgent } = require('../privacy');
 const { now, round, str, dayStart, monthStart, tzFrom, arCount } = require('../util');
 const D = require('../domain');
 const { route, ANY } = require('../router');
@@ -23,6 +24,15 @@ function lineCounts(agentId) {
   }
   return c;
 }
+
+// The developer's share of every sale: a fixed percentage of what agents paid (sales less refunds and corrections, the
+// same "revenue" as below). It changes no price, is not a setting the manager can edit (only DEV_FEE_PERCENT on the
+// server), and is shown to the manager only, with the profit left after it.
+const DEV_FEE_PERCENT = Number(process.env.DEV_FEE_PERCENT ?? 2);
+const withDevFee = (s) => {
+  const devFee = round(s.revenue * DEV_FEE_PERCENT / 100);
+  return { ...s, devFee, net: round(s.profit - devFee) };
+};
 
 // Sales since a moment: counts, money spent by agents, manager profit, and the agent's own margin over customer prices.
 function sales(from, agentId) {
@@ -56,8 +66,8 @@ route('GET', '/api/dashboard', ANY, ({ user, query }) => {
   const agents = q("SELECT COUNT(*) AS n, COALESCE(SUM(balance), 0) AS b, COALESCE(SUM(CASE WHEN balance < 0 THEN -balance ELSE 0 END), 0) AS debt FROM users WHERE role = 'agent'").get();
   return {
     agents: agents.n, balances: round(agents.b), debt: round(agents.debt),
-    lines: lineCounts(null), today: sales(today, null), month: sales(month, null),
-    openTasks: q("SELECT COUNT(*) AS n FROM tasks WHERE status = 'open'").get().n,
+    lines: lineCounts(null), today: withDevFee(sales(today, null)), month: withDevFee(sales(month, null)), devFeePercent: DEV_FEE_PERCENT,
+    openTasks: q("SELECT COUNT(*) AS n FROM tasks WHERE status = 'open' AND auto_status NOT IN ('sending','sent')").get().n,
     sims: q("SELECT COUNT(*) AS n FROM sims WHERE status = 'available'").get().n,
   };
 });
@@ -111,6 +121,8 @@ route('GET', '/api/ops', ANY, ({ user, query }) => {
   let where = '1=1';
   const agentId = user.role === 'agent' ? user.id : Number(query.agentId) || null;
   if (agentId) { where += ' AND agent_id = ?'; args.push(agentId); }
+  // What the supplier did with a line (QuickLine's state changes) is the manager's only.
+  if (user.role === 'agent') where += " AND type != 'supplier_sync'";
   if (query.type) { where += ' AND type = ?'; args.push(String(query.type)); }
   if (query.types) {
     const types = String(query.types).split(',').filter((x) => /^[a-z_]+$/.test(x)).slice(0, 20);
@@ -131,7 +143,11 @@ route('GET', '/api/notifications', ANY, ({ user }) => {
   const warn = s.warnDays * 864e5;
   const items = q(`SELECT * FROM notifications WHERE user_id = ? OR (user_id IS NULL AND role = ?) ORDER BY ts DESC, id DESC LIMIT 40`)
     .all(user.id, user.role)
-    .map((n) => ({ id: n.id, kind: n.kind, title: n.title, body: n.body, link: n.link, ts: n.ts, unread: n.ts > user.notif_seen_at }));
+    // An agent's notifications never name the supplier (including ones stored by earlier versions).
+    .map((n) => {
+      const text = user.role === 'admin' ? (x) => x : forAgent;
+      return { id: n.id, kind: n.kind, title: text(n.title), body: text(n.body), link: n.link, ts: n.ts, unread: n.ts > user.notif_seen_at };
+    });
   const alerts = [];
   const numbers = { one: 'رقم واحد', two: 'رقمان', few: 'أرقام', many: 'رقماً' };
   const agentWhere = user.role === 'agent' ? 'AND agent_id = ?' : '';
@@ -147,7 +163,8 @@ route('GET', '/api/notifications', ANY, ({ user }) => {
     }
     tasks = expiring + q("SELECT COUNT(*) AS n FROM tasks WHERE agent_id = ? AND status = 'open'").get(user.id).n;
   } else {
-    const open = q("SELECT COUNT(*) AS n FROM tasks WHERE status = 'open'").get().n;
+    // What waits for the manager: open requests no supplier is carrying out right now.
+    const open = q("SELECT COUNT(*) AS n FROM tasks WHERE status = 'open' AND auto_status NOT IN ('sending','sent')").get().n;
     if (open) alerts.push({ kind: 'tasks', title: `${arCount(open, { one: 'طلب واحد', two: 'طلبان', few: 'طلبات', many: 'طلباً' })} بانتظارك`, body: 'تفعيل وشحن وتمديد خطوط، أرصدة، تحويل أرقام وeSIM', link: '#/tasks' });
     if (s.lowBalance > 0) {
       const low = q("SELECT COUNT(*) AS n FROM users WHERE role = 'agent' AND active = 1 AND balance + credit_limit < ?").get(s.lowBalance).n;

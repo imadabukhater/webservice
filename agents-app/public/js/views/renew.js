@@ -16,32 +16,40 @@ const addMonths = (ts, m) => {
 // Renew (extend) a line: same company, any of its packages or running offers, 1–12 months.
 export async function openRenew(line) {
   const admin = isAdmin();
-  const [cat, offers, extra] = await Promise.all([
+  const [cat, offers, extra, fit] = await Promise.all([
     loadCatalog(),
     api.get('/api/offers'),
     admin ? Promise.all([api.get(`/api/agents/${line.agentId}/prices`), api.get('/api/agents')]) : api.get('/api/me'),
+    api.get(`/api/lines/${line.id}/renew-options`),
   ]);
   let available;
   let priceOf;
   if (admin) {
     const [prices, agents] = extra;
-    const map = new Map(prices.map((r) => [r.packageId, r.customPrice ?? r.defaultPrice]));
+    const map = new Map(prices.map((r) => [r.packageId, r.agentPrice]));
     priceOf = (p) => map.get(p.id) ?? p.price;
     available = agents.find((a) => a.id === line.agentId)?.available ?? 0;
   } else {
     priceOf = (p) => p.price;
     available = extra.user.available;
   }
-  const pkgs = cat.packages.filter((p) => p.companyId === line.companyId && p.active && priceOf(p) > 0);
+  // Extending a number means recharging it: offer the company's recharge cards, or its invoices when it has no cards.
+  // Only packages that can extend this line, as the server works them out (it knows who activates the line; this
+  // screen does not need to).
+  const canRenew = new Set(fit.packageIds);
+  const fits = (p) => canRenew.has(p.id);
+  const sellable = cat.packages.filter((p) => p.companyId === line.companyId && p.active && priceOf(p) > 0 && fits(p));
+  const cards = sellable.filter((p) => p.kind === 'card');
+  const pkgs = cards.length ? cards : sellable;
   const options = [
     ...offers.filter((o) => o.live && o.packageId && pkgs.some((p) => p.id === o.packageId)).map((o) => {
       const p = pkgs.find((x) => x.id === o.packageId);
       return { key: `o${o.id}`, offerId: o.id, packageId: p.id, title: o.title, sub: `${p.companyName} ${p.name}`, unit: o.offerPrice ?? priceOf(p), regular: priceOf(p), campaign: true };
     }),
-    ...pkgs.map((p) => ({ key: `p${p.id}`, packageId: p.id, title: `${p.companyName} ${p.name}`, sub: p.dataGb ? `${fmtNum(p.dataGb)} GB` : '', unit: priceOf(p) })),
+    ...pkgs.map((p) => ({ key: `p${p.id}`, packageId: p.id, title: `${p.companyName} ${p.name}`, sub: [p.dataGb ? `${fmtNum(p.dataGb)} GB` : '', p.days ? `${p.days} يوماً` : ''].filter(Boolean).join(' · '), unit: priceOf(p), days: p.days })),
   ];
   if (!options.length) {
-    sheet({ title: `تمديد ${line.number}`, body: empty('box', 'لا توجد رزم متاحة لهذه الشركة', 'اطلب من المدير تحديد سعر رزم الشركة.') });
+    sheet({ title: `تمديد ${line.number}`, body: empty('box', 'لا توجد رزمة تمديد متاحة لهذا الخط', 'اطلب من المدير تحديد سعر رزمة التمديد الخاصة به.') });
     return;
   }
   const st = { key: (options.find((o) => o.packageId === line.packageId && !o.offerId) || options[0]).key, months: 1 };
@@ -75,14 +83,14 @@ export async function openRenew(line) {
       st.key = form.querySelector('input[name=opt]:checked')?.value || st.key;
       const o = options.find((x) => x.key === st.key);
       const unit = admin && field(form, 'unitPrice') !== '' ? Number(field(form, 'unitPrice')) : o.unit;
-      const total = round(unit * st.months);
+      const total = round(unit * (o.days ? 1 : st.months));
       const after = round(available - total);
       const cp = field(form, 'customerPrice');
       const box = form.querySelector('#rn-preview');
       box.innerHTML = `
-        <div class="total-row"><span>الإجمالي · ${monthsText(st.months)}</span><b>${fmtMoney(total)}</b></div>
+        <div class="total-row"><span>الإجمالي · ${o.days ? `${o.days} يوماً` : monthsText(st.months)}</span><b>${fmtMoney(total)}</b></div>
         <div class="balance-preview" style="margin-top:10px">
-          <div><span>تنتهي في</span><b>${fmtDate(addMonths(base, st.months))}</b></div>
+          <div><span>تنتهي في</span><b>${fmtDate(o.days ? base + o.days * 864e5 : addMonths(base, st.months))}</b></div>
           <div><span>المتاح قبل</span><b>${fmtMoney(available)}</b></div>
           <div><span>المتاح بعد</span><b class="${after < 0 ? 'minus' : ''}">${fmtMoney(after)}</b></div></div>
         ${!admin && companyById(line.companyId)?.activation !== 'direct' ? `<div class="msg info" style="margin-top:10px">${icon('tasks')}<span>يُرسَل التمديد إلى المدير لتنفيذه، ويُمدَّد الخط عند التنفيذ.</span></div>` : ''}
@@ -132,7 +140,7 @@ export default {
     return `
       <div class="search-box">${icon('search', 'i lead')}<input class="input" id="renew-q" type="search" placeholder="ابحث برقم الهاتف، اسم الزبون أو الشريحة" value="${esc(V.q)}" autocomplete="off"></div>
       <p class="small muted">الأرقام التي تنتهي قريباً تظهر أولاً. الرقم غير موجود في قائمتك؟ <a href="#/new?type=external">اشحن له كرت</a>.</p>
-      <div class="list" id="renew-list">${list.length ? list.slice(0, 80).map(renewCard).join('') : empty('phone', V.lines.length ? 'لا توجد نتائج' : 'لا توجد أرقام مفعّلة بعد', V.lines.length ? 'جرّب جزءاً آخر من الرقم أو الاسم.' : 'فعّل أول مشترك من «مشترك جديد».')}</div>`;
+      <div class="list" id="renew-list">${list.length ? list.slice(0, 80).map(renewCard).join('') : empty('phone', V.lines.length ? 'لا توجد نتائج' : 'لا توجد أرقام مفعّلة بعد', V.lines.length ? 'جرّب جزءاً آخر من الرقم أو الاسم.' : 'فعّل أول مشترك من «اشتراك فاتورة جديدة».')}</div>`;
   },
   mount(root) {
     root.querySelector('#renew-q').addEventListener('input', (e) => {
