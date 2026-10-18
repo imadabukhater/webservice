@@ -179,6 +179,62 @@ CREATE TABLE IF NOT EXISTS invoices (
   paid_date INTEGER,
   notes TEXT NOT NULL DEFAULT ''
 );
+CREATE TABLE IF NOT EXISTS shop_orders (
+  id INTEGER PRIMARY KEY,
+  code TEXT NOT NULL UNIQUE,
+  package_id INTEGER REFERENCES packages(id) ON DELETE SET NULL,
+  package_label TEXT NOT NULL,
+  kind TEXT NOT NULL DEFAULT 'recharge' CHECK (kind IN ('recharge','new')),
+  number TEXT NOT NULL,
+  sim TEXT NOT NULL DEFAULT '',
+  customer_name TEXT NOT NULL DEFAULT '',
+  contact_phone TEXT NOT NULL DEFAULT '',
+  amount REAL NOT NULL,
+  status TEXT NOT NULL DEFAULT 'awaiting_payment'
+    CHECK (status IN ('awaiting_payment','verifying','review','paid','rejected','cancelled')),
+  pay_phone TEXT NOT NULL DEFAULT '',
+  pay_name TEXT NOT NULL DEFAULT '',
+  pay_reference TEXT NOT NULL DEFAULT '',
+  receipt TEXT NOT NULL DEFAULT '',
+  proof_at INTEGER,
+  mail_id INTEGER,
+  paid_at INTEGER,
+  verified_by TEXT NOT NULL DEFAULT '',
+  line_id INTEGER,
+  error TEXT NOT NULL DEFAULT '',
+  response TEXT NOT NULL DEFAULT '',
+  ip TEXT NOT NULL DEFAULT '',
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS payment_mails (
+  id INTEGER PRIMARY KEY,
+  uid_validity INTEGER NOT NULL,
+  uid INTEGER NOT NULL,
+  message_id TEXT NOT NULL DEFAULT '',
+  trusted INTEGER NOT NULL DEFAULT 0,
+  from_addr TEXT NOT NULL DEFAULT '',
+  subject TEXT NOT NULL DEFAULT '',
+  received_at INTEGER NOT NULL,
+  amount REAL,
+  reference TEXT NOT NULL DEFAULT '',
+  sender_phone TEXT NOT NULL DEFAULT '',
+  sender_name TEXT NOT NULL DEFAULT '',
+  body TEXT NOT NULL DEFAULT '',
+  order_id INTEGER,
+  created_at INTEGER NOT NULL,
+  UNIQUE (uid_validity, uid)
+);
+CREATE TABLE IF NOT EXISTS api_keys (
+  id INTEGER PRIMARY KEY,
+  agent_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  key_hash TEXT NOT NULL UNIQUE,
+  prefix TEXT NOT NULL,
+  active INTEGER NOT NULL DEFAULT 1,
+  created_at INTEGER NOT NULL,
+  last_used_at INTEGER
+);
 `);
 if (!tableSql('lines')) db.exec(LINES_DDL);
 
@@ -230,6 +286,8 @@ CREATE INDEX IF NOT EXISTS sims_agent ON sims(agent_id, status);
 CREATE INDEX IF NOT EXISTS tasks_status ON tasks(status, created_at);
 CREATE INDEX IF NOT EXISTS notif_user ON notifications(user_id, ts);
 CREATE INDEX IF NOT EXISTS messages_agent ON messages(agent_id, id);
+CREATE INDEX IF NOT EXISTS shop_orders_status ON shop_orders(status, created_at);
+CREATE INDEX IF NOT EXISTS payment_mails_order ON payment_mails(order_id, received_at);
 `);
 
 // Columns added after version 1.
@@ -259,6 +317,8 @@ ensureColumn('tasks', 'auto_status', "auto_status TEXT NOT NULL DEFAULT ''");
 ensureColumn('tasks', 'auto_note', "auto_note TEXT NOT NULL DEFAULT ''");
 ensureColumn('tasks', 'auto_ref', "auto_ref TEXT NOT NULL DEFAULT ''");
 ensureColumn('tasks', 'auto_at', 'auto_at INTEGER');
+// Customer shop: the price customers pay (null = not sold in the shop).
+ensureColumn('packages', 'shop_price', 'shop_price REAL');
 
 const q = (sql) => db.prepare(sql);
 
@@ -278,6 +338,7 @@ function tx(fn) {
 const DEFAULT_SETTINGS = {
   app_name: 'بوابة الوكلاء', warn_days: '7', low_balance: '50', esim_fee: '7', support_whatsapp: '972567725080',
   art_user: '', art_pass: '', art_markup: '15',
+  shop_enabled: '0', jawwalpay_number: '', jawwalpay_name: '', gmail_user: '', gmail_pass: '', mail_from: 'jawwal', shop_agent_id: '',
 };
 function getSettings() {
   const out = { ...DEFAULT_SETTINGS };
@@ -292,7 +353,18 @@ function getSettings() {
     artUser: out.art_user,
     artConfigured: !!(out.art_user && out.art_pass),
     artMarkup: Math.max(0, Number(out.art_markup) || 0),
+    // Customer shop paid by JawwalPay; transfers are confirmed from the notification emails in Gmail.
+    shopEnabled: out.shop_enabled === '1',
+    jawwalpayNumber: out.jawwalpay_number,
+    jawwalpayName: out.jawwalpay_name,
+    gmailUser: out.gmail_user,
+    gmailConfigured: !!(out.gmail_user && out.gmail_pass),
+    mailFrom: out.mail_from,
   };
+}
+function gmailCredentials() {
+  const get = (k) => q('SELECT value FROM settings WHERE key = ?').get(k)?.value || '';
+  return { user: get('gmail_user'), pass: get('gmail_pass').replace(/\s+/g, '') };
 }
 function artCredentials() {
   const get = (k) => q('SELECT value FROM settings WHERE key = ?').get(k)?.value || '';
@@ -330,4 +402,4 @@ function bootstrap() {
 }
 bootstrap();
 
-module.exports = { db, q, tx, getSettings, setSetting, artCredentials, DB_FILE };
+module.exports = { db, q, tx, getSettings, setSetting, artCredentials, gmailCredentials, DB_FILE };

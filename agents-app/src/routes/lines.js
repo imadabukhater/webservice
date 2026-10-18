@@ -40,7 +40,10 @@ route('GET', '/api/lines/:id', ANY, ({ user, params }) => {
 });
 
 // ----- activation -----
-route('POST', '/api/lines', ANY, ({ user, body }) => tx(() => {
+route('POST', '/api/lines', ANY, ({ user, body }) => tx(() => createLine(user, body)));
+
+// A new line or card recharge sold by `user` (an agent, or the manager for body.agentId). Runs inside the caller's transaction.
+function createLine(user, body) {
   const isAdmin = user.role === 'admin';
   const agent = isAdmin ? D.getAgent(body.agentId) : D.getUser(user.id);
   if (!agent.active) fail(403, 'حساب الوكيل موقوف');
@@ -107,7 +110,7 @@ route('POST', '/api/lines', ANY, ({ user, body }) => tx(() => {
     D.openSaleTask({ type, agent, lineId, amount: total, note });
   }
   return { line: view(lineId, user), balance: round(agent.balance), available: round(agent.balance + agent.credit_limit) };
-}));
+}
 
 // ----- renewal (existing customer, or a card recharge on a known number) -----
 route('POST', '/api/lines/:id/renew', ANY, ({ user, params, body }) => tx(() => renewLine(user, D.getLine(params.id, user), body)));
@@ -289,4 +292,4 @@ route('DELETE', '/api/lines/:id', ADMIN, ({ user, params, query }) => tx(() => {
   return { ok: true };
 }));
 
-module.exports = { monthsText, applyRenewal };
+module.exports = { monthsText, applyRenewal, createLine };

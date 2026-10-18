@@ -1,0 +1,178 @@
+'use strict';
+// Customer shop orders paid by JawwalPay. A transfer is confirmed automatically when an authenticated JawwalPay email
+// in Gmail has the order's exact amount and matches what the customer reported (reference, sender phone or name).
+// Anything else goes to the manager. Paid orders are sold through the "shop" agent account, so they follow the same
+// rules as any agent sale (manual companies become tasks, art-topup recharges run automatically).
+const crypto = require('node:crypto');
+const { q, tx, getSettings, setSetting, gmailCredentials } = require('./db');
+const { ApiError, now } = require('./util');
+const { hashPassword } = require('./passwords');
+const D = require('./domain');
+const mail = require('./mail');
+const { createLine } = require('./routes/lines');
+
+const VERIFY_MS = Number(process.env.SHOP_VERIFY_MS) || 15 * 60_000; // unmatched this long after the proof: to the manager
+const LOOP_MS = Number(process.env.MAIL_LOOP_MS) || 60_000;
+const IMAP = {
+  host: process.env.IMAP_HOST || 'imap.gmail.com',
+  port: Number(process.env.IMAP_PORT) || 993,
+  secure: process.env.IMAP_SECURE !== '0',
+};
+
+// ---------- the shop's agent account ----------
+function shopAgent() {
+  const id = Number(q("SELECT value FROM settings WHERE key = 'shop_agent_id'").get()?.value);
+  const u = id && q("SELECT * FROM users WHERE id = ? AND role = 'agent'").get(id);
+  if (u) return u;
+  let username = 'shop';
+  for (let i = 2; q('SELECT 1 FROM users WHERE username = ?').get(username); i++) username = `shop${i}`;
+  const newId = Number(q("INSERT INTO users (role, name, username, password_hash, notes, created_at) VALUES ('agent', 'متجر الزبائن', ?, ?, ?, ?)")
+    .run(username, hashPassword(crypto.randomBytes(18).toString('base64url')), 'حساب طلبات موقع الزبائن', now()).lastInsertRowid);
+  setSetting('shop_agent_id', newId);
+  return D.getUser(newId);
+}
+
+// ---------- matching ----------
+const normRef = (s) => String(s || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+const nameTokens = (s) => String(s || '').toLowerCase()
+  .replace(/[ً-ْـ]/g, '').replace(/[أإآ]/g, 'ا').replace(/ى/g, 'ي').replace(/ة/g, 'ه')
+  .replace(/[^\p{L}\s]/gu, ' ').split(/\s+/).filter((t) => t.length > 1);
+
+// Every word of the shorter name appears in the longer one; a single word must be the whole name.
+function namesMatch(a, b) {
+  const A = nameTokens(a);
+  const B = nameTokens(b);
+  if (!A.length || !B.length) return false;
+  const [short, long] = A.length <= B.length ? [A, B] : [B, A];
+  if (short.length < 2 && A.join(' ') !== B.join(' ')) return false;
+  return short.every((t) => long.includes(t));
+}
+
+function matchReason(o, m) {
+  if (o.pay_reference && m.reference && normRef(o.pay_reference) === normRef(m.reference)) return 'الرقم المرجعي';
+  if (o.pay_phone && m.sender_phone && o.pay_phone === m.sender_phone) return 'رقم المحوِّل';
+  if (o.pay_name && m.sender_name && namesMatch(o.pay_name, m.sender_name)) return 'اسم المحوِّل';
+  return null;
+}
+
+// The oldest unused authenticated email with the order's amount that matches the customer's details.
+function findMail(o) {
+  const mails = q(`SELECT * FROM payment_mails WHERE order_id IS NULL AND trusted = 1 AND amount IS NOT NULL
+                   AND ABS(amount - ?) < 0.005 AND received_at >= ? ORDER BY received_at, id`).all(o.amount, o.created_at - 10 * 60_000);
+  const rank = { 'الرقم المرجعي': 0, 'رقم المحوِّل': 1, 'اسم المحوِّل': 2 };
+  let best = null;
+  for (const m of mails) {
+    const by = matchReason(o, m);
+    if (by && (!best || rank[by] < rank[best.by])) best = { mail: m, by };
+  }
+  return best;
+}
+
+// Marks the order paid with this email (each email pays one order only). Returns true when it did.
+function claim(orderId, mailId, verifiedBy) {
+  return tx(() => {
+    const o = q("SELECT * FROM shop_orders WHERE id = ? AND status IN ('awaiting_payment','verifying','review')").get(orderId);
+    if (!o) return false;
+    if (mailId && !q('UPDATE payment_mails SET order_id = ? WHERE id = ? AND order_id IS NULL').run(orderId, mailId).changes) return false;
+    q("UPDATE shop_orders SET status = 'paid', mail_id = ?, paid_at = ?, verified_by = ?, updated_at = ? WHERE id = ?")
+      .run(mailId || null, now(), verifiedBy, now(), orderId);
+    return true;
+  });
+}
+
+function tryMatch(orderId) {
+  const o = q("SELECT * FROM shop_orders WHERE id = ? AND status IN ('verifying','review')").get(orderId);
+  if (!o) return false;
+  const hit = findMail(o);
+  if (!hit || !claim(o.id, hit.mail.id, `تلقائي: ${hit.by}`)) return false;
+  fulfil(o.id);
+  return true;
+}
+
+// ---------- fulfilment ----------
+const ACTOR_NAME = 'موقع الزبائن';
+
+// Credits the shop account with the customer's payment and sells the package from it, in one transaction.
+// A refusal (e.g. the number belongs to another agent) leaves the order paid with the reason, for the manager.
+function fulfil(orderId) {
+  const o = q("SELECT * FROM shop_orders WHERE id = ? AND status = 'paid' AND line_id IS NULL").get(orderId);
+  if (!o) return null;
+  try {
+    const r = tx(() => {
+      const agent = shopAgent();
+      D.changeBalance(agent, o.amount, { type: 'topup', actor: { id: null, name: ACTOR_NAME }, detail: `دفعة جوال باي — طلب ${o.code}` });
+      const sale = createLine(agent, {
+        kind: o.kind === 'recharge' ? 'external' : 'new', number: o.number, sim: o.sim, packageId: o.package_id, months: 1,
+        customerName: o.customer_name, customerPrice: o.amount, note: `طلب موقع الزبائن ${o.code}`,
+      });
+      q("UPDATE shop_orders SET line_id = ?, error = '', updated_at = ? WHERE id = ?").run(sale.line.id, now(), o.id);
+      return sale;
+    });
+    D.notify({ role: 'admin', kind: 'line', title: `طلب زبون مدفوع ${o.code}`, body: `${o.package_label} — ${o.number} — ${o.amount} ₪`, link: '#/shop' });
+    return r;
+  } catch (e) {
+    if (!(e instanceof ApiError)) console.error('shop fulfil', e);
+    q('UPDATE shop_orders SET error = ?, updated_at = ? WHERE id = ?').run(String(e.message).slice(0, 300), now(), o.id);
+    D.notify({ role: 'admin', kind: 'task', title: `طلب زبون مدفوع يحتاج تدخلك ${o.code}`, body: e.message, link: '#/shop' });
+    return null;
+  }
+}
+
+// ---------- mailbox ----------
+function saveMail(uidValidity, uid, raw, settings) {
+  const p = mail.parseMessage(raw);
+  if (p.messageId && q('SELECT 1 FROM payment_mails WHERE message_id = ?').get(p.messageId)) return null;
+  const term = String(settings.mailFrom || '').toLowerCase();
+  if (term && !p.from.toLowerCase().includes(term)) return null;
+  const f = mail.parseJawwalPay(p, { ownNumber: settings.jawwalpayNumber });
+  const trusted = mail.authenticSender(p, term) ? 1 : 0;
+  return Number(q(`INSERT OR IGNORE INTO payment_mails (uid_validity, uid, message_id, trusted, from_addr, subject, received_at, amount, reference,
+                     sender_phone, sender_name, body, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    .run(uidValidity, uid, p.messageId, trusted, p.from.slice(0, 200), p.subject.slice(0, 300), p.date || now(), f.amount, f.reference || '',
+      f.senderPhone || '', (f.senderName || '').slice(0, 80), p.text.slice(0, 8000), now()).lastInsertRowid) || null;
+}
+
+// Proofs nobody could match in time go to the manager.
+function escalate() {
+  const late = q("SELECT * FROM shop_orders WHERE status = 'verifying' AND proof_at < ?").all(now() - VERIFY_MS);
+  for (const o of late) {
+    q("UPDATE shop_orders SET status = 'review', updated_at = ? WHERE id = ? AND status = 'verifying'").run(now(), o.id);
+    D.notify({ role: 'admin', kind: 'task', title: `تحقق يدوي من تحويل ${o.code}`, body: `${o.amount} ₪ — لم يُعثر على إشعار مطابق`, link: '#/shop' });
+  }
+  return late.length;
+}
+
+let running = null;
+// Reads new payment emails, then matches waiting orders. force: read even with no order waiting (the manager's check).
+function checkMail({ force = false } = {}) {
+  if (!running) running = run(force).finally(() => { running = null; });
+  return running;
+}
+
+async function run(force) {
+  const s = getSettings();
+  const open = q("SELECT MIN(created_at) AS t, COUNT(*) AS n FROM shop_orders WHERE status IN ('awaiting_payment','verifying','review') AND created_at > ?")
+    .get(now() - 3 * 864e5);
+  let fetched = 0;
+  if (s.gmailConfigured && (force || open.n)) {
+    const creds = gmailCredentials();
+    const last = q('SELECT uid_validity FROM payment_mails ORDER BY id DESC LIMIT 1').get()?.uid_validity;
+    const known = new Set(last ? q('SELECT uid FROM payment_mails WHERE uid_validity = ?').all(last).map((r) => r.uid) : []);
+    const since = Math.max(now() - 3 * 864e5, (open.t || now()) - 864e5);
+    const { uidValidity, messages } = await mail.fetchMail({ ...IMAP, user: creds.user, pass: creds.pass, since, from: s.mailFrom, known });
+    // Messages that were skipped (other senders) are remembered too, so they are not downloaded again.
+    for (const m of messages) {
+      if (saveMail(uidValidity, m.uid, m.raw, s)) fetched++;
+      else q("INSERT OR IGNORE INTO payment_mails (uid_validity, uid, received_at, created_at, order_id) VALUES (?, ?, ?, ?, 0)").run(uidValidity, m.uid, now(), now());
+    }
+  }
+  let matched = 0;
+  for (const { id } of q("SELECT id FROM shop_orders WHERE status IN ('verifying','review') ORDER BY proof_at").all()) if (tryMatch(id)) matched++;
+  const escalated = escalate();
+  return { fetched, matched, escalated };
+}
+
+const timer = setInterval(() => { checkMail().catch((e) => console.error('shop mail', e.message)); }, LOOP_MS);
+timer.unref();
+
+module.exports = { shopAgent, namesMatch, matchReason, findMail, claim, tryMatch, fulfil, checkMail, escalate, saveMail };

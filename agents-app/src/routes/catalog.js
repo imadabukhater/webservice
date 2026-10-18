@@ -37,7 +37,7 @@ function catalogFor(user) {
   }
   const packages = q(`SELECT p.*, c.name AS company_name FROM packages p JOIN companies c ON c.id = p.company_id
                       ORDER BY c.sort, c.id, p.sort, p.id`).all()
-    .map((p) => ({ id: p.id, name: p.name, companyId: p.company_id, companyName: p.company_name, cost: round(p.cost), price: round(p.price), active: !!p.active, sort: p.sort, ...packageAttrs(p) }));
+    .map((p) => ({ id: p.id, name: p.name, companyId: p.company_id, companyName: p.company_name, cost: round(p.cost), price: round(p.price), shopPrice: p.shop_price === null ? null : round(p.shop_price), active: !!p.active, sort: p.sort, ...packageAttrs(p) }));
   return { companies: companies.map((c) => companyView(c, true)), packages };
 }
 
@@ -92,8 +92,11 @@ function packageFields(body, existing = {}) {
   if (cost < 0 || price < 0) fail(400, 'الأسعار لا تكون سالبة');
   const dataRaw = pick('dataGb', 'data_gb');
   const dataGb = isBlank(dataRaw) ? null : num(dataRaw, 'حجم الإنترنت');
+  const shopRaw = pick('shopPrice', 'shop_price');
+  const shopPrice = isBlank(shopRaw) ? null : num(shopRaw, 'سعر الزبون');
+  if (shopPrice !== null && shopPrice < 0) fail(400, 'الأسعار لا تكون سالبة');
   return {
-    companyId, name, cost, price, dataGb,
+    companyId, name, cost, price, dataGb, shopPrice: shopPrice || null,
     minutes: body.minutes === undefined ? existing.minutes ?? null : amount(body.minutes, 'الدقائق'),
     sms: body.sms === undefined ? existing.sms ?? null : amount(body.sms, 'الرسائل'),
     tag: str(pick('tag') ?? '', 30),
@@ -105,17 +108,17 @@ function packageFields(body, existing = {}) {
 route('POST', '/api/packages', ADMIN, ({ body }) => {
   const f = packageFields(body);
   const sort = q('SELECT COALESCE(MAX(sort), 0) + 1 AS s FROM packages WHERE company_id = ?').get(f.companyId).s;
-  return { id: Number(q(`INSERT INTO packages (company_id, name, cost, price, active, sort, data_gb, minutes, sms, tag, description)
-                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-    .run(f.companyId, f.name, f.cost, f.price, f.active, sort, f.dataGb, f.minutes, f.sms, f.tag, f.description).lastInsertRowid) };
+  return { id: Number(q(`INSERT INTO packages (company_id, name, cost, price, active, sort, data_gb, minutes, sms, tag, description, shop_price)
+                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    .run(f.companyId, f.name, f.cost, f.price, f.active, sort, f.dataGb, f.minutes, f.sms, f.tag, f.description, f.shopPrice).lastInsertRowid) };
 });
 
 route('PUT', '/api/packages/:id', ADMIN, ({ params, body }) => {
   const p = q('SELECT * FROM packages WHERE id = ?').get(Number(params.id));
   if (!p) fail(404, 'الباقة غير موجودة');
   const f = packageFields(body, p);
-  q(`UPDATE packages SET company_id = ?, name = ?, cost = ?, price = ?, active = ?, data_gb = ?, minutes = ?, sms = ?, tag = ?, description = ?
-     WHERE id = ?`).run(f.companyId, f.name, f.cost, f.price, f.active, f.dataGb, f.minutes, f.sms, f.tag, f.description, p.id);
+  q(`UPDATE packages SET company_id = ?, name = ?, cost = ?, price = ?, active = ?, data_gb = ?, minutes = ?, sms = ?, tag = ?, description = ?,
+     shop_price = ? WHERE id = ?`).run(f.companyId, f.name, f.cost, f.price, f.active, f.dataGb, f.minutes, f.sms, f.tag, f.description, f.shopPrice, p.id);
   return { ok: true };
 });
 

@@ -67,6 +67,8 @@ export function openPackageForm(p, companyId) {
       <div class="field"><label for="pk-desc">وصف قصير <span class="opt">(اختياري)</span></label><input class="input" id="pk-desc" name="description" value="${esc(p?.description || '')}"></div>
       <div class="row2"><div class="field"><label for="pk-cost">التكلفة عليك (₪/شهر)</label><input class="input ltr" id="pk-cost" name="cost" type="number" min="0" step="0.01" inputmode="decimal" value="${p ? round(p.cost) : ''}"></div>
         <div class="field"><label for="pk-price">سعر الوكيل الافتراضي (₪/شهر)</label><input class="input ltr" id="pk-price" name="price" type="number" min="0" step="0.01" inputmode="decimal" value="${p ? round(p.price) : ''}"></div></div>
+      <div class="field"><label for="pk-shop">سعر الزبون في المتجر (₪) <span class="opt">(فارغ = لا تظهر في متجر الزبائن)</span></label>
+        <input class="input ltr" id="pk-shop" name="shopPrice" type="number" min="0" step="0.01" inputmode="decimal" value="${p?.shopPrice ?? ''}"></div>
       <div class="hint" id="pk-margin"></div>
       <label class="switch-row"><span class="grow"><b>متاحة للتفعيل</b><small>أوقفها لإخفائها عن الوكلاء مؤقتاً</small></span><input class="switch" type="checkbox" name="active" ${!p || p.active ? 'checked' : ''}></label>`,
     submit: p ? 'حفظ' : 'إضافة الرزمة',
@@ -80,7 +82,7 @@ export function openPackageForm(p, companyId) {
     async onSubmit(form) {
       const body = {
         companyId: Number(field(form, 'companyId')), name: field(form, 'name'), dataGb: field(form, 'dataGb'), minutes: field(form, 'minutes'), sms: field(form, 'sms'),
-        tag: field(form, 'tag'), description: field(form, 'description'), cost: field(form, 'cost') || 0, price: field(form, 'price') || 0, active: form.elements.active.checked,
+        tag: field(form, 'tag'), description: field(form, 'description'), cost: field(form, 'cost') || 0, price: field(form, 'price') || 0, shopPrice: field(form, 'shopPrice'), active: form.elements.active.checked,
       };
       await (p ? api.put(`/api/packages/${p.id}`, body) : api.post('/api/packages', body));
       await loadCatalog(true);

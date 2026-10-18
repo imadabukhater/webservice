@@ -1,138 +1,82 @@
 'use strict';
-const { q, tx, getSettings } = require('../db');
-const { fail, round } = require('../util');
-const { route, ADMIN, AUTH } = require('../router');
+// Invoices the manager issues to agents: pending until marked paid or rejected.
+const { q } = require('../db');
+const { fail, now, round, str, num, dateOrNull } = require('../util');
+const D = require('../domain');
+const { route, ADMIN, ANY } = require('../router');
 
-// Get next invoice number
-function getNextInvoiceNumber() {
-  const last = q('SELECT invoice_number FROM invoices ORDER BY id DESC LIMIT 1').get();
-  if (!last) return 'INV-1001';
-  const num = parseInt(last.invoice_number.replace('INV-', '')) + 1;
-  return `INV-${num}`;
+const SELECT = 'SELECT i.*, u.name AS agent_name FROM invoices i LEFT JOIN users u ON u.id = i.agent_id';
+
+const invoiceView = (i) => ({
+  id: i.id, invoiceNumber: i.invoice_number, agentId: i.agent_id, agentName: i.agent_name || '',
+  amount: round(i.amount), description: i.description, status: i.status,
+  issueDate: i.issue_date, dueDate: i.due_date, paidDate: i.paid_date, notes: i.notes,
+});
+
+function getInvoice(id, user) {
+  const i = q(`${SELECT} WHERE i.id = ?`).get(Number(id));
+  if (!i || (user.role === 'agent' && i.agent_id !== user.id)) fail(404, 'الفاتورة غير موجودة');
+  return i;
 }
 
-// List invoices (filtered for agents, all for admin)
-route('GET', '/api/invoices', AUTH, (req, res, user) => {
-  const invoices = user.role === 'admin'
-    ? q('SELECT i.*, u.name as agent_name FROM invoices i LEFT JOIN users u ON i.agent_id = u.id ORDER BY i.id DESC').all()
-    : q('SELECT i.*, u.name as agent_name FROM invoices i LEFT JOIN users u ON i.agent_id = u.id WHERE i.agent_id = ? ORDER BY i.id DESC').all(user.id);
+function pending(id) {
+  const i = q('SELECT * FROM invoices WHERE id = ?').get(Number(id));
+  if (!i) fail(404, 'الفاتورة غير موجودة');
+  if (i.status !== 'pending') fail(400, 'تمت معالجة هذه الفاتورة من قبل');
+  return i;
+}
 
-  return invoices.map((inv) => ({
-    id: inv.id,
-    invoiceNumber: inv.invoice_number,
-    agentId: inv.agent_id,
-    agentName: inv.agent_name,
-    amount: inv.amount,
-    description: inv.description,
-    status: inv.status,
-    issueDate: inv.issue_date,
-    dueDate: inv.due_date,
-    paidDate: inv.paid_date,
-    notes: inv.notes,
-  }));
+function nextNumber() {
+  const max = q("SELECT MAX(CAST(SUBSTR(invoice_number, 5) AS INTEGER)) AS n FROM invoices WHERE invoice_number LIKE 'INV-%'").get().n;
+  return `INV-${Math.max(1000, max || 0) + 1}`;
+}
+
+function amountOf(v) {
+  const a = num(v, 'المبلغ');
+  if (!(a > 0)) fail(400, 'المبلغ يجب أن يكون أكبر من صفر');
+  return a;
+}
+
+route('GET', '/api/invoices', ANY, ({ user }) => (user.role === 'admin'
+  ? q(`${SELECT} ORDER BY i.id DESC LIMIT 2000`).all()
+  : q(`${SELECT} WHERE i.agent_id = ? ORDER BY i.id DESC LIMIT 2000`).all(user.id)).map(invoiceView));
+
+route('GET', '/api/invoices/:id', ANY, ({ user, params }) => invoiceView(getInvoice(params.id, user)));
+
+route('POST', '/api/invoices', ADMIN, ({ body }) => {
+  const agent = D.getAgent(body.agentId);
+  const amount = amountOf(body.amount);
+  const number = nextNumber();
+  const id = Number(q('INSERT INTO invoices (invoice_number, agent_id, amount, description, issue_date, due_date, notes) VALUES (?, ?, ?, ?, ?, ?, ?)')
+    .run(number, agent.id, amount, str(body.description, 300), now(), dateOrNull(body.dueDate), str(body.notes, 500)).lastInsertRowid);
+  D.notify({ userId: agent.id, kind: 'balance', title: `فاتورة جديدة ${number}`, body: `${amount} ₪`, link: '#/invoices' });
+  return invoiceView(q(`${SELECT} WHERE i.id = ?`).get(id));
 });
 
-// Get single invoice
-route('GET', '/api/invoices/:id', AUTH, (req, res, user, id) => {
-  const inv = q('SELECT i.*, u.name as agent_name FROM invoices i LEFT JOIN users u ON i.agent_id = u.id WHERE i.id = ?').get(id);
-  if (!inv) fail(404, 'الفاتورة غير موجودة');
-  if (user.role !== 'admin' && inv.agent_id !== user.id) fail(403, 'غير مصرح لك');
-
-  return {
-    id: inv.id,
-    invoiceNumber: inv.invoice_number,
-    agentId: inv.agent_id,
-    agentName: inv.agent_name,
-    amount: inv.amount,
-    description: inv.description,
-    status: inv.status,
-    issueDate: inv.issue_date,
-    dueDate: inv.due_date,
-    paidDate: inv.paid_date,
-    notes: inv.notes,
-  };
+route('PUT', '/api/invoices/:id', ADMIN, ({ params, body }) => {
+  const i = pending(params.id);
+  q('UPDATE invoices SET amount = ?, description = ?, due_date = ?, notes = ? WHERE id = ?').run(
+    body.amount === undefined ? i.amount : amountOf(body.amount),
+    body.description === undefined ? i.description : str(body.description, 300),
+    body.dueDate === undefined ? i.due_date : dateOrNull(body.dueDate),
+    body.notes === undefined ? i.notes : str(body.notes, 500), i.id);
+  return invoiceView(q(`${SELECT} WHERE i.id = ?`).get(i.id));
 });
 
-// Create invoice (admin only)
-route('POST', '/api/invoices', ADMIN, (req, res) => {
-  const { agentId, amount, description, dueDate, notes } = req.body;
-
-  if (!agentId || amount === undefined) fail(400, 'معرّف الوكيل والمبلغ مطلوب');
-  if (amount <= 0) fail(400, 'المبلغ يجب أن يكون أكبر من صفر');
-
-  const agent = q('SELECT id FROM users WHERE id = ?').get(agentId);
-  if (!agent) fail(404, 'الوكيل غير موجود');
-
-  const invoiceNumber = getNextInvoiceNumber();
-  const now = Date.now();
-
-  const id = tx(() => {
-    q('INSERT INTO invoices (invoice_number, agent_id, amount, description, status, issue_date, due_date, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
-      .run(invoiceNumber, agentId, amount, description || '', 'pending', now, dueDate || null, notes || '');
-    return q('SELECT last_insert_rowid() as id').get().id;
-  });
-
-  return { id, invoiceNumber };
-});
-
-// Update invoice (admin only)
-route('PUT', '/api/invoices/:id', ADMIN, (req, res, id) => {
-  const { amount, description, dueDate, notes } = req.body;
-
-  const inv = q('SELECT status FROM invoices WHERE id = ?').get(id);
-  if (!inv) fail(404, 'الفاتورة غير موجودة');
-  if (inv.status !== 'pending') fail(400, 'لا يمكن تعديل فاتورة غير معلقة');
-
-  if (amount !== undefined && amount <= 0) fail(400, 'المبلغ يجب أن يكون أكبر من صفر');
-
-  tx(() => {
-    q('UPDATE invoices SET amount = COALESCE(?, amount), description = COALESCE(?, description), due_date = COALESCE(?, due_date), notes = COALESCE(?, notes) WHERE id = ?')
-      .run(amount, description, dueDate, notes, id);
-  });
-
+route('POST', '/api/invoices/:id/pay', ADMIN, ({ params }) => {
+  const i = pending(params.id);
+  q("UPDATE invoices SET status = 'paid', paid_date = ? WHERE id = ?").run(now(), i.id);
   return { ok: true };
 });
 
-// Mark invoice as paid (admin only)
-route('POST', '/api/invoices/:id/pay', ADMIN, (req, res, id) => {
-  const inv = q('SELECT agent_id, amount, status FROM invoices WHERE id = ?').get(id);
-  if (!inv) fail(404, 'الفاتورة غير موجودة');
-  if (inv.status === 'paid') fail(400, 'الفاتورة مدفوعة بالفعل');
-  if (inv.status === 'rejected') fail(400, 'لا يمكن دفع فاتورة مرفوضة');
-
-  tx(() => {
-    q('UPDATE invoices SET status = ?, paid_date = ? WHERE id = ?')
-      .run('paid', Date.now(), id);
-  });
-
+route('POST', '/api/invoices/:id/reject', ADMIN, ({ params }) => {
+  const i = pending(params.id);
+  q("UPDATE invoices SET status = 'rejected' WHERE id = ?").run(i.id);
   return { ok: true };
 });
 
-// Reject invoice (admin only)
-route('POST', '/api/invoices/:id/reject', ADMIN, (req, res, id) => {
-  const inv = q('SELECT status FROM invoices WHERE id = ?').get(id);
-  if (!inv) fail(404, 'الفاتورة غير موجودة');
-  if (inv.status !== 'pending') fail(400, 'لا يمكن رفض فاتورة غير معلقة');
-
-  tx(() => {
-    q('UPDATE invoices SET status = ? WHERE id = ?')
-      .run('rejected', id);
-  });
-
+route('DELETE', '/api/invoices/:id', ADMIN, ({ params }) => {
+  const i = pending(params.id);
+  q('DELETE FROM invoices WHERE id = ?').run(i.id);
   return { ok: true };
 });
-
-// Delete invoice (admin only, pending only)
-route('DELETE', '/api/invoices/:id', ADMIN, (req, res, id) => {
-  const inv = q('SELECT status FROM invoices WHERE id = ?').get(id);
-  if (!inv) fail(404, 'الفاتورة غير موجودة');
-  if (inv.status !== 'pending') fail(400, 'يمكن حذف الفواتير المعلقة فقط');
-
-  tx(() => {
-    q('DELETE FROM invoices WHERE id = ?').run(id);
-  });
-
-  return { ok: true };
-});
-
-module.exports = {};

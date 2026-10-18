@@ -83,6 +83,16 @@ route('PUT', '/api/settings', ADMIN, ({ body }) => {
     if (m < 0 || m > 200) fail(400, 'نسبة الزيادة بين 0 و200%');
     setSetting('art_markup', m);
   }
+  if (body.shopEnabled !== undefined) setSetting('shop_enabled', body.shopEnabled ? '1' : '0');
+  if (body.jawwalpayNumber !== undefined) {
+    const n = String(body.jawwalpayNumber).replace(/[^\d+]/g, '');
+    if (n && !/^\+?\d{9,13}$/.test(n)) fail(400, 'رقم محفظة جوال باي غير صحيح');
+    setSetting('jawwalpay_number', n);
+  }
+  if (body.jawwalpayName !== undefined) setSetting('jawwalpay_name', str(body.jawwalpayName, 80));
+  if (body.gmailUser !== undefined) setSetting('gmail_user', str(body.gmailUser, 120));
+  if (body.gmailPass) setSetting('gmail_pass', String(body.gmailPass).replace(/\s+/g, '').slice(0, 64));
+  if (body.mailFrom !== undefined) setSetting('mail_from', str(body.mailFrom, 80));
   if (body.supportWhatsapp !== undefined) {
     // International format without + or leading zeros, as wa.me expects: 972567725080.
     const wa = String(body.supportWhatsapp).replace(/\D/g, '').replace(/^00/, '');

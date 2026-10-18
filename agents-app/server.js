@@ -16,6 +16,8 @@ require('./src/routes/reports');
 require('./src/routes/messages');
 require('./src/routes/art');
 require('./src/routes/invoices');
+require('./src/routes/shop');
+require('./src/routes/sync');
 require('./src/autoexec');
 const { dispatch } = require('./src/router');
 const { ApiError } = require('./src/util');
@@ -48,7 +50,9 @@ function sendJson(res, status, data) {
 }
 
 function serveStatic(req, res, pathname) {
-  let file = path.normalize(path.join(PUBLIC_DIR, pathname === '/' ? 'index.html' : pathname));
+  // The customer shop is its own page: /shop and anything under it.
+  const page = pathname === '/' ? 'index.html' : /^\/shop(\/|$)/.test(pathname) ? 'shop.html' : pathname;
+  let file = path.normalize(path.join(PUBLIC_DIR, page));
   if (!file.startsWith(PUBLIC_DIR)) {
     res.writeHead(403);
     return res.end();

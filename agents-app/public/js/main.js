@@ -17,18 +17,19 @@ import agents from './views/agents.js';
 import catalog from './views/catalog.js';
 import settings from './views/settings.js';
 import invoices from './views/invoices.js';
+import shop from './views/shop.js';
 
-const VIEWS = { home, new: wizard, renew, subscribers, tasks, messages, reports, offers, payments, agents, catalog, settings, invoices };
+const VIEWS = { home, new: wizard, renew, subscribers, tasks, messages, reports, offers, payments, agents, catalog, settings, invoices, shop };
 
 const NAV = {
   agent: [
     ['home', 'الرئيسية', 'grid'], ['tasks', 'المهام', 'tasks', 'tasks'], ['messages', 'الرسائل', 'msg', 'messages'], ['reports', 'التقارير', 'chart'],
-    ['subscribers', 'المشتركون', 'phone'], ['offers', 'العروض', 'percent'], ['payments', 'المدفوعات', 'wallet'],
+    ['subscribers', 'المشتركون', 'phone'], ['offers', 'العروض', 'percent'], ['payments', 'المدفوعات', 'wallet'], ['invoices', 'الفواتير', 'file'],
   ],
   admin: [
     ['home', 'الرئيسية', 'grid'], ['tasks', 'المهام', 'tasks', 'tasks'], ['messages', 'الرسائل', 'msg', 'messages'], ['reports', 'التقارير', 'chart'],
     ['subscribers', 'المشتركون', 'phone'], ['agents', 'الوكلاء', 'users'], ['catalog', 'الشركات والرزم', 'box'],
-    ['offers', 'العروض', 'percent'], ['payments', 'المدفوعات', 'wallet'], ['invoices', 'الفواتير', 'file'], ['settings', 'الإعدادات', 'sliders'],
+    ['offers', 'العروض', 'percent'], ['payments', 'المدفوعات', 'wallet'], ['invoices', 'الفواتير', 'file'], ['shop', 'متجر الزبائن', 'card'], ['settings', 'الإعدادات', 'sliders'],
   ],
 };
 const TABS = {

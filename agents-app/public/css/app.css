@@ -644,3 +644,36 @@ table.data tfoot th { background: var(--surface-2); font: 600 .86rem var(--f-ui)
 .chat-form .input { flex: 1; resize: none; min-height: 48px; max-height: 140px; line-height: 1.5; padding-block: 11px; }
 .chat-send { width: 50px; min-height: 48px; padding: 0; flex: none; }
 .chat-send svg { transform: scaleX(-1); }
+
+/* ---------- customer shop (/shop) ---------- */
+body.shop { background: var(--bg); }
+.shop-top { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: calc(10px + env(safe-area-inset-top, 0px)) 16px 10px; background: color-mix(in srgb, var(--bg) 88%, transparent); backdrop-filter: blur(10px); border-bottom: 1px solid var(--line); }
+.shop-brand { display: flex; align-items: center; gap: 10px; color: var(--ink); text-decoration: none; font: 600 1.05rem var(--f-ui); }
+.shop-brand .brand-mark { color: var(--primary); }
+.shop-brand .brand-mark svg { width: 30px; height: 30px; }
+.shop-nav { display: flex; gap: 4px; }
+.shop-main { width: min(100%, 1040px); margin: 0 auto; padding: 18px 16px 48px; display: grid; gap: 16px; align-content: start; }
+.shop-hero { padding: 26px 22px; border-radius: var(--r-xl); background: var(--navy); color: #eaf0fd; position: relative; overflow: hidden; }
+.shop-hero::before { content: ""; position: absolute; inset: 0; background: radial-gradient(80% 90% at 90% 0%, rgba(58, 141, 255, .45), transparent 60%); }
+.shop-hero > * { position: relative; }
+.shop-hero h1 { font-size: clamp(1.4rem, 4vw, 2rem); }
+.shop-hero p { color: #b6c6e6; margin-top: 8px; max-width: 52ch; }
+.shop-form, .shop-pay, .shop-status { display: grid; gap: 14px; width: min(100%, 620px); justify-self: center; }
+.shop-form h2, .shop-pay h2 { display: flex; align-items: center; gap: 8px; font-size: 1.05rem; }
+.shop-form h2 svg, .shop-pay h2 svg { width: 22px; height: 22px; color: var(--primary); }
+.shop-amount { font: 700 1.35rem var(--f-ui); }
+.shop-kv { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-top: 1px dashed var(--line); }
+.shop-kv > span { color: var(--muted); font-size: .9rem; min-width: 90px; }
+.shop-kv > b { flex: 1; font: 600 1rem var(--f-ui); }
+.shop-kv > b.ltr { text-align: right; }
+.shop-steps { display: flex; justify-content: center; gap: 6px; flex-wrap: wrap; }
+.shop-steps span { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px 6px 6px; border-radius: 999px; background: var(--surface); border: 1px solid var(--line); color: var(--muted); font: 500 .8rem var(--f-ui); }
+.shop-steps i { width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center; background: var(--surface-3); font-style: normal; font-size: .75rem; }
+.shop-steps i svg { width: 14px; height: 14px; }
+.shop-steps .done { color: var(--good); }
+.shop-steps .done i { background: var(--good); color: #fff; }
+.shop-steps .current { color: var(--ink); border-color: var(--primary); }
+.shop-steps .current i { background: var(--grad); color: #fff; }
+.tile.pulse { animation: shop-pulse 1.6s ease-in-out infinite; }
+@keyframes shop-pulse { 50% { box-shadow: 0 0 0 8px var(--primary-soft); } }
+@media (prefers-reduced-motion: reduce) { .tile.pulse { animation: none; } }
