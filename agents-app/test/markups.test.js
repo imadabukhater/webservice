@@ -38,12 +38,12 @@ test('each agent can have its own profit percentage per system; a price set by h
   const priceOf = async (t, id) => (await ok(call(t, 'GET', '/api/catalog'))).packages.find((p) => p.id === id)?.price;
 
   // ----- no percentage: the packages' own prices -----
-  assert.deepEqual(await ok(call(admin, 'GET', `/api/agents/${a1}/markups`)), { invoice: null, card: null, qlinvoice: null, qlcard: null, lyinvoice: null, lycard: null });
+  assert.deepEqual(await ok(call(admin, 'GET', `/api/agents/${a1}/markups`)), { invoice: null, card: null, qlinvoice: null, qlcard: null, lyinvoice: null, lycard: null, tcinvoice: null, tccard: null });
   assert.equal(await priceOf(t1, inv), 60);
 
   // ----- agent a1: 10% on invoices, 5% on cards; agent a2 untouched -----
   assert.equal((await call(admin, 'PUT', `/api/agents/${a1}/markups`, { invoice: 250 })).status, 400);
-  assert.deepEqual(await ok(call(admin, 'PUT', `/api/agents/${a1}/markups`, { invoice: 10, card: 5 })), { invoice: 10, card: 5, qlinvoice: null, qlcard: null, lyinvoice: null, lycard: null });
+  assert.deepEqual(await ok(call(admin, 'PUT', `/api/agents/${a1}/markups`, { invoice: 10, card: 5 })), { invoice: 10, card: 5, qlinvoice: null, qlcard: null, lyinvoice: null, lycard: null, tcinvoice: null, tccard: null });
   assert.equal(await priceOf(t1, inv), 55, 'cost 50 + 10%');
   assert.equal(await priceOf(t1, card), 42, 'cost 40 + 5%');
   assert.equal(await priceOf(t1, free), 25, 'no cost: the package price stays');

@@ -57,3 +57,18 @@ test('an agent is sent only the settings its screens need', async () => {
   assert.equal(all.qlMarkupCard, 25);
   assert.ok(!JSON.stringify(all).includes('secret-pass'));
 });
+
+test('telecom: the password and the Gmail App password are never sent back', async () => {
+  const admin = (await call(null, 'POST', '/api/login', { username: 'admin', password: 'admin-pass' })).body.token;
+  assert.equal((await call(admin, 'POST', '/api/telecom/mail-check')).status, 400, 'not set up yet');
+  assert.equal((await call(admin, 'PUT', '/api/settings', { tcMailUser: 'not an address' })).status, 400);
+  const s = (await call(admin, 'PUT', '/api/settings', { tcUser: 'me@example.com', tcPass: 'tc-secret-pass', tcMailUser: 'box@gmail.com', tcMailPass: 'abcd efgh ijkl mnop' })).body;
+  assert.equal(s.tcUser, 'me@example.com');
+  assert.equal(s.tcMailUser, 'box@gmail.com');
+  assert.equal(s.tcConfigured, true);
+  assert.equal(s.tcMailConfigured, true);
+  const all = JSON.stringify((await call(admin, 'GET', '/api/settings')).body);
+  assert.ok(!all.includes('tc-secret-pass') && !all.includes('abcd'));
+  // An empty password keeps the saved one.
+  assert.equal((await call(admin, 'PUT', '/api/settings', { tcPass: '', tcMailPass: '' })).body.tcMailConfigured, true);
+});

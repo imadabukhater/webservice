@@ -64,9 +64,10 @@ function notify({ userId = null, role = null, kind, title, body = '', link = '' 
 const LIVE_OFFER = '(o.active = 1 AND (o.starts_at IS NULL OR o.starts_at <= ?) AND (o.ends_at IS NULL OR o.ends_at >= ?))';
 
 // The manager's pricing systems; each can have its own profit percentage for each agent.
-const SYSTEMS = ['invoice', 'card', 'qlinvoice', 'qlcard', 'lyinvoice', 'lycard'];
+const SYSTEMS = ['invoice', 'card', 'qlinvoice', 'qlcard', 'lyinvoice', 'lycard', 'tcinvoice', 'tccard'];
 const SYSTEM_SQL = `CASE WHEN p.art_card_id LIKE 'qln:%' THEN 'qlinvoice' WHEN p.art_card_id LIKE 'ql:%' THEN 'qlcard'
   WHEN p.art_card_id LIKE 'lyn:%' THEN 'lyinvoice' WHEN p.art_card_id LIKE 'ly:%' THEN 'lycard'
+  WHEN p.art_card_id LIKE 'tcn:%' THEN 'tcinvoice' WHEN p.art_card_id LIKE 'tc:%' THEN 'tccard'
   WHEN p.kind = 'card' THEN 'card' ELSE 'invoice' END`;
 // An agent's price for a package: a price set for that package > the agent's percentage for its system, on the cost
 // (only when there is a cost) > the package's own price. The joins take the agent id twice.

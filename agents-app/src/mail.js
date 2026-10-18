@@ -78,9 +78,10 @@ function open({ host, port, secure }) {
   });
 }
 
-// Messages received since `since` (ms) whose sender contains `from`, skipping UIDs in `known`.
-// Returns { uidValidity, messages: [{ uid, raw }] }, newest last, at most `limit`.
-async function fetchMail({ host = 'imap.gmail.com', port = 993, secure = true, user, pass, since, from = '', known = new Set(), limit = 40, timeout = 30000 }) {
+// Messages received since `since` (ms) whose sender contains `from`, skipping UIDs in `known` and UIDs up to `after`.
+// Returns { uidValidity, uidNext, messages: [{ uid, raw }] }, newest last, at most `limit`. uidNext is the UID the next
+// message to arrive will get at least (0 when the server does not say).
+async function fetchMail({ host = 'imap.gmail.com', port = 993, secure = true, user, pass, since, from = '', known = new Set(), after = 0, limit = 40, timeout = 30000 }) {
   let socket;
   try {
     socket = await open({ host, port, secure });
@@ -94,15 +95,18 @@ async function fetchMail({ host = 'imap.gmail.com', port = 993, secure = true, u
     try {
       await c.cmd(`LOGIN ${quote(user)} ${quote(pass)}`);
     } catch (e) {
-      throw new MailError(e instanceof MailError ? 'رفض Gmail الدخول: تأكد من البريد وكلمة مرور التطبيقات (App Password) وتفعيل IMAP' : e.message);
+      const err = new MailError(e instanceof MailError ? 'رفض Gmail الدخول: تأكد من البريد وكلمة مرور التطبيقات (App Password) وتفعيل IMAP' : e.message);
+      err.auth = e instanceof MailError; // the server refused these details: trying again will not help
+      throw err;
     }
     const sel = await c.cmd('SELECT INBOX');
     const uidValidity = Number(sel.map((r) => r.text.match(/UIDVALIDITY (\d+)/i)?.[1]).find(Boolean) || 0);
+    const uidNext = Number(sel.map((r) => r.text.match(/UIDNEXT (\d+)/i)?.[1]).find(Boolean) || 0);
     // Non-ASCII sender filters are applied after parsing (SEARCH would need CHARSET).
     const ascii = from && /^[\x20-\x7e]+$/.test(from);
     const found = await c.cmd(`UID SEARCH SINCE ${imapDate(since)}${ascii ? ` FROM ${quote(from)}` : ''}`);
     const uids = found.flatMap((r) => (/^\* SEARCH/i.test(r.text) ? r.text.replace(/^\* SEARCH/i, '').trim().split(/\s+/).filter(Boolean).map(Number) : []))
-      .filter((u) => !known.has(u)).sort((a, b) => a - b).slice(-limit);
+      .filter((u) => u > after && !known.has(u)).sort((a, b) => a - b).slice(-limit);
     const messages = [];
     for (const uid of uids) {
       const res = await c.cmd(`UID FETCH ${uid} BODY.PEEK[]`);
@@ -110,7 +114,7 @@ async function fetchMail({ host = 'imap.gmail.com', port = 993, secure = true, u
       if (hit) messages.push({ uid, raw: hit.lits[0] });
     }
     await c.cmd('LOGOUT').catch(() => {});
-    return { uidValidity, messages };
+    return { uidValidity, uidNext, messages };
   } finally {
     socket.destroy();
   }

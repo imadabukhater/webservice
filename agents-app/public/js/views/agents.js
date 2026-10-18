@@ -49,7 +49,8 @@ export function openAgentForm(a, onDone) {
 }
 
 // The manager's pricing systems, as in «الشركات والرزم».
-const SYSTEMS = [['invoice', 'الفواتير'], ['card', 'كروت الشحن'], ['qlinvoice', 'خطوط QuickLine الجديدة'], ['qlcard', 'تمديد QuickLine']];
+const SYSTEMS = [['invoice', 'الفواتير'], ['card', 'كروت الشحن'], ['qlinvoice', 'خطوط QuickLine الجديدة'], ['qlcard', 'تمديد QuickLine'],
+  ['lyinvoice', 'خطوط ليان الجديدة'], ['lycard', 'تمديد ليان'], ['tcinvoice', 'خطوط telecom الجديدة'], ['tccard', 'تمديد telecom']];
 
 async function openPrices(a) {
   const [rows, markups] = await Promise.all([api.get(`/api/agents/${a.id}/prices`), api.get(`/api/agents/${a.id}/markups`)]);

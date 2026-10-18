@@ -65,8 +65,8 @@ function createLine(user, body) {
 
   const { pkg, offer, unit: quoted } = D.quote(agent.id, { packageId: body.packageId, offerId: body.offerId });
   // QuickLine's two systems cannot stand in for each other: a new-line package opens a line, an extension extends one.
-  if (kind === 'external' && /^(qln|lyn):/.test(pkg.art_card_id || '')) fail(400, 'هذه رزمة تفعيل خط جديد، وليست شحناً لرقم');
-  if (kind === 'new' && /^(ql|ly):/.test(pkg.art_card_id || '')) fail(400, 'هذه رزمة تمديد: اختر رزمة تفعيل خط جديد');
+  if (kind === 'external' && /^(qln|lyn|tcn):/.test(pkg.art_card_id || '')) fail(400, 'هذه رزمة تفعيل خط جديد، وليست شحناً لرقم');
+  if (kind === 'new' && /^(ql|ly|tc):/.test(pkg.art_card_id || '')) fail(400, 'هذه رزمة تمديد: اختر رزمة تفعيل خط جديد');
   let unit = quoted;
   if (isAdmin && !isBlank(body.unitPrice)) unit = num(body.unitPrice, 'السعر');
   if (unit < 0) fail(400, 'السعر لا يكون سالباً');
@@ -125,7 +125,8 @@ function createLine(user, body) {
   // (the manager's own sales count as already done). eSIM and number porting always go through the manager,
   // or through QuickLine for its packages. A QuickLine new line is never "direct": it must be activated there.
   // Anything sold on a QuickLine package (a new line, or an extension sold as a recharge) is carried out there.
-  const viaQl = !!qlRef || !!lyRef || /^(ql|ly):/.test(pkg.art_card_id || '');
+  // A telecom new line is a request the manager carries out there, whoever sold it.
+  const viaQl = !!qlRef || !!lyRef || /^(ql|ly|tcn?):/.test(pkg.art_card_id || '');
   const direct = D.directCompany(pkg.company_id) && !port && !esim && !viaQl;
   const manual = !direct && !port && !esim && !isAdmin;
   // The eSIM's QR code is kept with the task; it is shown on the line once QuickLine has activated it.
@@ -205,7 +206,7 @@ function renewLine(user, l, body) {
   const renewal = { packageId: pkg.id, label, companyId: pkg.company_id, months, days, total, cost, offerId: offer?.id ?? null, customerPrice };
   // Manual companies: the agent pays now; the line is extended when the manager marks the request done.
   // A QuickLine extension is always carried out there (the manager's too), so it waits for QuickLine.
-  const manual = (!isAdmin && !D.directCompany(pkg.company_id)) || /^(ql|ly):/.test(pkg.art_card_id || '');
+  const manual = (!isAdmin && !D.directCompany(pkg.company_id)) || /^(ql|ly|tc):/.test(pkg.art_card_id || '');
   if (!manual) applyRenewal(l.id, renewal);
   D.changeBalance(agent, -total, {
     type: 'renew', actor: user, lineId: l.id, number: l.number, cost, profit: total - cost, package: label, customerPrice,
@@ -280,6 +281,9 @@ route('POST', '/api/lines/:id/action', ANY, ({ user, params, body }) => tx(() =>
     // A Layan line's state is not changed there automatically yet: the manager is told to do it.
     if (/^lyn?:/.test(ref || '')) {
       D.notify({ role: 'admin', kind: 'task', title: `ليان: ${a.label} ${l.number}`, body: `غيّر حالة الرقم في ليان يدوياً (${a.label}).`, link: '#/tasks' });
+    }
+    if (/^tcn?:/.test(ref || '')) {
+      D.notify({ role: 'admin', kind: 'task', title: `telecom: ${a.label} ${l.number}`, body: `غيّر حالة الرقم في telecom يدوياً (${a.label}).`, link: '#/tasks' });
     }
   }
   return { line: view(l.id, user) };

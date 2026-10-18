@@ -116,7 +116,7 @@ export async function lineAction(line, name) {
         title: `تعديل ${fmtPhone(line.number)}`, subtitle: `خط ${esc(line.agentName)}`,
         body: `<div class="field"><label for="cr-number">رقم الهاتف</label><input class="input ltr" id="cr-number" name="number" inputmode="tel" value="${esc(fmtPhone(line.number))}"></div>
           <div class="field"><label for="cr-pkg">الرزمة</label><select class="input" id="cr-pkg" name="packageId">
-            ${pkgs.map((p) => `<option value="${p.id}" ${p.id === line.packageId ? 'selected' : ''}>${esc(`${p.companyName} ${p.name} — ${{ ql: 'QuickLine', art: 'art-topup', ly: 'ليان' }[p.supplier] || 'يدوي'}`)}</option>`).join('')}</select>
+            ${pkgs.map((p) => `<option value="${p.id}" ${p.id === line.packageId ? 'selected' : ''}>${esc(`${p.companyName} ${p.name} — ${{ ql: 'QuickLine', art: 'art-topup', ly: 'ليان', tc: 'telecom' }[p.supplier] || 'يدوي'}`)}</option>`).join('')}</select>
             <span class="hint">جهة التفعيل تتبع الرزمة: لتغييرها اختر رزمة الجهة المطلوبة.</span></div>
           <div class="field"><label for="cr-price">السعر المخصوم من الوكيل (₪)</label><input class="input ltr" id="cr-price" name="price" type="number" min="0" step="0.01" inputmode="decimal" value="${line.price}">
             <div class="hint" id="cr-diff"></div></div>

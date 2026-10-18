@@ -99,6 +99,27 @@ export default {
             <a class="btn" href="#/catalog">${icon('box')}الشركات والرزم</a>
           </div>
         </form>
+        <form class="card card-pad form" id="tc-form" novalidate autocomplete="off">
+          <h2 class="dot-title">telecom.co.il</h2>
+          <p class="muted small">عند الدخول يرسل الموقع رمز تحقق إلى الجيميل. يقرأ السيرفر الرمز بنفسه من ذلك الجيميل بكلمة مرور تطبيق (App password)، دون أن يعلّم الرسائل كمقروءة. يمدّد السيرفر مشتركي الوكالة في telecom تلقائياً بعد أن يتأكد من السعر؛ الخطوط الجديدة تصلك كطلبات. الرزم ونسب الربح في «الشركات والرزم».</p>
+          <div class="row2 stack-xs">
+            <div class="field"><label for="tc-user">البريد في telecom</label><input class="input ltr" id="tc-user" name="tcUser" type="email" value="${esc(s.tcUser || '')}" autocomplete="off"></div>
+            <div class="field"><label for="tc-pass">كلمة المرور</label><input class="input ltr" id="tc-pass" name="tcPass" type="password" autocomplete="new-password" placeholder="${s.tcConfigured ? 'محفوظة — اتركها فارغة للإبقاء' : ''}"></div>
+          </div>
+          <div class="row2 stack-xs">
+            <div class="field"><label for="tc-mail-user">الجيميل الذي يصله الرمز</label>
+              <input class="input ltr" id="tc-mail-user" name="tcMailUser" type="email" placeholder="name@gmail.com" value="${esc(s.tcMailUser || '')}" autocomplete="off"></div>
+            <div class="field"><label for="tc-mail-pass">كلمة مرور التطبيق (App password)</label>
+              <input class="input ltr" id="tc-mail-pass" name="tcMailPass" type="password" autocomplete="new-password" placeholder="${s.tcMailConfigured ? 'محفوظة — اتركها فارغة للإبقاء' : 'xxxx xxxx xxxx xxxx'}"></div>
+          </div>
+          <span class="hint">من حساب Google ← الأمان ← كلمات مرور التطبيقات (تحتاج التحقق بخطوتين). تبقى على السيرفر ولا تظهر بعد حفظها.</span>
+          <div id="tc-msg"></div>
+          <div class="btn-row">
+            <button class="btn btn-primary" type="submit">${icon('check')}حفظ</button>
+            <button class="btn" type="button" data-action="tc-mail-check" ${s.tcMailConfigured ? '' : 'disabled'}>${icon('checkCircle')}اختبار الجيميل</button>
+            <button class="btn" type="button" data-action="tc-check" ${s.tcReady ? '' : 'disabled'}>${icon('wallet')}اختبار الدخول إلى telecom</button>
+          </div>
+        </form>
 `,
       backup: `
         <section class="card card-pad form">
@@ -135,6 +156,21 @@ export default {
       try {
         S.settings = await api.put('/api/settings', { lyUser: field(form, 'lyUser'), lyPass: form.elements.lyPass.value, lySecret: form.elements.lySecret.value });
         toast('تم حفظ إعدادات ليان');
+        changed();
+      } catch (err) {
+        msg.innerHTML = `<div class="msg">${icon('alert')}<span>${esc(err.message)}</span></div>`;
+      }
+    });
+    root.querySelector('#tc-form')?.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const form = e.currentTarget;
+      const msg = root.querySelector('#tc-msg');
+      try {
+        S.settings = await api.put('/api/settings', {
+          tcUser: field(form, 'tcUser'), tcPass: form.elements.tcPass.value,
+          tcMailUser: field(form, 'tcMailUser'), tcMailPass: form.elements.tcMailPass.value,
+        });
+        toast('تم حفظ إعدادات telecom');
         changed();
       } catch (err) {
         msg.innerHTML = `<div class="msg">${icon('alert')}<span>${esc(err.message)}</span></div>`;
@@ -198,6 +234,27 @@ export default {
       try {
         const r = await api.post('/api/layan/check');
         box.innerHTML = `<div class="msg info">${icon('checkCircle')}<span>تم الدخول إلى ليان. الرصيد: ${r.balance === null ? 'غير معروف' : `${r.balance} ₪`} · أرقام الوكالة: ${r.numbers} (فعّالة ${r.active}، موقوفة ${r.suspended})</span></div>`;
+      } catch (err) {
+        box.innerHTML = `<div class="msg">${icon('alert')}<span>${esc(err.message)}</span></div>`;
+      } finally { btn.disabled = false; }
+    },
+    async 'tc-check'(btn) {
+      const box = document.getElementById('tc-msg');
+      btn.disabled = true;
+      box.innerHTML = `<div class="msg info">${icon('clock')}<span>جارٍ الدخول وانتظار رمز التحقق في الجيميل…</span></div>`;
+      try {
+        const r = await api.post('/api/telecom/check');
+        box.innerHTML = `<div class="msg info">${icon('checkCircle')}<span>تم الدخول إلى telecom برمز التحقق من الجيميل. الرصيد: ${r.balance === null ? 'غير معروف' : `${r.balance} ₪`} · المشتركون: ${r.subscribers} (فعّالون ${r.active})</span></div>`;
+      } catch (err) {
+        box.innerHTML = `<div class="msg">${icon('alert')}<span>${esc(err.message)}</span></div>`;
+      } finally { btn.disabled = false; }
+    },
+    async 'tc-mail-check'(btn) {
+      const box = document.getElementById('tc-msg');
+      btn.disabled = true;
+      try {
+        await api.post('/api/telecom/mail-check');
+        box.innerHTML = `<div class="msg info">${icon('checkCircle')}<span>الدخول إلى الجيميل يعمل.</span></div>`;
       } catch (err) {
         box.innerHTML = `<div class="msg">${icon('alert')}<span>${esc(err.message)}</span></div>`;
       } finally { btn.disabled = false; }

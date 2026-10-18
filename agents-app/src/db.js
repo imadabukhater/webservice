@@ -117,7 +117,7 @@ CREATE TABLE IF NOT EXISTS agent_hidden (
 -- The manager's profit percentage for one agent on one pricing system (see domain.SYSTEM_SQL).
 CREATE TABLE IF NOT EXISTS agent_markups (
   agent_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  system TEXT NOT NULL CHECK (system IN ('invoice','card','qlinvoice','qlcard','lyinvoice','lycard')),
+  system TEXT NOT NULL CHECK (system IN ('invoice','card','qlinvoice','qlcard','lyinvoice','lycard','tcinvoice','tccard')),
   markup REAL NOT NULL,
   PRIMARY KEY (agent_id, system)
 );
@@ -352,13 +352,13 @@ ensureColumn('packages', 'shop_price', 'shop_price REAL');
 ensureColumn('lines', 'ql_pending', "ql_pending TEXT NOT NULL DEFAULT ''");
 // QuickLine lines: a new SIM put on the line here, still to be put on it there.
 ensureColumn('lines', 'ql_sim', "ql_sim TEXT NOT NULL DEFAULT ''");
-// Layan's two systems came after agent_markups; SQLite cannot change a CHECK, so rebuild that table once.
-if (!/lyinvoice/.test(tableSql('agent_markups') || '')) {
+// Layan's and telecom's systems came after agent_markups; SQLite cannot change a CHECK, so rebuild that table once.
+if (!/tcinvoice/.test(tableSql('agent_markups') || '')) {
   db.exec(`BEGIN;
     ALTER TABLE agent_markups RENAME TO agent_markups_v1;
     CREATE TABLE agent_markups (
       agent_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-      system TEXT NOT NULL CHECK (system IN ('invoice','card','qlinvoice','qlcard','lyinvoice','lycard')),
+      system TEXT NOT NULL CHECK (system IN ('invoice','card','qlinvoice','qlcard','lyinvoice','lycard','tcinvoice','tccard')),
       markup REAL NOT NULL,
       PRIMARY KEY (agent_id, system)
     );
@@ -397,6 +397,7 @@ const DEFAULT_SETTINGS = {
   shop_enabled: '0', jawwalpay_number: '', jawwalpay_name: '', gmail_user: '', gmail_pass: '', mail_from: 'jawwal', shop_agent_id: '',
   ql_user: '', ql_pass: '', ql_markup: '15',
   ly_user: '', ly_pass: '', ly_secret: '', ly_markup: '15',
+  tc_user: '', tc_pass: '', tc_mail_user: '', tc_mail_pass: '', tc_markup: '15',
 };
 function getSettings() {
   const out = { ...DEFAULT_SETTINGS };
@@ -432,6 +433,18 @@ function getSettings() {
     lyMarkupInvoice: Math.max(0, Number(out.ly_markup_invoice ?? out.ly_markup) || 0),
     lySyncedCard: Number(out.ly_synced_card) || null,
     lySyncedInvoice: Number(out.ly_synced_invoice) || null,
+    // telecom.co.il sign-in: it e-mails a code, which the server reads from that Gmail over IMAP (see mailcode.js).
+    // The password and the Gmail App password never leave the server (see tcCredentials).
+    tcUser: out.tc_user,
+    tcConfigured: !!(out.tc_user && out.tc_pass),
+    tcMailUser: out.tc_mail_user,
+    tcMailConfigured: !!(out.tc_mail_user && out.tc_mail_pass),
+    // Signing in needs both: the site's account and the Gmail its codes go to.
+    tcReady: !!(out.tc_user && out.tc_pass && out.tc_mail_user && out.tc_mail_pass),
+    tcMarkupCard: Math.max(0, Number(out.tc_markup_card ?? out.tc_markup) || 0),
+    tcMarkupInvoice: Math.max(0, Number(out.tc_markup_invoice ?? out.tc_markup) || 0),
+    tcSyncedCard: Number(out.tc_synced_card) || null,
+    tcSyncedInvoice: Number(out.tc_synced_invoice) || null,
     // The daily copy in Google Cloud Storage (see cloudbackup.js): where, the last good one, and the last failure.
     backupBucket: out.backup_bucket || '',
     backupLastAt: Number(out.backup_last_at) || null,
@@ -458,6 +471,10 @@ function artCredentials() {
 function lyCredentials() {
   const get = (k) => q('SELECT value FROM settings WHERE key = ?').get(k)?.value || '';
   return { user: get('ly_user'), pass: get('ly_pass'), secret: get('ly_secret') };
+}
+function tcCredentials() {
+  const get = (k) => q('SELECT value FROM settings WHERE key = ?').get(k)?.value || '';
+  return { user: get('tc_user'), pass: get('tc_pass'), mail: { user: get('tc_mail_user'), pass: get('tc_mail_pass') } };
 }
 function qlCredentials() {
   const get = (k) => q('SELECT value FROM settings WHERE key = ?').get(k)?.value || '';
@@ -495,4 +512,4 @@ function bootstrap() {
 }
 bootstrap();
 
-module.exports = { db, q, tx, getSettings, setSetting, artCredentials, qlCredentials, lyCredentials, gmailCredentials, DB_FILE };
+module.exports = { db, q, tx, getSettings, setSetting, artCredentials, qlCredentials, lyCredentials, tcCredentials, gmailCredentials, DB_FILE };

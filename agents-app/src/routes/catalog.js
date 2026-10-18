@@ -27,7 +27,7 @@ const packageAttrs = (p, admin = false) => {
     dataGb: p.data_gb, minutes: p.minutes, sms: p.sms, tag: p.tag, description: p.description,
     kind: p.kind === 'card' ? 'card' : 'invoice', days: p.days ?? null,
     // ownSim: the number comes with its SIM (a Layan new line), so no SIM is asked for.
-    auto: !!ref, pool: /^(qln|lyn):/.test(ref), waits: /^(qln?|lyn?):/.test(ref), ownSim: /^lyn:/.test(ref),
+    auto: !!ref, pool: /^(qln|lyn):/.test(ref), waits: /^(qln?|lyn?|tcn?):/.test(ref), ownSim: /^lyn:/.test(ref),
     ...(admin ? { art: !!ref, ql: /^qln:/.test(ref), ...require('../quickline').supplierOfRef(ref) } : {}),
   };
 };
@@ -36,7 +36,7 @@ const packageAttrs = (p, admin = false) => {
 const artCode = (ref) => {
   const parts = String(ref || '').split(':').filter(Boolean);
   if (!parts.length) return '';
-  return /^qln?$/.test(parts[0]) ? parts[1] || '' : parts.slice(-1)[0] || '';
+  return /^(qln?|tcn?)$/.test(parts[0]) ? parts[1] || '' : parts.slice(-1)[0] || '';
 };
 
 // Agents see their own price (and never the cost); packages without a price are hidden from them.
@@ -73,14 +73,14 @@ route('GET', '/api/catalog/similar', ADMIN, () => {
   const rows = q(`SELECT p.id, p.name, p.cost, p.price, p.active, p.days, p.data_gb, p.art_card_id, p.company_id, c.name AS company_name
                   FROM packages p JOIN companies c ON c.id = p.company_id
                   WHERE p.kind = 'invoice' AND p.cost > 0 AND p.data_gb > 0
-                    AND (p.art_card_id LIKE 'inv:%' OR p.art_card_id LIKE 'qln:%' OR p.art_card_id LIKE 'lyn:%')`).all();
+                    AND (p.art_card_id LIKE 'inv:%' OR p.art_card_id LIKE 'qln:%' OR p.art_card_id LIKE 'lyn:%' OR p.art_card_id LIKE 'tcn:%')`).all();
   const groups = new Map();
   for (const r of rows) {
     const key = `${r.company_id}|${r.data_gb}|${r.days || 30}`;
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key).push(r);
   }
-  const source = (ref) => (/^qln:/.test(ref) ? 'QuickLine' : /^lyn:/.test(ref) ? 'ليان' : 'art-topup');
+  const source = (ref) => (/^qln:/.test(ref) ? 'QuickLine' : /^lyn:/.test(ref) ? 'ليان' : /^tcn:/.test(ref) ? 'telecom' : 'art-topup');
   const out = [];
   for (const [key, list] of groups) {
     if (new Set(list.map((r) => source(r.art_card_id))).size < 2) continue;

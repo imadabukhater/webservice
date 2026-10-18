@@ -95,9 +95,19 @@ route('PUT', '/api/settings', ADMIN, ({ body }) => {
   if (body.lySecret) {
     try { setSetting('ly_secret', require('../layan').normalizeSecret(body.lySecret)); } catch (e) { fail(400, e.message); }
   }
+  if (body.tcUser !== undefined) setSetting('tc_user', str(body.tcUser, 120));
+  if (body.tcPass) setSetting('tc_pass', String(body.tcPass).slice(0, 200));
+  if (body.tcMailUser !== undefined) {
+    const mail = str(body.tcMailUser, 120);
+    if (mail && !/^[^\s@"]+@[^\s@"]+\.[^\s@"]+$/.test(mail)) fail(400, 'اكتب بريد الجيميل كاملاً، مثل name@gmail.com');
+    setSetting('tc_mail_user', mail);
+  }
+  // Google shows an App password in groups of four: kept without the spaces.
+  if (body.tcMailPass) setSetting('tc_mail_pass', String(body.tcMailPass).replace(/\s+/g, '').slice(0, 200));
   for (const [field, key] of [['artMarkupCard', 'art_markup_card'], ['artMarkupInvoice', 'art_markup_invoice'],
     ['qlMarkupCard', 'ql_markup_card'], ['qlMarkupInvoice', 'ql_markup_invoice'],
-    ['lyMarkupCard', 'ly_markup_card'], ['lyMarkupInvoice', 'ly_markup_invoice']]) {
+    ['lyMarkupCard', 'ly_markup_card'], ['lyMarkupInvoice', 'ly_markup_invoice'],
+    ['tcMarkupCard', 'tc_markup_card'], ['tcMarkupInvoice', 'tc_markup_invoice']]) {
     if (body[field] === undefined) continue;
     const m = num(body[field], 'نسبة الربح');
     if (m < 0 || m > 200) fail(400, 'نسبة الربح بين 0 و200%');
