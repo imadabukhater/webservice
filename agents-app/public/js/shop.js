@@ -70,26 +70,73 @@ async function jfetch(path, opts = {}) {
   return data;
 }
 
-// Vector eSIM metallic chip SVG emblem (authentic SIM contact pad geometry)
-function esimChipSvg(cls = 'esim-chip-svg') {
-  return `<svg class="${cls}" viewBox="0 0 44 34" fill="none" aria-hidden="true">
-    <rect x="1" y="1" width="42" height="32" rx="6" fill="url(#chipGrad)" stroke="currentColor" stroke-width="1.4" stroke-opacity=".35"/>
-    <path d="M14 1v32M30 1v32M1 12h13M30 12h13M1 22h13M30 22h13M18 11h8v12h-8z" stroke="#78530d" stroke-width="1.2" stroke-opacity=".55"/>
+// Signature H-SIM Brand Logo: Outer chamfered SIM card silhouette + Bold H-shaped metallic chip contact pad
+let svgUid = 0;
+function brandLogoSvg(cls = 'hsim-logo-svg') {
+  const id = ++svgUid;
+  return `<svg class="${cls}" viewBox="0 0 44 44" fill="none" aria-hidden="true">
     <defs>
-      <linearGradient id="chipGrad" x1="0" y1="0" x2="44" y2="34" gradientUnits="userSpaceOnUse">
-        <stop offset="0%" stop-color="#fde68a"/>
-        <stop offset="50%" stop-color="#f59e0b"/>
+      <linearGradient id="hSimFrame${id}" x1="4" y1="2" x2="40" y2="42" gradientUnits="userSpaceOnUse">
+        <stop offset="0%" stop-color="#38bdf8"/>
+        <stop offset="55%" stop-color="#0ea5e9"/>
+        <stop offset="100%" stop-color="#2563eb"/>
+      </linearGradient>
+      <linearGradient id="hSimGold${id}" x1="10" y1="10" x2="34" y2="34" gradientUnits="userSpaceOnUse">
+        <stop offset="0%" stop-color="#fef08a"/>
+        <stop offset="48%" stop-color="#fbbf24"/>
         <stop offset="100%" stop-color="#d97706"/>
       </linearGradient>
     </defs>
+    <!-- Outer SIM Card Body with 45-degree Chamfered Top-Right Corner -->
+    <path d="M11 3.5H26.5L36.5 13.5V35.5A5 5 0 0 1 31.5 40.5H11A5 5 0 0 1 6 35.5V8.5A5 5 0 0 1 11 3.5Z"
+          fill="#071124" fill-opacity=".85" stroke="url(#hSimFrame${id})" stroke-width="2.2" stroke-linejoin="round"/>
+    <!-- Chamfered SIM Corner Trace -->
+    <path d="M25.8 4V11.8A2.2 2.2 0 0 0 28 14H35.8" stroke="#7dd3fc" stroke-width="1.3" stroke-opacity=".55" stroke-linecap="round"/>
+    <!-- Bold Letter 'H' Formed as the Metallic SIM Chip Contact Pad -->
+    <g fill="url(#hSimGold${id})">
+      <rect x="11.5" y="12.5" width="5.6" height="19.5" rx="1.8"/>
+      <path d="M25.4 12.5H28.3L30.5 14.7V30.2A1.8 1.8 0 0 1 28.7 32H25.4A1.8 1.8 0 0 1 23.6 30.2V14.3A1.8 1.8 0 0 1 25.4 12.5Z"/>
+      <rect x="16" y="19.5" width="9" height="5.5" rx="1.2"/>
+    </g>
+    <!-- SIM Chip Contact Grooves on the H Pillars -->
+    <g stroke="#78350f" stroke-width="1.15" stroke-opacity=".6" stroke-linecap="round">
+      <path d="M12 17.6h4.6M12 26.8h4.6M24.1 17.6h5.9M24.1 26.8h5.9"/>
+    </g>
+    <!-- Glowing eSIM Core Node in the Center of the H -->
+    <circle cx="21" cy="22.25" r="1.7" fill="#071124"/>
+    <circle cx="21" cy="22.25" r=".95" fill="#38bdf8"/>
+  </svg>`;
+}
+
+// Vector eSIM metallic chip SVG emblem with signature H-shaped contact pad geometry
+function esimChipSvg(cls = 'esim-chip-svg') {
+  const id = ++svgUid;
+  return `<svg class="${cls}" viewBox="0 0 44 34" fill="none" aria-hidden="true">
+    <defs>
+      <linearGradient id="chipGrad${id}" x1="0" y1="0" x2="44" y2="34" gradientUnits="userSpaceOnUse">
+        <stop offset="0%" stop-color="#fef08a"/>
+        <stop offset="50%" stop-color="#f59e0b"/>
+        <stop offset="100%" stop-color="#b45309"/>
+      </linearGradient>
+    </defs>
+    <!-- Outer Chamfered SIM-Chip Plate -->
+    <path d="M6 1.5h26.5L42.5 11v17a4.5 4.5 0 0 1-4.5 4.5H6A4.5 4.5 0 0 1 1.5 28V6A4.5 4.5 0 0 1 6 1.5z"
+          fill="url(#chipGrad${id})" stroke="#78350f" stroke-width="1.2" stroke-opacity=".45"/>
+    <!-- Bold H-Chip Architecture & Contact Pad Grooves -->
+    <path d="M11 7.5v19M17.5 7.5v19M26.5 7.5v19M33 7.5v19M17.5 14h9M17.5 20h9" stroke="#78350f" stroke-width="1.6" stroke-opacity=".65" stroke-linecap="round"/>
+    <path d="M2 12.5h9M33 12.5h9M2 21.5h9M33 21.5h9" stroke="#78350f" stroke-width="1.15" stroke-opacity=".45"/>
+    <rect x="11" y="7.5" width="6.5" height="19" rx="1.5" fill="#fef9c3" fill-opacity=".28"/>
+    <rect x="26.5" y="7.5" width="6.5" height="19" rx="1.5" fill="#fef9c3" fill-opacity=".28"/>
+    <rect x="17.5" y="14" width="9" height="6" rx="1" fill="#fef9c3" fill-opacity=".34"/>
   </svg>`;
 }
 
 function simCardSvg(cls = 'esim-sim-svg') {
   return `<svg class="${cls}" viewBox="0 0 28 34" fill="none" aria-hidden="true">
     <path d="M5 1.5h12.2L26.5 10v19A3.5 3.5 0 0 1 23 32.5H5A3.5 3.5 0 0 1 1.5 29V5A3.5 3.5 0 0 1 5 1.5z" stroke="currentColor" stroke-width="1.8"/>
-    <rect x="7" y="14" width="14" height="12" rx="2.5" stroke="currentColor" stroke-width="1.6"/>
-    <path d="M11.5 14v12M16.5 14v12M7 20h14" stroke="currentColor" stroke-width="1.2" opacity=".7"/>
+    <!-- H-shaped SIM chip inside card -->
+    <path d="M9.5 12.5v11M18.5 12.5v11M9.5 18h9" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
+    <rect x="6.5" y="10" width="15" height="16" rx="2.5" stroke="currentColor" stroke-width="1.3" opacity=".55"/>
   </svg>`;
 }
 
@@ -106,8 +153,8 @@ function isFeaturedPkg(pk) {
 }
 
 function shell(body, { sub = '' } = {}) {
-  const name = S.data?.shopTitle || (S.data?.appName ? `متجر ${S.data.appName}` : 'متجر الشرائح والباقات');
-  const subtitle = sub || S.data?.shopSubtitle || 'متجر الشرائح الإلكترونية eSIM والباقات الفورية';
+  const name = S.data?.shopTitle || (S.data?.appName ? `متجر ${S.data.appName}` : 'منصّة الشرائح والباقات الرقمية');
+  const subtitle = sub || S.data?.shopSubtitle || 'شرائح eSIM الفورية وتجديد باقات الخليوي بسعر صريح';
   const wa = waHref(S.data?.supportWhatsapp, `مرحباً، أحتاج مساعدة في ${name}`);
   const dark = document.documentElement.dataset.theme === 'dark';
   const hash = location.hash.replace(/^#\/?/, '').split('?')[0];
@@ -118,33 +165,36 @@ function shell(body, { sub = '' } = {}) {
     <header class="shop-top">
       <div class="shop-top-inner">
         <a href="#/" class="shop-brand" data-act="nav-all">
-          <span class="shop-brand-mark">${icon('sim')}</span>
+          <span class="shop-brand-mark">${brandLogoSvg('hsim-logo-svg')}</span>
           <span class="shop-brand-text">
-            <strong>${esc(name)}</strong>
+            <span class="shop-brand-title-row">
+              <strong>${esc(name)}</strong>
+              <span class="shop-brand-monogram ltr">H-SIM</span>
+            </span>
             <small><span class="shop-live-dot"></span>${esc(subtitle)}</small>
           </span>
         </a>
 
         <nav class="shop-nav" aria-label="التنقّل في المتجر">
           <a href="#/" class="shop-nav-link ${onHome && S.kindFilter !== 'esim' ? 'active' : ''}" data-act="nav-all">
-            ${icon('sim')}<span>جميع الباقات</span>
+            ${icon('sim')}<span>الباقات والشرائح</span>
           </a>
           <button type="button" class="shop-nav-link ${onHome && S.kindFilter === 'esim' ? 'active' : ''}" data-act="nav-esim">
-            ${icon('qr')}<span>شرائح eSIM فورية</span>
+            ${icon('qr')}<span>شرائح eSIM الفورية</span>
           </button>
           <a href="#/compat" class="shop-nav-link ${hash === 'compat' ? 'active' : ''}">
-            ${icon('chip')}<span>فحص توافق الجهاز</span>
+            ${icon('chip')}<span>فحص توافق هاتفي</span>
           </a>
           <a href="#/terms" class="shop-nav-link ${onLegal ? 'active' : ''}">
-            ${icon('shield')}<span>الضمان والشروط</span>
+            ${icon('shield')}<span>ميثاق الضمان والشروط</span>
           </a>
           <a href="#/track" class="shop-nav-link ${hash === 'track' || hash === 'orders' ? 'active' : ''}">
-            ${icon('search')}<span>تتبّع طلب${S.myCodes.length ? ` (${fmtNum(S.myCodes.length)})` : ''}</span>
+            ${icon('search')}<span>متابعة طلبي${S.myCodes.length ? ` (${fmtNum(S.myCodes.length)})` : ''}</span>
           </a>
         </nav>
 
         <div class="shop-utils">
-          ${wa ? `<a class="btn btn-sm ghost shop-wa-btn" href="${esc(wa)}" target="_blank" rel="noopener">${icon('whatsapp')}<span>تواصل واتساب</span></a>` : ''}
+          ${wa ? `<a class="btn btn-sm ghost shop-wa-btn" href="${esc(wa)}" target="_blank" rel="noopener">${icon('whatsapp')}<span>الدعم المباشر</span></a>` : ''}
           <button type="button" class="icon-btn sm" data-act="theme" aria-label="${dark ? 'الوضع الفاتح' : 'الوضع الداكن'}" title="${dark ? 'الوضع الفاتح' : 'الوضع الداكن'}">
             ${icon(dark ? 'sun' : 'moon')}
           </button>
@@ -158,11 +208,17 @@ function shell(body, { sub = '' } = {}) {
       <div class="shop-footer-inner">
         <div class="shop-footer-brand">
           <div class="row" style="gap:10px">
-            <span class="shop-brand-mark sm">${icon('sim')}</span>
-            <b>${esc(name)}</b>
+            <span class="shop-brand-mark sm">${brandLogoSvg('hsim-logo-svg sm')}</span>
+            <div>
+              <div class="row" style="gap:8px">
+                <b>${esc(name)}</b>
+                <span class="shop-brand-monogram ltr">H-SIM</span>
+              </div>
+              <small class="muted" style="font-size:.75rem">الجيل الرقمي لشرائح الاتصال والباقات الفورية</small>
+            </div>
           </div>
-          <p class="muted" style="margin:6px 0 0;font-size:.84rem;line-height:1.6">
-            منصة معتمدة لتفعيل شرائح eSIM الرقمية الفورية بكود QR مباشر، شحن الرصيد، وتجديد باقات الخليوي والإنترنت بأسعار واضحة وشاملة.
+          <p class="muted" style="margin:8px 0 0;font-size:.84rem;line-height:1.65">
+            صمّمنا هذه المنصّة لتختصر عليك الوقت: شرائح eSIM تصدر بكود QR فوري جاهز للمسح، وشحن مباشر لباقات الخليوي والإنترنت بتسعير صريح وميثاق ضمان يحمي حقّك بالكامل.
           </p>
         </div>
         <nav class="shop-footer-links" aria-label="روابط صفحات المتجر والسياسات">
@@ -1018,65 +1074,87 @@ function viewCatalog() {
   const maxGb = Math.max(100, ...packages.map((p) => pkgGb(p)));
 
   shell(`
-    <!-- Authentic eSIM & Telecom Hero -->
+    <!-- Signature H-SIM & Telecom Hero -->
     <section class="esim-hero">
       <div class="esim-hero-grid">
         <div class="esim-hero-copy">
           <div class="esim-hero-kicker">
-            ${icon('qr')}
-            <span>الجيل الرقمي من شرائح الاتصال · eSIM & Telecom Store</span>
+            <span class="kicker-monogram ltr">H-SIM</span>
+            <span>الجيل الرقمي لشرائح الاتصال والباقات الفورية</span>
           </div>
-          <h1>${esc(S.data.shopTitle || 'باقات الخليوي وشرائح eSIM الفورية بكود QR مباشر')}</h1>
+          <h1>${esc(S.data.shopTitle || 'اتصالك يبدأ من شاشتك — شرائح eSIM بكود QR فوري وباقات خليوي بسعر صريح')}</h1>
           <p>
-            ${esc(S.data.shopSubtitle || 'اختر شبكتك وباقتك المفضّلة، فعّل شريحة eSIM واستلم كود الـ QR الجاهز للمسح فوراً على شاشتك، أو اشحن رقمك الحالي خلال ثوانٍ بأسعار واضحة وشاملة.')}
+            ${esc(S.data.shopSubtitle || 'ودّع انتظار الشرائح التقليدية؛ انتقِ شبكتك وباقتك، استلم شريحة eSIM الرقمية الجاهزة للمسح فوراً على شاشتك، أو جدّد باقة رقمك الحالي في ثوانٍ بميثاق ضمان كامل.')}
           </p>
 
           <div class="esim-search-box" role="search">
             <span class="esim-search-ic">${icon('search')}</span>
-            <input id="shop-q" type="search" value="${esc(S.q)}" placeholder="ابحث عن باقة، حجم الإنترنت (GB)، أو اسم الشبكة..." autocomplete="off">
+            <input id="shop-q" type="search" value="${esc(S.q)}" placeholder="ابحث باسم الباقة، سعة الإنترنت (مثال: 100 GB)، أو اسم الشبكة..." autocomplete="off">
             ${S.q ? `<button type="button" class="icon-btn sm" id="shop-q-clear" aria-label="مسح البحث">${icon('x')}</button>` : ''}
           </div>
 
           <div class="esim-hero-actions">
             <button type="button" class="esim-hero-btn primary" data-act="nav-esim">
               ${icon('qr')}
-              <span>شرائح eSIM الفورية</span>
+              <span>إصدار شريحة eSIM فورية</span>
             </button>
             <a href="#/compat" class="esim-hero-btn ghost">
               ${icon('chip')}
-              <span>فحص توافق الهاتف مع eSIM</span>
+              <span>افحص توافق هاتفك</span>
             </a>
             <a href="#/track" class="esim-hero-btn ghost">
               ${icon('search')}
-              <span>تتبّع حالة طلب</span>
+              <span>متابعة طلب أو استلام QR</span>
             </a>
           </div>
 
           <div class="esim-trust-row">
-            <span>${icon('qr')} استلام فوري لكود eSIM QR</span>
-            <span>${icon('shield')} أسعار نهائية شاملة بدون رسوم مخفية</span>
-            <span>${icon('checkCircle')} ضمان التفعيل 100% أو استرداد المبلغ</span>
+            <span>${icon('qr')} كود eSIM QR جاهز للمسح فوراً</span>
+            <span>${icon('shield')} تسعير نهائي صريح بدون عمولات مخفية</span>
+            <span>${icon('checkCircle')} ميثاق ضمان التفعيل 100%</span>
           </div>
         </div>
 
-        <!-- Visual Digital eSIM Card Showcase -->
+        <!-- Bespoke H-SIM Digital Pass Card Showcase -->
         <div class="esim-hero-card-wrap" aria-hidden="true">
           <div class="esim-showcase-card">
             <div class="esim-showcase-top">
               <div>
-                <span class="esim-showcase-tag">DIGITAL eSIM PROFILE</span>
-                <strong>شريحة إلكترونية فورية</strong>
+                <span class="esim-showcase-tag">H-SIM DIGITAL PASS</span>
+                <strong>شريحة اتصال رقمية ذكية</strong>
               </div>
-              ${esimChipSvg('esim-chip-svg lg')}
+              <div class="esim-showcase-emblems">
+                ${esimChipSvg('esim-chip-svg lg')}
+                ${brandLogoSvg('hsim-logo-svg lg')}
+              </div>
             </div>
+
             <div class="esim-showcase-specs">
-              <div><small>التقنية</small><b class="ltr">4G LTE / 5G Ready</b></div>
-              <div><small>طريقة التثبيت</small><b>مسح كود QR فوري</b></div>
-              <div><small>الأجهزة الداعمة</small><b class="ltr">iPhone · Samsung · Pixel</b></div>
+              <div><small>الجيل الشبكي</small><b class="ltr">4G LTE / 5G</b></div>
+              <div><small>آلية التثبيت</small><b>مسح QR مباشر</b></div>
+              <div><small>التوافق القياسي</small><b class="ltr">iOS · Android</b></div>
             </div>
+
+            <div class="esim-pass-journey">
+              <div class="esim-pass-step">
+                <i class="ltr">01</i>
+                <span>انتقِ الباقة</span>
+              </div>
+              <span class="esim-pass-arrow">←</span>
+              <div class="esim-pass-step">
+                <i class="ltr">02</i>
+                <span>أكّد الدفع</span>
+              </div>
+              <span class="esim-pass-arrow">←</span>
+              <div class="esim-pass-step active">
+                <i class="ltr">03</i>
+                <span>امسح الـ QR واتصل</span>
+              </div>
+            </div>
+
             <div class="esim-showcase-foot">
-              <span class="esim-showcase-status"><i class="shop-live-dot"></i> التفعيل المباشر متاح الآن</span>
-              <span class="mono ltr" style="font-size:.78rem;opacity:.8">LPA:1$INSTANT.ESIM</span>
+              <span class="esim-showcase-status"><i class="shop-live-dot"></i> بوابة التفعيل المباشر متاحة الآن</span>
+              <span class="mono ltr" style="font-size:.75rem;opacity:.85">H-SIM // QR-READY</span>
             </div>
           </div>
         </div>
@@ -1088,7 +1166,7 @@ function viewCatalog() {
       <div class="esim-type-tabs" role="tablist" aria-label="نوع الخدمة">
         <button type="button" role="tab" class="esim-type-tab" aria-selected="${S.kindFilter === 'all'}" data-kind="all">
           ${icon('sim')}
-          <span>كل الباقات</span>
+          <span>جميع الباقات والشرائح</span>
           <small>${fmtNum(totalCount)}</small>
         </button>
         <button type="button" role="tab" class="esim-type-tab esim-tab-accent" aria-selected="${S.kindFilter === 'esim'}" data-kind="esim">
@@ -1099,7 +1177,7 @@ function viewCatalog() {
         ${cardCount ? `
           <button type="button" role="tab" class="esim-type-tab" aria-selected="${S.kindFilter === 'card'}" data-kind="card">
             ${icon('refresh')}
-            <span>شحن وتجديد رقم حالي</span>
+            <span>شحن وتجديد رقمي الحالي</span>
             <small>${fmtNum(cardCount)}</small>
           </button>` : ''}
       </div>
@@ -1109,8 +1187,8 @@ function viewCatalog() {
           <button type="button" class="esim-carrier-pill" aria-pressed="${S.companyId === 'all'}" data-co="all">
             <span class="esim-carrier-all-ic">${icon('grid')}</span>
             <span class="esim-carrier-meta">
-              <b>جميع الشبكات</b>
-              <small>${fmtNum(totalCount)} باقة</small>
+              <b>كل الشبكات المعتمدة</b>
+              <small>${fmtNum(totalCount)} باقة متاحة</small>
             </span>
           </button>
           ${companies.map((c) => {
@@ -1121,7 +1199,7 @@ function viewCatalog() {
                 ${companyLogo(c, 'sm')}
                 <span class="esim-carrier-meta">
                   <b>${esc(c.name)}</b>
-                  <small>${fmtNum(cPkgs.length)} باقة${hasEsim ? ' · تدعم eSIM' : ''}</small>
+                  <small>${fmtNum(cPkgs.length)} باقة${hasEsim ? ' · تدعم H-eSIM' : ''}</small>
                 </span>
               </button>`;
           }).join('')}
@@ -1129,7 +1207,7 @@ function viewCatalog() {
       ` : ''}
     </section>
 
-    <!-- Package Cards Grid (Airalo / Saily Telecom Card Layout) -->
+    <!-- Bespoke SIM-Pass Package Cards Grid -->
     ${shown.length ? `
       <section class="esim-grid" aria-label="قائمة الباقات">
         ${shown.map((pk) => renderPlanCard(pk, coMap.get(pk.companyId), maxGb)).join('')}
@@ -1137,10 +1215,35 @@ function viewCatalog() {
     ` : `
       <div class="card empty">
         ${icon('sim')}
-        <p>لا توجد باقات مطابقة للفلتر المحدد حالياً</p>
-        <button type="button" class="btn ghost btn-sm" id="reset-filters">إظهار جميع الباقات</button>
+        <p>لا توجد باقات مطابقة لخيارات البحث الحالية</p>
+        <button type="button" class="btn ghost btn-sm" id="reset-filters">إظهار كافة الباقات</button>
       </div>
     `}
+
+    <!-- Signature Brand Identity & Pillars Strip -->
+    <section class="esim-brand-pillars" aria-label="مميزات وميثاق المنصة">
+      <div class="esim-pillar-card">
+        <div class="esim-pillar-ic">${brandLogoSvg('hsim-logo-svg sm')}</div>
+        <div>
+          <h3>تقنية H-SIM الرقمية الفورية</h3>
+          <p class="muted">إصدار مباشر لشريحتك الإلكترونية بكود QR جاهز للمسح وكود تفعيل LPA يدوي مع رقمك المخصّص دون انتظار توصيل.</p>
+        </div>
+      </div>
+      <div class="esim-pillar-card">
+        <div class="esim-pillar-ic">${icon('shield')}</div>
+        <div>
+          <h3>تسعير صريح من أول نظرة</h3>
+          <p class="muted">السعر المعلَن على كل باقة هو السعر الحقيقي بالشيكل، مع توضيح رسوم إصدار كود الـ QR لكل شبكة بشفافية تامة قبل الدفع.</p>
+        </div>
+      </div>
+      <div class="esim-pillar-card">
+        <div class="esim-pillar-ic">${icon('checkCircle')}</div>
+        <div>
+          <h3>ميثاق ضمان التشغيل 100%</h3>
+          <p class="muted">حقّك محفوظ بالكامل؛ نضمن لك تفعيل الباقة وعمل شريحة الـ eSIM بكفاءة على هاتفك المتوافق أو استرجاع المبلغ فوراً.</p>
+        </div>
+      </div>
+    </section>
   `);
 
   // Bind search & filter events
@@ -1187,13 +1290,13 @@ function renderPlanCard(pk, co, maxGb) {
 
   const qrFee = Number(pk.esimFee ?? co?.esimFee ?? S.data?.esimFee ?? 0);
   const qrFeeText = hasEsim
-    ? (qrFee > 0 ? `+ ${fmtMoney(qrFee)} لكود eSIM QR` : 'كود eSIM QR مشمول مجاناً')
-    : null;
+    ? (qrFee > 0 ? `+ ${fmtMoney(qrFee)} لإصدار كود QR` : 'كود eSIM QR مشمول مجاناً')
+    : 'شحن مباشر على شريحتك الحالية';
   const hasTwoBtns = pk.kind === 'card' && hasEsim;
 
   return `
     <article class="esim-card ${featured ? 'is-featured' : ''} ${hasEsim ? 'has-esim' : ''}" style="--co:${esc(coColor)}">
-      <!-- Top Carrier & SIM Chip Header -->
+      <!-- Top Carrier & H-SIM Chip Header -->
       <div class="esim-card-head">
         <div class="esim-card-carrier">
           ${companyLogo(co || { name: pk.companyName }, 'sm')}
@@ -1202,10 +1305,10 @@ function renderPlanCard(pk, co, maxGb) {
             <h3 class="esim-plan-title">${esc(pk.name)}</h3>
           </div>
         </div>
-        <div class="esim-card-emblem" title="${hasEsim ? 'تدعم شريحة eSIM الرقمية وكود QR' : 'شحن وتفعيل فوري'}">
+        <div class="esim-card-emblem" title="${hasEsim ? 'تدعم شريحة H-eSIM الرقمية وكود QR' : 'شحن وتفعيل فوري'}">
           ${hasEsim ? `
             ${esimChipSvg('esim-chip-svg')}
-            <span class="esim-chip-tag">eSIM QR</span>
+            <span class="esim-chip-tag">H-eSIM QR</span>
           ` : `
             ${simCardSvg('esim-sim-svg')}
             <span class="esim-sim-tag">${pk.kind === 'card' ? 'شحن رقم' : 'باقة خط'}</span>
@@ -1215,45 +1318,48 @@ function renderPlanCard(pk, co, maxGb) {
 
       ${featured || hasDiscount || pk.tag ? `
         <div class="esim-card-flags">
-          ${featured ? `<span class="esim-flag featured">${icon('checkCircle')}<span>الأكثر طلباً</span></span>` : ''}
+          ${featured ? `<span class="esim-flag featured">${icon('checkCircle')}<span>باقة مختارة</span></span>` : ''}
           ${hasDiscount ? `<span class="esim-flag discount">وفّر ${savePct}%</span>` : ''}
           ${pk.tag && !featured ? `<span class="esim-flag featured">${esc(pk.tag)}</span>` : ''}
         </div>
       ` : ''}
 
-      <!-- Airalo-Style Structured Specification Rows -->
-      <div class="esim-spec-box">
-        <div class="esim-spec-row highlight">
-          <span class="esim-spec-k">${icon('data')}<span>حجم البيانات</span></span>
-          <strong class="esim-spec-v ltr">${gbVal > 0 ? `${fmtNum(gbVal)} GB` : 'حسب الباقة'}</strong>
+      <!-- Signature H-SIM Telecom Data & Validity Readout Banner -->
+      <div class="esim-data-banner">
+        <div class="esim-data-main">
+          <div class="esim-data-col">
+            <small>${icon('data')}<span>سعة الإنترنت</span></small>
+            <strong class="ltr">${gbVal > 0 ? `${fmtNum(gbVal)} GB` : 'حسب الباقة'}</strong>
+          </div>
+          <div class="esim-data-sep" aria-hidden="true"></div>
+          <div class="esim-data-col end">
+            <small>${icon('clock')}<span>فترة التفعيل</span></small>
+            <strong>${daysVal > 0 ? `${fmtNum(daysVal)} يوم` : 'شهرية'}</strong>
+          </div>
         </div>
         ${gbVal > 0 ? `<div class="esim-gb-meter" aria-hidden="true"><span style="width:${gbPct}%"></span></div>` : ''}
+      </div>
 
+      <!-- Structured Specification Rows -->
+      <div class="esim-spec-box">
         <div class="esim-spec-row">
-          <span class="esim-spec-k">${icon('clock')}<span>الصلاحية</span></span>
-          <strong class="esim-spec-v">${daysVal > 0 ? `${fmtNum(daysVal)} يوم` : 'شهرية'}</strong>
-        </div>
-
-        <div class="esim-spec-row">
-          <span class="esim-spec-k">${icon('call')}<span>المزايا والمكالمات</span></span>
+          <span class="esim-spec-k">${icon('call')}<span>المكالمات والرسائل</span></span>
           <strong class="esim-spec-v">${esc(callsLabel)}</strong>
         </div>
 
-        ${hasEsim ? `
-          <div class="esim-spec-row esim-qr-row">
-            <span class="esim-spec-k">${icon('qr')}<span>شريحة eSIM</span></span>
-            <strong class="esim-spec-v">${esc(qrFeeText)}</strong>
-          </div>
-        ` : ''}
+        <div class="esim-spec-row ${hasEsim ? 'esim-qr-row' : ''}">
+          <span class="esim-spec-k">${icon(hasEsim ? 'qr' : 'refresh')}<span>${hasEsim ? 'إصدار شريحة eSIM' : 'طريقة التفعيل'}</span></span>
+          <strong class="esim-spec-v">${esc(qrFeeText)}</strong>
+        </div>
       </div>
 
       ${pk.description ? `<p class="esim-plan-desc">${esc(pk.description)}</p>` : ''}
 
-      <!-- Clean Stacked Price & Action Bar Footer -->
+      <!-- Perforated SIM-Pass Price & Action Footer -->
       <div class="esim-card-foot">
         <div class="esim-price-row">
           <div class="esim-price-block">
-            <span class="esim-price-label">سعر الباقة</span>
+            <span class="esim-price-label">السعر الصافي</span>
             ${perDay ? `<small class="esim-daily-hint">≈ ${perDay} ₪ / يوم</small>` : ''}
           </div>
           <div class="esim-price-val">
@@ -1264,12 +1370,12 @@ function renderPlanCard(pk, co, maxGb) {
 
         <div class="esim-card-btns ${hasTwoBtns ? 'has-two' : 'has-one'}">
           ${hasTwoBtns ? `
-            <a href="#/buy/${pk.id}" class="btn ghost">${icon('refresh')}<span>شحن رقم</span></a>
-            <a href="#/buy/${pk.id}?esim=1" class="btn primary">${icon('qr')}<span>تفعيل eSIM</span></a>
+            <a href="#/buy/${pk.id}" class="btn ghost">${icon('refresh')}<span>اشحن رقمي</span></a>
+            <a href="#/buy/${pk.id}?esim=1" class="btn primary">${icon('qr')}<span>فعّل شريحة eSIM</span></a>
           ` : hasEsim ? `
-            <a href="#/buy/${pk.id}?esim=1" class="btn primary">${icon('qr')}<span>تفعيل شريحة eSIM الآن</span></a>
+            <a href="#/buy/${pk.id}?esim=1" class="btn primary">${icon('qr')}<span>إصدار شريحة eSIM الآن</span></a>
           ` : `
-            <a href="#/buy/${pk.id}" class="btn primary">${icon('arrowL')}<span>اختيار الباقة وتفعيلها</span></a>
+            <a href="#/buy/${pk.id}" class="btn primary">${icon('arrowL')}<span>تفعيل الباقة الآن</span></a>
           `}
         </div>
       </div>

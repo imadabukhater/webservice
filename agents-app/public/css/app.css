@@ -676,16 +676,17 @@ body.shop { background: var(--bg); min-height: 100dvh; display: flex; flex-direc
 .icon-btn.sm { width: 38px; height: 38px; border-radius: 11px; }
 .icon-btn.sm svg { width: 18px; height: 18px; }
 
-/* Header & Navigation Dock */
+/* Header & Navigation Dock — H-SIM Visual Identity */
 .shop-top { position: sticky; top: 0; z-index: 20; background: color-mix(in srgb, var(--surface) 90%, transparent); backdrop-filter: blur(16px); border-bottom: 1px solid var(--line); padding: calc(10px + env(safe-area-inset-top, 0px)) 16px 10px; }
 .shop-top-inner { width: min(100%, 1160px); margin: 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
-.shop-brand { display: flex; align-items: center; gap: 10px; color: var(--ink); text-decoration: none; }
-.shop-brand-mark { width: 40px; height: 40px; border-radius: 12px; background: linear-gradient(135deg, #0f172a, #1e3a8a); color: #38bdf8; display: grid; place-items: center; box-shadow: 0 4px 12px rgba(15, 23, 42, .18); flex: none; }
-.shop-brand-mark svg { width: 20px; height: 20px; }
-.shop-brand-mark.sm { width: 30px; height: 30px; border-radius: 9px; }
-.shop-brand-mark.sm svg { width: 16px; height: 16px; }
-.shop-brand-text { display: grid; gap: 1px; }
-.shop-brand-text strong { font: 700 1.02rem var(--f-ui); color: var(--ink); }
+.shop-brand { display: flex; align-items: center; gap: 11px; color: var(--ink); text-decoration: none; }
+.shop-brand-mark { width: 42px; height: 42px; border-radius: 12px; display: grid; place-items: center; filter: drop-shadow(0 4px 10px rgba(8, 17, 36, .22)); flex: none; }
+.shop-brand-mark svg, .shop-brand-mark .hsim-logo-svg { width: 100%; height: 100%; display: block; }
+.shop-brand-mark.sm { width: 34px; height: 34px; border-radius: 9px; }
+.shop-brand-text { display: grid; gap: 2px; }
+.shop-brand-title-row { display: inline-flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+.shop-brand-text strong { font: 800 1.04rem var(--f-ui); color: var(--ink); letter-spacing: -.01em; }
+.shop-brand-monogram { padding: 1px 7px; border-radius: 6px; background: linear-gradient(135deg, rgba(14, 165, 233, .14), rgba(37, 99, 235, .16)); border: 1px solid color-mix(in srgb, var(--primary) 34%, transparent); color: var(--primary); font: 800 .66rem var(--f-mono); letter-spacing: .06em; }
 .shop-brand-text small { display: inline-flex; align-items: center; gap: 6px; font-size: .74rem; color: var(--muted); }
 .shop-live-dot { width: 7px; height: 7px; border-radius: 50%; background: #10b981; box-shadow: 0 0 0 3px rgba(16, 185, 129, .2); display: inline-block; flex: none; }
 
@@ -705,16 +706,16 @@ body.shop { background: var(--bg); min-height: 100dvh; display: flex; flex-direc
 .shop-wa-btn:hover { background: rgba(16, 185, 129, .1) !important; border-color: #10b981 !important; color: #059669 !important; }
 .shop-main { flex: 1; width: min(100%, 1160px); margin: 0 auto; padding: 20px 16px 56px; display: grid; gap: 20px; align-content: start; }
 
-/* Authentic eSIM & Telecom Hero */
-.esim-hero { padding: clamp(22px, 3.6vw, 34px); border-radius: 24px; background: linear-gradient(135deg, #091326 0%, #0f2140 55%, #132d54 100%); color: #f8fafc; border: 1px solid rgba(148, 163, 184, .18); box-shadow: var(--shadow-lg); position: relative; overflow: hidden; }
-.esim-hero::before { content: ""; position: absolute; inset: 0; background: radial-gradient(60% 80% at 15% 15%, rgba(56, 189, 248, .16), transparent 60%), radial-gradient(50% 70% at 85% 90%, rgba(16, 185, 129, .14), transparent 60%); pointer-events: none; }
-.esim-hero-grid { position: relative; display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(280px, .85fr); gap: 24px; align-items: center; }
+/* Authentic H-SIM & Telecom Hero */
+.esim-hero { padding: clamp(22px, 3.6vw, 34px); border-radius: 24px; background: linear-gradient(135deg, #071022 0%, #0d1e3a 52%, #132d54 100%); color: #f8fafc; border: 1px solid rgba(56, 189, 248, .24); box-shadow: var(--shadow-lg); position: relative; overflow: hidden; }
+.esim-hero::before { content: ""; position: absolute; inset: 0; background: radial-gradient(60% 80% at 15% 15%, rgba(56, 189, 248, .18), transparent 60%), radial-gradient(50% 70% at 85% 90%, rgba(251, 191, 36, .12), transparent 60%); pointer-events: none; }
+.esim-hero-grid { position: relative; display: grid; grid-template-columns: minmax(0, 1.32fr) minmax(295px, .88fr); gap: 24px; align-items: center; }
 @media (max-width: 860px) { .esim-hero-grid { grid-template-columns: 1fr; } .esim-hero-card-wrap { display: none; } }
 .esim-hero-copy { display: grid; gap: 14px; }
-.esim-hero-kicker { justify-self: start; display: inline-flex; align-items: center; gap: 7px; padding: 5px 12px; border-radius: 999px; background: rgba(56, 189, 248, .12); border: 1px solid rgba(56, 189, 248, .3); color: #7dd3fc; font: 600 .78rem var(--f-ui); }
-.esim-hero-kicker svg { width: 15px; height: 15px; }
-.esim-hero-copy h1 { margin: 0; font: 700 clamp(1.45rem, 3.2vw, 2.1rem)/1.3 var(--f-ui); color: #fff; letter-spacing: -.01em; }
-.esim-hero-copy p { margin: 0; color: #cbd5e1; font-size: clamp(.9rem, 1.8vw, .98rem); line-height: 1.65; max-width: 62ch; }
+.esim-hero-kicker { justify-self: start; display: inline-flex; align-items: center; gap: 8px; padding: 4px 12px 4px 6px; border-radius: 999px; background: rgba(15, 23, 42, .65); border: 1px solid rgba(56, 189, 248, .35); color: #bae6fd; font: 600 .78rem var(--f-ui); }
+.kicker-monogram { padding: 2px 8px; border-radius: 999px; background: linear-gradient(135deg, #fde68a, #f59e0b); color: #081124; font: 800 .68rem var(--f-mono); letter-spacing: .05em; }
+.esim-hero-copy h1 { margin: 0; font: 800 clamp(1.45rem, 3.2vw, 2.12rem)/1.32 var(--f-ui); color: #fff; letter-spacing: -.01em; }
+.esim-hero-copy p { margin: 0; color: #cbd5e1; font-size: clamp(.9rem, 1.8vw, .98rem); line-height: 1.68; max-width: 62ch; }
 .esim-search-box { display: flex; align-items: center; gap: 10px; background: #ffffff; color: #0f172a; border-radius: 14px; padding: 5px 14px; max-width: 580px; border: 1px solid rgba(255, 255, 255, .2); box-shadow: 0 10px 24px rgba(0, 0, 0, .2); }
 :root[data-theme="dark"] .esim-search-box { background: #0f1a2e; color: #f1f5f9; border-color: rgba(148, 163, 184, .24); }
 .esim-search-ic { color: #0284c7; display: grid; place-items: center; }
@@ -733,23 +734,29 @@ body.shop { background: var(--bg); min-height: 100dvh; display: flex; flex-direc
 
 .esim-trust-row { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; font-size: .8rem; color: #cbd5e1; padding-top: 2px; }
 .esim-trust-row > span { display: inline-flex; align-items: center; gap: 6px; }
-.esim-trust-row > span svg { width: 15px; height: 15px; color: #38bdf8; flex: none; }
+.esim-trust-row > span svg { width: 15px; height: 15px; color: #fbbf24; flex: none; }
 
-/* Visual Digital eSIM Showcase Card inside Hero */
-.esim-showcase-card { padding: 20px; border-radius: 20px; background: linear-gradient(145deg, rgba(30, 41, 59, .92), rgba(15, 23, 42, .96)); border: 1px solid rgba(148, 163, 184, .26); box-shadow: 0 18px 36px rgba(0, 0, 0, .32); display: grid; gap: 16px; position: relative; }
+/* Visual Digital H-SIM Showcase Card inside Hero */
+.esim-showcase-card { padding: 20px; border-radius: 20px; background: linear-gradient(145deg, rgba(15, 28, 54, .95), rgba(8, 17, 36, .98)); border: 1px solid rgba(56, 189, 248, .3); box-shadow: 0 18px 36px rgba(0, 0, 0, .36); display: grid; gap: 14px; position: relative; }
 .esim-showcase-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.esim-showcase-tag { display: block; font: 700 .68rem var(--f-mono); letter-spacing: .08em; color: #38bdf8; margin-bottom: 3px; }
-.esim-showcase-top strong { font: 700 1.05rem var(--f-ui); color: #fff; }
-.esim-showcase-specs { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; padding: 12px; border-radius: 12px; background: rgba(255, 255, 255, .04); border: 1px solid rgba(255, 255, 255, .08); }
-.esim-showcase-specs small { display: block; font-size: .7rem; color: #94a3b8; margin-bottom: 2px; }
-.esim-showcase-specs b { font-size: .8rem; color: #f1f5f9; }
-.esim-showcase-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: .78rem; color: #cbd5e1; }
+.esim-showcase-emblems { display: inline-flex; align-items: center; gap: 8px; flex: none; }
+.esim-showcase-emblems .hsim-logo-svg { width: 38px; height: 38px; }
+.esim-showcase-tag { display: block; font: 700 .66rem var(--f-mono); letter-spacing: .08em; color: #fbbf24; margin-bottom: 3px; }
+.esim-showcase-top strong { font: 700 1.04rem var(--f-ui); color: #fff; }
+.esim-showcase-specs { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; padding: 11px 12px; border-radius: 12px; background: rgba(255, 255, 255, .04); border: 1px solid rgba(255, 255, 255, .09); }
+.esim-showcase-specs small { display: block; font-size: .69rem; color: #94a3b8; margin-bottom: 2px; }
+.esim-showcase-specs b { font-size: .79rem; color: #f1f5f9; }
+.esim-pass-journey { display: flex; align-items: center; justify-content: space-between; gap: 6px; padding: 9px 12px; border-radius: 11px; background: rgba(14, 165, 233, .09); border: 1px dashed rgba(56, 189, 248, .32); font-size: .74rem; color: #e2e8f0; }
+.esim-pass-step { display: inline-flex; align-items: center; gap: 5px; font-weight: 600; white-space: nowrap; }
+.esim-pass-step i { width: 18px; height: 18px; border-radius: 50%; background: rgba(251, 191, 36, .2); color: #fbbf24; font: 700 .68rem var(--f-mono); display: grid; place-items: center; flex: none; }
+.esim-pass-arrow { color: #38bdf8; font-weight: 700; opacity: .75; }
+.esim-showcase-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: .76rem; color: #cbd5e1; }
 .esim-showcase-status { display: inline-flex; align-items: center; gap: 6px; color: #34d399; font-weight: 600; }
 
-/* SIM & eSIM Vector Chip Emblems */
-.esim-chip-svg { width: 38px; height: 30px; flex: none; filter: drop-shadow(0 2px 4px rgba(0, 0, 0, .12)); }
-.esim-chip-svg.lg { width: 48px; height: 38px; }
-.esim-sim-svg { width: 24px; height: 30px; color: var(--co, var(--primary)); flex: none; }
+/* SIM & H-SIM Vector Chip Emblems */
+.esim-chip-svg { width: 38px; height: 30px; flex: none; filter: drop-shadow(0 2px 4px rgba(0, 0, 0, .14)); }
+.esim-chip-svg.lg { width: 46px; height: 36px; }
+.esim-sim-svg { width: 26px; height: 32px; color: var(--co, var(--primary)); flex: none; }
 
 /* Unified Filter Toolbar: Service Type Tabs & Carrier Pills */
 .esim-controls { display: grid; gap: 12px; padding: 14px 16px; border-radius: 18px; background: var(--surface); border: 1px solid var(--line); box-shadow: var(--shadow-sm); }
@@ -772,22 +779,22 @@ body.shop { background: var(--bg); min-height: 100dvh; display: flex; flex-direc
 .esim-carrier-meta b { font-size: .84rem; }
 .esim-carrier-meta small { font-size: .72rem; color: var(--muted); }
 
-/* Airalo-Style Telecom Plan Grid & Cards */
+/* Proprietary H-SIM Telecom Pass Grid & Cards */
 .esim-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(295px, 1fr)); gap: 16px; }
 .esim-card { position: relative; display: flex; flex-direction: column; gap: 12px; padding: 18px; border-radius: 20px; background: var(--surface); border: 1.5px solid var(--line); box-shadow: var(--shadow-sm); transition: transform .16s ease, box-shadow .16s ease, border-color .16s ease; overflow: hidden; }
-.esim-card::before { content: ""; position: absolute; inset-block-start: 0; inset-inline: 0; height: 4px; background: var(--co, var(--primary)); opacity: .88; }
-.esim-card:hover { transform: translateY(-2px); box-shadow: var(--shadow-md); border-color: color-mix(in srgb, var(--co, var(--primary)) 50%, var(--line)); }
+.esim-card::before { content: ""; position: absolute; inset-block-start: 0; inset-inline: 0; height: 4px; background: var(--co, var(--primary)); opacity: .9; }
+.esim-card:hover { transform: translateY(-2px); box-shadow: var(--shadow-md); border-color: color-mix(in srgb, var(--co, var(--primary)) 55%, var(--line)); }
 .esim-card.is-featured { border-color: color-mix(in srgb, var(--co, var(--primary)) 65%, var(--line)); }
 
 .esim-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; padding-top: 2px; }
 .esim-card-carrier { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .esim-card-titles { min-width: 0; }
-.esim-carrier-label { display: block; font-size: .75rem; font-weight: 600; color: var(--muted); }
+.esim-carrier-label { display: block; font-size: .74rem; font-weight: 700; color: var(--muted); }
 .esim-plan-title { margin: 1px 0 0; font: 700 1.04rem/1.3 var(--f-ui); color: var(--ink); }
 .esim-card-emblem { display: flex; flex-direction: column; align-items: center; gap: 3px; flex: none; }
-.esim-chip-tag { padding: 2px 7px; border-radius: 6px; background: rgba(245, 158, 11, .14); color: #b45309; font: 700 .66rem var(--f-mono); letter-spacing: .03em; }
+.esim-chip-tag { padding: 2px 7px; border-radius: 6px; background: rgba(245, 158, 11, .14); color: #b45309; font: 800 .64rem var(--f-mono); letter-spacing: .04em; }
 :root[data-theme="dark"] .esim-chip-tag { background: rgba(245, 158, 11, .2); color: #fbbf24; }
-.esim-sim-tag { padding: 2px 7px; border-radius: 6px; background: var(--surface-2); color: var(--muted); font: 600 .68rem var(--f-ui); }
+.esim-sim-tag { padding: 2px 7px; border-radius: 6px; background: var(--surface-2); color: var(--muted); font: 700 .66rem var(--f-ui); }
 
 .esim-card-flags { display: flex; flex-wrap: wrap; gap: 6px; }
 .esim-flag { display: inline-flex; align-items: center; gap: 4px; padding: 3px 9px; border-radius: 999px; font: 600 .73rem var(--f-ui); }
@@ -795,35 +802,59 @@ body.shop { background: var(--bg); min-height: 100dvh; display: flex; flex-direc
 .esim-flag.featured { background: var(--primary-soft); color: var(--primary); }
 .esim-flag.discount { background: var(--good-soft); color: var(--good); }
 
+/* H-SIM High-Contrast Data & Validity Readout Banner */
+.esim-data-banner { padding: 12px 14px; border-radius: 14px; background: linear-gradient(135deg, color-mix(in srgb, var(--co, var(--primary)) 8%, var(--surface-2)), var(--surface-2)); border: 1px solid color-mix(in srgb, var(--co, var(--primary)) 24%, var(--line)); display: grid; gap: 9px; }
+.esim-data-main { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.esim-data-col { display: grid; gap: 2px; }
+.esim-data-col.end { text-align: end; }
+.esim-data-col small { font-size: .72rem; color: var(--muted); font-weight: 600; }
+.esim-data-col strong { font: 800 1.24rem/1.15 var(--f-mono); color: var(--ink); letter-spacing: -.02em; }
+.esim-data-col b { font: 700 .92rem/1.2 var(--f-ui); color: var(--ink); }
+.esim-data-sep { width: 1px; height: 28px; background: color-mix(in srgb, var(--co, var(--primary)) 25%, var(--line)); flex: none; }
+
 /* Specification Table Rows inside Plan Card */
 .esim-spec-box { border-radius: 14px; background: var(--surface-2); border: 1px solid var(--line); padding: 10px 12px; display: grid; gap: 7px; }
-.esim-spec-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: .84rem; padding-top: 6px; border-top: 1px solid color-mix(in srgb, var(--line) 65%, transparent); }
+.esim-spec-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: .83rem; padding-top: 6px; border-top: 1px solid color-mix(in srgb, var(--line) 65%, transparent); }
 .esim-spec-row:first-child { padding-top: 0; border-top: 0; }
 .esim-spec-k { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-weight: 500; }
 .esim-spec-k svg { width: 15px; height: 15px; color: var(--co, var(--primary)); }
 .esim-spec-v { color: var(--ink); font-weight: 600; text-align: end; }
 .esim-spec-row.highlight .esim-spec-v { font: 700 1.05rem var(--f-mono); color: var(--ink); }
-.esim-spec-row.esim-qr-row .esim-spec-v { color: var(--primary); font-size: .8rem; }
-.esim-gb-meter { height: 5px; border-radius: 999px; background: var(--surface-3); overflow: hidden; margin-bottom: 2px; }
+.esim-spec-row.esim-qr-row .esim-spec-v { color: var(--primary); font-size: .79rem; }
+.esim-gb-meter { height: 5px; border-radius: 999px; background: var(--surface-3); overflow: hidden; }
 .esim-gb-meter > span { display: block; height: 100%; border-radius: 999px; background: var(--co, var(--primary)); }
 
 .esim-plan-desc { margin: 0; font-size: .82rem; color: var(--muted); line-height: 1.5; }
 
-/* Clean Stacked Price Row & Uniform Action Buttons in Plan Card */
-.esim-card-foot { margin-top: auto; padding-top: 12px; border-top: 1px dashed var(--line); display: grid; gap: 10px; }
+/* Perforated SIM-Pass Ticket Footer & Action Buttons */
+.esim-card-foot { position: relative; margin-top: auto; padding-top: 14px; border-top: 1.5px dashed color-mix(in srgb, var(--co, var(--primary)) 28%, var(--line)); display: grid; gap: 10px; }
+.esim-card-foot::before, .esim-card-foot::after { content: ""; position: absolute; top: -8px; width: 14px; height: 14px; border-radius: 50%; background: var(--bg); border: 1.5px solid color-mix(in srgb, var(--co, var(--primary)) 35%, var(--line)); pointer-events: none; }
+.esim-card-foot::before { inset-inline-start: -26px; }
+.esim-card-foot::after { inset-inline-end: -26px; }
 .esim-price-row { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
 .esim-price-block { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }
 .esim-price-label { font-size: .78rem; font-weight: 600; color: var(--ink-2); }
 .esim-daily-hint { color: var(--muted); font-size: .72rem; }
 .esim-price-val { display: flex; align-items: baseline; gap: 6px; }
 .esim-price-val s { color: var(--muted); font-size: .84rem; }
-.esim-price-val b { font: 700 1.35rem var(--f-mono); color: var(--ink); }
+.esim-price-val b { font: 800 1.35rem var(--f-mono); color: var(--ink); }
 
 .esim-card-btns { width: 100%; display: grid; gap: 8px; }
 .esim-card-btns.has-two { grid-template-columns: 1fr 1.25fr; }
 .esim-card-btns.has-one { grid-template-columns: 1fr; }
 .esim-card-btns .btn { width: 100%; min-height: 42px; padding: 0 12px; border-radius: 12px; font-size: .86rem; justify-content: center; white-space: nowrap; }
 .esim-card-btns .btn svg { width: 16px; height: 16px; flex: none; }
+
+/* H-SIM Brand Charter Pillars Section */
+.esim-brand-pillars { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; margin-top: 4px; }
+.esim-pillar-card { display: flex; align-items: flex-start; gap: 13px; padding: 16px 18px; border-radius: 18px; background: var(--surface); border: 1px solid var(--line); box-shadow: var(--shadow-sm); transition: border-color .15s ease, transform .15s ease; }
+.esim-pillar-card:hover { border-color: color-mix(in srgb, var(--primary) 42%, var(--line)); transform: translateY(-1px); }
+.esim-pillar-ic { width: 42px; height: 42px; border-radius: 12px; background: linear-gradient(135deg, #081124, #142c54); color: #38bdf8; display: grid; place-items: center; flex: none; border: 1px solid rgba(56, 189, 248, .28); box-shadow: 0 4px 10px rgba(8, 17, 36, .14); }
+.esim-pillar-ic svg { width: 22px; height: 22px; }
+.esim-pillar-ic .esim-chip-svg { width: 28px; height: 22px; }
+.esim-pillar-card > div { display: grid; gap: 4px; }
+.esim-pillar-card strong { font: 700 .94rem var(--f-ui); color: var(--ink); }
+.esim-pillar-card p { margin: 0; font-size: .82rem; color: var(--muted); line-height: 1.62; }
 
 /* Checkout, Payment & Order Cards (With Proper Card Padding) */
 .shop .card.empty { padding: 32px 20px; width: min(100%, 660px); justify-self: center; }

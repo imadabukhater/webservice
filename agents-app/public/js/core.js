@@ -264,7 +264,7 @@ const P = {
   qr: '<rect x="4" y="4" width="6" height="6" rx="1"/><rect x="14" y="4" width="6" height="6" rx="1"/><rect x="4" y="14" width="6" height="6" rx="1"/><path d="M14 14h2v2h-2zM18 14h2M14 18h2M18 18h2v2"/>',
   lock: '<rect x="5" y="10.5" width="14" height="10" rx="2.5"/><path d="M8 10.5V8a4 4 0 0 1 8 0v2.5"/>',
   shield: '<path d="M12 3 4.5 6v5.5c0 4.5 3.2 8 7.5 9.5 4.3-1.5 7.5-5 7.5-9.5V6z"/><path d="m8.5 12 2.5 2.5 4.5-5"/>',
-  logo: '<path d="M12 3.2c-4.9 0-8.8 3.9-8.8 8.8s3.9 8.8 8.8 8.8 8.8-3.9 8.8-8.8" stroke-width="2.4"/><path d="M8.2 12.4a4 4 0 0 1 7.5-1.9M12 12l6.2-6.2" stroke-width="2.4"/><circle cx="18.6" cy="5.4" r="1.6" fill="currentColor" stroke="none"/>',
+  logo: '<path d="M6.5 2.5h7.8l4.7 4.7v12.3a2 2 0 0 1-2 2h-10.5a2 2 0 0 1-2-2v-15a2 2 0 0 1 2-2z" stroke-width="1.9"/><path d="M8.5 8.5v7.5M14.8 8.5v7.5M8.5 12.2h6.3" stroke-width="2.3"/><path d="M13.8 2.8v3.7a1 1 0 0 0 1 1h3.7" stroke-width="1.4" opacity=".65"/>',
 };
 export const icon = (name, cls = 'i') => `<svg class="${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${P[name] || ''}</svg>`;
 
