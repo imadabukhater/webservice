@@ -165,6 +165,34 @@ const lyApi = http.createServer((req, res) => {
   });
 });
 
+// ---------- telecom.co.il, with free ALOHA numbers and eSIMs ----------
+const tcFake = { leads: [], chosen: [], signedIn: new Set(), code: '', numbers: ['0553381540', '0553381541'] };
+const tcSite = http.createServer((req, res) => {
+  let body = '';
+  req.on('data', (c) => { body += c; });
+  req.on('end', () => {
+    const form = Object.fromEntries(new URLSearchParams(body));
+    const u = new URL(req.url, 'http://x');
+    const sid = /PHPSESSID=(\w+)/.exec(req.headers.cookie || '')?.[1];
+    const json = (v) => { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(v)); };
+    if (u.pathname === '/v1/create-qr-code/') { res.writeHead(200, { 'Content-Type': 'image/png' }); return res.end(PNG); }
+    if (u.pathname === '/login') { res.writeHead(200, { 'Set-Cookie': `PHPSESSID=t${Date.now()}; path=/` }); return res.end(''); }
+    if (u.pathname === '/login/verifyLogin') { tcFake.code = '12345'; res.writeHead(200, { Refresh: `0;url=${process.env.TC_BASE}/VVC` }); return res.end(); }
+    if (u.pathname === '/VVC') { res.writeHead(200); return res.end(''); }
+    if (u.pathname === '/CVC') { if (form.code === tcFake.code) tcFake.signedIn.add(sid); return json({ result: form.code === tcFake.code }); }
+    if (!tcFake.signedIn.has(sid)) { res.writeHead(302, { Location: `${process.env.TC_BASE}/login` }); return res.end(); }
+    if (u.pathname === '/app/ajax/getRentPaidPackagesNew') {
+      return json(form.company === 'x2one' ? { result: true, data: [{ campaignId: '840', campaignName: ' ALOHA 150GB ', SPrice: '30.24', CPrice: '69.99', view_gb: '150', view_minutes: '2500', campaignSpecialMonths: '0' }], offer_data: [] } : { result: false });
+    }
+    if (u.pathname === '/app/ajax2/getx2onePhones') return json(form.campaign === '840' ? tcFake.numbers.map((phone) => ({ phone })) : []);
+    if (u.pathname === '/app/ajax/getESim') return json(form['data[company]'] === 'x2one' ? { result: true, data: { id: 77, qrData: 'LPA:1$x$PRE' } } : { result: false });
+    if (u.pathname === '/app/ajax/chooseESim') { tcFake.chosen.push(form); return json({ result: true, id: 77, sim: '8997212330000000077', QR: 'LPA:1$smdp.example$ACT-77' }); }
+    if (u.pathname === '/app/leads/leadActionNew') { tcFake.leads.push(form); return json({ result: true, leadId: 470001 }); }
+    res.writeHead(404);
+    res.end();
+  });
+});
+
 let base;
 let server;
 const call = async (token, method, url, body) => {
@@ -182,6 +210,12 @@ test.before(async () => {
   await new Promise((r) => imap.listen(0, '127.0.0.1', r));
   await new Promise((r) => smtpServer.listen(0, '127.0.0.1', r));
   await new Promise((r) => lyApi.listen(0, '127.0.0.1', r));
+  await new Promise((r) => tcSite.listen(0, '127.0.0.1', r));
+  process.env.TC_BASE = `http://127.0.0.1:${tcSite.address().port}`;
+  process.env.TC_QR_BASE = process.env.TC_BASE;
+  const tcClient = require('../src/telecom');
+  tcClient._deps.mailMark = async () => ({ uid: 1, at: Date.now() });
+  tcClient._deps.waitForCode = async () => tcFake.code;
   process.env.LY_BASE = `http://127.0.0.1:${lyApi.address().port}`;
   process.env.QL_BASE = `http://127.0.0.1:${qlApi.address().port}`;
   process.env.IMAP_PORT = String(imap.address().port);
@@ -189,7 +223,7 @@ test.before(async () => {
   ({ server } = require('../server'));
   await new Promise((r) => server.listen(0, () => { base = `http://127.0.0.1:${server.address().port}`; r(); }));
 });
-test.after(() => { server.close(); qlApi.close(); lyApi.close(); imap.close(); smtpServer.close(); });
+test.after(() => { server.close(); qlApi.close(); lyApi.close(); tcSite.close(); imap.close(); smtpServer.close(); });
 
 test('eSIM shop: a random number held per order, pay by JawwalPay, confirmed from the e-mail, activated, QR shown and e-mailed', async () => {
   const admin = (await ok(call(null, 'POST', '/api/login', { username: 'admin', password: 'admin-pass' }))).token;
@@ -297,4 +331,35 @@ test('eSIM shop with Layan: its free eSIM numbers, activated after payment with 
   assert.deepEqual([task.type, task.status, task.source], ['esim', 'done', 'ليان']);
   assert.equal((await ok(call(admin, 'POST', '/api/shop/admin/check-mail'))).mailed, 1, 'its QR code e-mailed too');
   assert.match(outbox.at(-1).to, /ly@example.com/);
+});
+
+
+test('eSIM shop with telecom (ALOHA): a free number, an eSIM taken and registered with the shop address, QR drawn', async () => {
+  const admin = (await ok(call(null, 'POST', '/api/login', { username: 'admin', password: 'admin-pass' }))).token;
+  await ok(call(admin, 'PUT', '/api/settings', { tcUser: 'dealer@example.com', tcPass: 'tc-pass', tcMailUser: 'box@gmail.com', tcMailPass: 'app-pass' }));
+  await ok(call(admin, 'POST', '/api/telecom/sync', { kind: 'invoice' }));
+  const pkg = (await ok(call(admin, 'GET', '/api/catalog'))).packages.find((p) => p.supplier === 'tc' && p.kind === 'invoice');
+  await ok(call(admin, 'PUT', `/api/packages/${pkg.id}`, { shopPrice: 55 }));
+  assert.equal((await ok(call(null, 'GET', '/api/shop'))).packages.find((p) => p.id === pkg.id).esim, true);
+  assert.deepEqual(await ok(call(null, 'GET', `/api/shop/available?packageId=${pkg.id}`)), { available: false }, 'not before the registration address is set');
+  await ok(call(admin, 'PUT', '/api/settings', { tcRegAddress: 'הרחוב 1', tcRegCity: 'ירושלים', tcRegZip: '9100000' }));
+  assert.deepEqual(await ok(call(null, 'GET', `/api/shop/available?packageId=${pkg.id}`)), { available: true });
+
+  const o = await ok(call(null, 'POST', '/api/shop/orders', { kind: 'esim', packageId: pkg.id, customerName: 'منى حسب الله', email: 'mona@example.com', contactPhone: '0599123456' }));
+  assert.equal(o.number, null);
+  const num = (await ok(call(admin, 'GET', '/api/shop/admin/orders'))).find((x) => x.code === o.code).number;
+  assert.ok(tcFake.numbers.includes(num), num);
+  assert.equal(tcFake.chosen.length, 0, 'no eSIM is taken before payment');
+
+  jawwalPay('Mona Mohammed Omar Hasaballah قام بتحويل مبلغ ILS 55.00 لحسابك بتاريخ 19-10-2026 11:17:00 AM. الرصيد المتوفر ILS 852.00.');
+  assert.equal((await ok(call(null, 'POST', `/api/shop/orders/${o.code}/proof`, { payName: 'Mona Hasaballah' }))).status, 'paid');
+  const done = await until(async () => { const v = await ok(call(null, 'GET', `/api/shop/orders/${o.code}`)); return v.stage === 'done' && v; });
+  assert.equal(done.number, num);
+  assert.equal(done.esimQr, `data:image/png;base64,${PNG.toString('base64')}`);
+  const lead = tcFake.leads[0];
+  assert.deepEqual([lead.phone, lead.campaignId, lead.sim, lead.sim_h, lead.sim_data, lead.firstname, lead.lastname, lead.email, lead.temp_phone, lead.address, lead.city, lead.zipCode],
+    [num, '840', '899721233', '8997212330000000077', '77', 'منى', 'حسب الله', 'mona@example.com', '0599123456', 'הרחוב 1', 'ירושלים', '9100000']);
+  assert.match(lead.serviceEndDate, /^\d{2}\/\d{2}\/\d{4}$/);
+  const task = (await ok(call(admin, 'GET', '/api/tasks'))).find((t) => t.lineNumber === num);
+  assert.deepEqual([task.type, task.status, task.source], ['esim', 'done', 'telecom']);
 });

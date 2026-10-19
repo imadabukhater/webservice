@@ -406,7 +406,7 @@ const DEFAULT_SETTINGS = {
   shop_enabled: '0', jawwalpay_number: '', jawwalpay_name: '', gmail_user: '', gmail_pass: '', mail_from: 'jawwalpay.ps', shop_agent_id: '',
   ql_user: '', ql_pass: '', ql_markup: '15',
   ly_user: '', ly_pass: '', ly_secret: '', ly_markup: '15',
-  tc_user: '', tc_pass: '', tc_mail_user: '', tc_mail_pass: '', tc_markup: '15',
+  tc_user: '', tc_pass: '', tc_mail_user: '', tc_mail_pass: '', tc_markup: '15', tc_reg_address: '', tc_reg_city: '', tc_reg_zip: '',
 };
 function getSettings() {
   const out = { ...DEFAULT_SETTINGS };
@@ -454,6 +454,9 @@ function getSettings() {
     tcMarkupInvoice: Math.max(0, Number(out.tc_markup_invoice ?? out.tc_markup) || 0),
     tcSyncedCard: Number(out.tc_synced_card) || null,
     tcSyncedInvoice: Number(out.tc_synced_invoice) || null,
+    // telecom asks a new line's address, city and postcode: the shop registers its eSIMs with these.
+    tcRegAddress: out.tc_reg_address, tcRegCity: out.tc_reg_city, tcRegZip: out.tc_reg_zip,
+    tcRegReady: !!(out.tc_reg_address && out.tc_reg_city && out.tc_reg_zip),
     // The daily copy in Google Cloud Storage (see cloudbackup.js): where, the last good one, and the last failure.
     backupBucket: out.backup_bucket || '',
     backupLastAt: Number(out.backup_last_at) || null,

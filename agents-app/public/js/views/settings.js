@@ -113,6 +113,12 @@ export default {
               <input class="input ltr" id="tc-mail-pass" name="tcMailPass" type="password" autocomplete="new-password" placeholder="${s.tcMailConfigured ? 'محفوظة — اتركها فارغة للإبقاء' : 'xxxx xxxx xxxx xxxx'}"></div>
           </div>
           <span class="hint">من حساب Google ← الأمان ← كلمات مرور التطبيقات (تحتاج التحقق بخطوتين). تبقى على السيرفر ولا تظهر بعد حفظها.</span>
+          <p class="muted small" style="margin-top:8px">عنوان تسجيل خطوط eSIM التي يبيعها المتجر (telecom يطلبه لكل خط جديد). اكتب المدينة كما تظهر في قائمة telecom، مثل ירושלים.</p>
+          <div class="row2 stack-xs">
+            <div class="field"><label for="tc-reg-address">العنوان</label><input class="input" id="tc-reg-address" name="tcRegAddress" value="${esc(s.tcRegAddress || '')}" autocomplete="off"></div>
+            <div class="field"><label for="tc-reg-city">المدينة</label><input class="input" id="tc-reg-city" name="tcRegCity" value="${esc(s.tcRegCity || '')}" autocomplete="off"></div>
+          </div>
+          <div class="field"><label for="tc-reg-zip">الرمز البريدي</label><input class="input ltr" id="tc-reg-zip" name="tcRegZip" inputmode="numeric" value="${esc(s.tcRegZip || '')}" autocomplete="off"></div>
           <div id="tc-msg"></div>
           <div class="btn-row">
             <button class="btn btn-primary" type="submit">${icon('check')}حفظ</button>
@@ -169,6 +175,7 @@ export default {
         S.settings = await api.put('/api/settings', {
           tcUser: field(form, 'tcUser'), tcPass: form.elements.tcPass.value,
           tcMailUser: field(form, 'tcMailUser'), tcMailPass: form.elements.tcMailPass.value,
+          tcRegAddress: field(form, 'tcRegAddress'), tcRegCity: field(form, 'tcRegCity'), tcRegZip: field(form, 'tcRegZip'),
         });
         toast('تم حفظ إعدادات telecom');
         changed();

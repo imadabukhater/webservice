@@ -54,7 +54,7 @@ function job(taskId) {
   const ref = p.art_card_id;
   const supplier = ['recharge', 'renew'].includes(t.type)
     ? (/^(ic|pb|pc):/.test(ref) ? 'art' : /^ql:/.test(ref) ? 'ql' : /^ly:/.test(ref) ? 'ly' : /^tc:/.test(ref) ? 'tc' : null)
-    : (/^qln:/.test(ref) ? 'qln' : /^lyn:/.test(ref) && t.type === 'activate' ? 'lyn' : /^lyn:/.test(ref) && t.type === 'esim' ? 'lye' : null);
+    : (/^qln:/.test(ref) ? 'qln' : /^lyn:/.test(ref) && t.type === 'activate' ? 'lyn' : /^lyn:/.test(ref) && t.type === 'esim' ? 'lye' : /^tcn:/.test(ref) && t.type === 'esim' ? 'tce' : null);
   if (!supplier) return null;
   // The supplier is paid its own current price, never the cost the manager may have typed.
   return { t, supplier, line, number: line.number, ref, price: p.art_price ?? p.cost };
@@ -76,7 +76,7 @@ async function send(taskId) {
   const j = job(taskId);
   if (!j) return;
   const s = getSettings();
-  const ready = { art: s.artConfigured, ly: s.lyConfigured, lyn: s.lyConfigured, lye: s.lyConfigured, tc: s.tcReady }[j.supplier] ?? s.qlConfigured;
+  const ready = { art: s.artConfigured, ly: s.lyConfigured, lyn: s.lyConfigured, lye: s.lyConfigured, tc: s.tcReady, tce: s.tcReady }[j.supplier] ?? s.qlConfigured;
   if (!ready) return;
   // Claim it: only one sender, only once.
   if (!q("UPDATE tasks SET auto_status = 'sending', auto_at = ? WHERE id = ? AND status = 'open' AND auto_status = ''").run(now(), taskId).changes) return;
@@ -85,6 +85,7 @@ async function send(taskId) {
   if (j.supplier === 'ly' || j.supplier === 'lyn') return sendLy(taskId, j);
   if (j.supplier === 'tc') return sendTc(taskId, j);
   if (j.supplier === 'lye') return sendLyEsim(taskId, j);
+  if (j.supplier === 'tce') return sendTcEsim(taskId, j);
   return sendArt(taskId, j);
 }
 
@@ -234,6 +235,59 @@ async function checkLyEsim(t, before) {
     ? `ليان: eSIM جاهز برابط تفعيل وليس رمز QR — ${st.esimUrl.slice(0, 200)}. أرسله للزبون أو حوّله إلى رمز QR وأرفقه.`
     : `ليان: حالة الـ eSIM «${st.status || 'غير معروفة'}» — افحص هناك قبل أي تنفيذ يدوي.`);
   tellManager('تفعيل eSIM يحتاج تدخلك', `${before.number}: ${st.esimUrl ? 'رابط تفعيل بدل رمز QR' : st.status || 'حالة غير معروفة'}`);
+}
+
+// ---------- telecom: a new ALOHA eSIM line on one of its free numbers ----------
+// Nothing is sent when the site's price for the package is above the approved one, or when the shop's registration
+// address is missing. The site's answer ({ result: true, leadId }) is the proof; the QR code is drawn from the eSIM's
+// activation code. Without a QR code the task stays with the manager, who attaches it.
+async function sendTcEsim(taskId, j) {
+  const fail = (note) => { setAuto(taskId, 'failed', note); tellManager('تعذّر تفعيل eSIM التلقائي', `${j.number}: ${note}`); };
+  const number = tc.localNumber(j.number);
+  const ref = tc.parseRef(j.ref);
+  const job = JSON.parse(j.t.payload || '{}').tc || {};
+  if (!number || !ref) { setAuto(taskId, 'failed', 'ناقصة بيانات telecom لهذا الخط — نفّذه يدوياً'); return undefined; }
+  const s = getSettings();
+  if (!s.tcRegReady) return fail('أدخل عنوان تسجيل خطوط eSIM (العنوان، المدينة، الرمز البريدي) في إعدادات telecom، ثم نفّذه يدوياً');
+  const creds = tcCredentials();
+  let pkg;
+  let esim;
+  try {
+    pkg = (await tc.catalog(creds, 'invoice')).find((p) => p.ref === j.ref);
+    if (!pkg) return fail('الرزمة لم تعد في telecom بهذه المدة — زامن telecom ثم نفّذه يدوياً أو ارفضه');
+    if (pkg.cost > Number(j.price) + 0.01) return fail(`سعر telecom الآن ${pkg.cost} ₪ وهو أعلى من المعتمد ${j.price} ₪ — زامن telecom وراجع السعر، ثم نفّذه يدوياً أو ارفضه`);
+    esim = await tc.takeEsim(creds);
+  } catch (e) {
+    if (e.refused) return fail(e.message);
+    return notSentYet({ ...j.t, number }, taskId, e, 'تعذّر تفعيل eSIM التلقائي');
+  }
+  const before = JSON.stringify({ tce: true, number, esimId: esim.id });
+  const customer = {
+    name: j.line.customer_name, email: job.email || s.gmailUser || s.tcMailUser, phone: tc.localNumber(job.phone) || number,
+    address: s.tcRegAddress, city: s.tcRegCity, zip: s.tcRegZip, comment: 'eSIM',
+  };
+  let r;
+  try {
+    r = await tc.newEsimLine(creds, { packageId: ref.packageId, number, esim, months: Math.max(1, Math.round(ref.days / 30)), customer });
+  } catch (e) {
+    if (e.refused) {
+      setAuto(taskId, 'failed', `رفض telecom تفعيل eSIM: ${e.message}`, { ref: before });
+      tellManager('رفض telecom تفعيل eSIM', `${number}: ${e.message}. ارفض الطلب ليُسترد المبلغ أو نفّذه يدوياً.`);
+      return undefined;
+    }
+    setAuto(taskId, 'unknown', `انقطع الاتصال أثناء الإرسال (${e.message}). افحص telecom قبل أي تنفيذ يدوي.`, { ref: before });
+    tellManager('تفعيل eSIM تلقائي غير مؤكد', `${number}: افحص telecom قبل التنفيذ`);
+    return undefined;
+  }
+  q('UPDATE lines SET sim = ? WHERE id = ?').run(esim.sim, j.t.line_id);
+  let qr = '';
+  try { qr = await tc.qrImage(esim.code); } catch (e) { console.error('telecom esim qr', e.message); }
+  setAuto(taskId, 'sent', `telecom: خط جديد #${r.leadId || ''}`, { ref: before });
+  const note = `telecom: تم تفعيل eSIM — مشترك #${r.leadId || '؟'} (${pkg.cost} ₪)`;
+  if (qr) { finish(taskId, note, 'تم التفعيل', TC_ACTOR, { attachment: qr }); return undefined; }
+  setAuto(taskId, 'unknown', `${note}، لكن تعذّر رسم رمز QR — رمز التفعيل: ${esim.code.slice(0, 200)}. أرفق رمز QR عند تنفيذ الطلب.`);
+  tellManager('eSIM مفعّل بلا رمز QR', `${number}: أرفق رمز QR`);
+  return undefined;
 }
 
 // ---------- telecom: extend a subscriber the dealer already has ----------

@@ -103,6 +103,9 @@ route('PUT', '/api/settings', ADMIN, ({ body }) => {
     setSetting('tc_mail_user', mail);
   }
   // Google shows an App password in groups of four: kept without the spaces.
+  for (const [field, key] of [['tcRegAddress', 'tc_reg_address'], ['tcRegCity', 'tc_reg_city'], ['tcRegZip', 'tc_reg_zip']]) {
+    if (body[field] !== undefined) setSetting(key, str(body[field], 80));
+  }
   if (body.tcMailPass) setSetting('tc_mail_pass', String(body.tcMailPass).replace(/\s+/g, '').slice(0, 200));
   for (const [field, key] of [['artMarkupCard', 'art_markup_card'], ['artMarkupInvoice', 'art_markup_invoice'],
     ['qlMarkupCard', 'ql_markup_card'], ['qlMarkupInvoice', 'ql_markup_invoice'],

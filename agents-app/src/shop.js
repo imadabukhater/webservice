@@ -114,13 +114,16 @@ function fulfil(orderId) {
   const lyRef = /^lyn:/.test(art) ? require('./layan').parseRef(art) : null;
   if (qlRef) require('./routes/quickline').remember(qlRef.packageId, true, [{ id: o.number_id, phone: o.number, sim: o.sim, qr: o.esim_qr }]);
   if (lyRef) require('./routes/layan').rememberEsim(lyRef.packageId, [o.number]);
+  const tcRef = /^tcn:/.test(art) ? require('./telecom').parseRef(art) : null;
+  if (tcRef) require('./routes/telecom').rememberEsim(tcRef.packageId, [o.number]);
   try {
     const r = tx(() => {
       const agent = shopAgent();
       D.changeBalance(agent, o.amount, { type: 'topup', actor: { id: null, name: ACTOR_NAME }, detail: `دفعة جوال باي — طلب ${o.code}` });
       const note = `طلب موقع الزبائن ${o.code}`;
       const sale = createLine(agent, o.esim
-        ? { kind: 'new', esim: true, number: o.number, qlNumberId: o.number_id, packageId: o.package_id, months: 1, customerName: o.customer_name, customerPrice: o.amount, note }
+        ? { kind: 'new', esim: true, number: o.number, qlNumberId: o.number_id, packageId: o.package_id, months: 1, customerName: o.customer_name, customerPrice: o.amount, note,
+          customerEmail: o.email, customerPhone: o.contact_phone }
         : { kind: o.kind === 'recharge' ? 'external' : 'new', number: o.number, sim: o.sim, packageId: o.package_id, months: 1, customerName: o.customer_name, customerPrice: o.amount, note });
       q("UPDATE shop_orders SET line_id = ?, error = '', updated_at = ? WHERE id = ?").run(sale.line.id, now(), o.id);
       return sale;

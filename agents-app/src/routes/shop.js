@@ -17,16 +17,19 @@ const heldNumbers = () => q(`SELECT number, number_id FROM shop_orders WHERE esi
   OR status IN ('verifying','review') OR (status = 'paid' AND line_id IS NULL))`).all(now() - RESERVE_MS);
 // A package sold as an eSIM: a new line whose number (with its eSIM and QR code) comes from the supplier's free
 // eSIM numbers, activated automatically.
-// QuickLine (its eSIM numbers come with their QR code) and Layan (it gives the eSIM's QR code when activating).
-const isEsimRef = (ref) => /^(qln|lyn):/.test(String(ref || ''));
+// QuickLine (its eSIM numbers come with their QR code), Layan (it gives the eSIM's QR code when activating), and
+// telecom's ALOHA (its eSIM's activation code, drawn as a QR code).
+const TC_ESIM_COMPANY = 'ALOHA';
+const isEsimRef = (ref, companyName) => /^(qln|lyn):/.test(String(ref || '')) || (/^tcn:/.test(String(ref || '')) && companyName === TC_ESIM_COMPANY);
+const tc = require('../telecom');
 const ly = require('../layan');
 function esimPackage(id) {
   const p = q(`SELECT p.*, c.name AS company_name FROM packages p JOIN companies c ON c.id = p.company_id
                WHERE p.id = ? AND p.active = 1 AND p.shop_price > 0`).get(Number(id));
   const art = p?.art_card_id || '';
-  const ref = /^qln:/.test(art) ? ql.parseRef(art) : /^lyn:/.test(art) ? ly.parseRef(art) : null;
+  const ref = !p || !isEsimRef(art, p.company_name) ? null : /^qln:/.test(art) ? ql.parseRef(art) : /^lyn:/.test(art) ? ly.parseRef(art) : tc.parseRef(art);
   if (!ref) fail(404, 'الباقة غير متوفرة');
-  return { p, ref, layan: /^lyn:/.test(art) };
+  return { p, ref, layan: /^lyn:/.test(art), telecom: /^tcn:/.test(art) };
 }
 // Layan's numbers have no id of their own: the number is the id.
 const phoneId = (phone) => Number(String(phone).replace(/\D/g, ''));
@@ -108,7 +111,7 @@ route('GET', '/api/shop', null, () => {
     packages: packages.map((p) => ({
       id: p.id, companyId: p.company_id, companyName: p.company_name, name: p.name, price: round(p.shop_price),
       dataGb: p.data_gb, minutes: p.minutes, sms: p.sms, tag: p.tag, description: p.description, days: p.days || null,
-      esim: isEsimRef(p.art_card_id),
+      esim: isEsimRef(p.art_card_id, p.company_name),
     })),
   };
 });
@@ -116,11 +119,17 @@ route('GET', '/api/shop', null, () => {
 // The free eSIM numbers of a package at its supplier (remembered there, so a sale can use one), without the ones other
 // customers hold: [{ id, phone, sim, qr }]. QuickLine's come with their eSIM and QR code; Layan's get theirs when
 // activated (its numbers have no id: the number is the id).
-async function freeEsimNumbers(s, { ref, layan }) {
+async function freeEsimNumbers(s, { ref, layan, telecom }) {
   const held = heldNumbers();
   let list;
   try {
-    if (layan) {
+    if (telecom) {
+      // Registered with the shop's address: none set, nothing to sell.
+      if (!s.tcReady || !s.tcRegReady) fail(503, 'لا توجد أرقام متاحة الآن');
+      const phones = await tc.esimNumbers(require('../db').tcCredentials(), ref.packageId);
+      require('./telecom').rememberEsim(ref.packageId, phones);
+      list = phones.map((phone) => ({ id: phoneId(phone), phone, sim: '', qr: '' }));
+    } else if (layan) {
       if (!s.lyConfigured) fail(503, 'لا توجد أرقام متاحة الآن');
       const phones = await ly.esimNumbers(require('../db').lyCredentials(), ref.packageId);
       require('./layan').rememberEsim(ref.packageId, phones);
@@ -131,7 +140,7 @@ async function freeEsimNumbers(s, { ref, layan }) {
       require('./quickline').remember(ref.packageId, true, list);
     }
   } catch (e) {
-    if (!(e instanceof ql.QuickLineError) && !(e instanceof ly.LayanError)) throw e;
+    if (!(e instanceof ql.QuickLineError) && !(e instanceof ly.LayanError) && !(e instanceof tc.TelecomError)) throw e;
     console.error('shop numbers', e.message);
     fail(502, 'تعذّر الوصول إلى الأرقام الآن. حاول بعد قليل.');
   }
@@ -144,7 +153,13 @@ async function freeEsimNumbers(s, { ref, layan }) {
 route('GET', '/api/shop/available', null, async ({ query, ip }) => {
   const s = enabled();
   throttle(ip, 'numbers', 120);
-  return { available: (await freeEsimNumbers(s, esimPackage(query.packageId))).length > 0 };
+  try {
+    return { available: (await freeEsimNumbers(s, esimPackage(query.packageId))).length > 0 };
+  } catch (e) {
+    // The supplier not set up (or its registration details missing): simply none to sell now.
+    if (e.status === 503) return { available: false };
+    throw e;
+  }
 });
 
 route('POST', '/api/shop/orders', null, ({ body, ip }) => {

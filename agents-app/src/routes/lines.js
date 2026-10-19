@@ -117,6 +117,16 @@ function createLine(user, body) {
     if (!picked) fail(400, 'اختر رقم الهاتف من قائمة الأرقام المتاحة');
     sim = { iccid: picked.sim.replace(/\D/g, ''), stockId: null };
   }
+  // A telecom (ALOHA) eSIM on one of its free numbers: carried out there automatically, with the customer's details
+  // the site asks for (the customer shop passes its customer's e-mail and phone).
+  const tcRef = kind === 'new' && esim && /^tcn:/.test(pkg.art_card_id || '') ? require('../telecom').parseRef(pkg.art_card_id) : null;
+  let tcJob = null;
+  if (tcRef) {
+    if (port) fail(400, 'هذه الرزمة لا تدعم تحويل الرقم مع eSIM');
+    if (!str(body.customerName, 80)) fail(400, 'اكتب اسم الزبون — مطلوب لتفعيل هذا الخط');
+    if (!require('./telecom').servedEsim(tcRef.packageId, number)) fail(400, 'اختر رقم الهاتف من قائمة الأرقام المتاحة');
+    tcJob = { esim: true, email: str(body.customerEmail, 120), phone: str(body.customerPhone, 20) };
+  }
   if (kind === 'new' && !esim && !lyRef) {
     if (isBlank(body.sim) && !body.simId) fail(400, 'أدخل رقم الشريحة أو اخترها من المخزون');
     sim = D.takeSim({ iccid: body.sim, simId: body.simId }, { agentId: agent.id, isAdmin, companyId: pkg.company_id, companyName: pkg.company_name });
@@ -138,7 +148,7 @@ function createLine(user, body) {
   const direct = D.directCompany(pkg.company_id) && !port && !esim && !viaQl;
   const manual = !direct && !port && !esim && !isAdmin;
   // The eSIM's QR code is kept with the task; it is shown on the line once QuickLine has activated it.
-  const taskPayload = qlJob ? { ql: qlJob } : lyJob ? { ly: lyJob } : null;
+  const taskPayload = qlJob ? { ql: qlJob } : lyJob ? { ly: lyJob } : tcJob ? { tc: tcJob } : null;
   // A QuickLine sale is pending until QuickLine has carried it out, whoever sold it.
   const pending = port || esim || manual || viaQl;
   const t = now();

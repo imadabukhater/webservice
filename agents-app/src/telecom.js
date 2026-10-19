@@ -240,6 +240,53 @@ async function extend(creds, { leadId, days }) {
   throw new TelecomError(`telecom: رد غير مفهوم على التمديد (${r.status})`);
 }
 
+// ---------- a new ALOHA eSIM line (as the site's "new subscriber" form does it) ----------
+// 1. /app/ajax2/getx2onePhones { company: 'x2one', type: 'new', campaign } — the free numbers;
+// 2. /app/ajax/getESim { data[company] } — a free eSIM ({ data: { id } }), then /app/ajax/chooseESim { id, company } —
+//    takes it for this line ({ result, id, sim, QR }: QR is the eSIM's activation code, which the QR image encodes);
+// 3. /app/leads/leadActionNew — the form: the number, the eSIM (sim_h, and its id as sim_data), the end date and
+//    the customer's details → { result: true, leadId }.
+const ESIM_COMPANY = 'x2one';
+const SIM_PREFIX = { x2one: '899721233' };
+async function esimNumbers(creds, packageId) {
+  const data = json(await page(creds, 'POST', '/app/ajax2/getx2onePhones', { company: ESIM_COMPANY, type: 'new', campaign: String(packageId) }, { ajax: true }));
+  return (Array.isArray(data) ? data : []).map((n) => localNumber(n.phone)).filter(Boolean);
+}
+async function takeEsim(creds) {
+  const got = json(await page(creds, 'POST', '/app/ajax/getESim', { 'data[company]': ESIM_COMPANY }, { ajax: true }));
+  if (!got || got.result !== true || !got.data?.id) throw new TelecomError('telecom: لا يوجد eSIM متاح الآن', { refused: true });
+  const chosen = json(await page(creds, 'POST', '/app/ajax/chooseESim', { id: String(got.data.id), company: ESIM_COMPANY }, { ajax: true }));
+  if (!chosen || chosen.result !== true) throw new TelecomError('telecom: تعذّر حجز eSIM', { refused: true });
+  return { id: String(chosen.id || got.data.id), sim: String(chosen.sim || '').replace(/\D/g, ''), code: String(chosen.QR || got.data.qrData || '') };
+}
+// dd/mm/yyyy, as the site's form sends dates.
+const siteDate = (d) => `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()}`;
+async function newEsimLine(creds, { packageId, number, esim, months = 1, customer }) {
+  const end = new Date();
+  end.setMonth(end.getMonth() + Math.max(1, months));
+  const [first, ...rest] = String(customer.name || '').trim().split(/\s+/);
+  const r = await page(creds, 'POST', '/app/leads/leadActionNew', {
+    niyud_phone: '', sim_niyud: '', oldProvider: '0', phone: number, sim: SIM_PREFIX[ESIM_COMPANY], sim_h: esim.sim, sim_new: '',
+    serviceEndDate: siteDate(end), firstname: first || '-', lastname: rest.join(' ') || first || '-', email: customer.email, temp_phone: customer.phone,
+    address: customer.address, city: customer.city, zipCode: customer.zip, comment: customer.comment || '', campaignId: String(packageId), sim_data: esim.id,
+  }, { ajax: true });
+  const data = json(r);
+  if (data && data.result === true) return { leadId: Number(data.leadId) || null };
+  if (data && (data.result === false || data.result === 'false' || data.result === 'false1')) {
+    throw new TelecomError(`telecom رفض الخط الجديد${data.result === 'false1' ? ' (رقم الشريحة)' : ''}`, { refused: true });
+  }
+  throw new TelecomError(`telecom: رد غير مفهوم على الخط الجديد (${r.status})`);
+}
+// The eSIM's QR code as an image (the site draws it with this same service from the activation code).
+const QR_BASE = process.env.TC_QR_BASE || 'https://api.qrserver.com';
+async function qrImage(code) {
+  if (!code) return '';
+  const res = await fetch(`${QR_BASE}/v1/create-qr-code/?size=400x400&data=${encodeURIComponent(code)}`, { signal: AbortSignal.timeout(TIMEOUT_MS) });
+  const type = (res.headers.get('content-type') || '').split(';')[0].trim();
+  if (!res.ok || !/^image\//.test(type)) throw new TelecomError(`telecom: تعذّر رسم رمز QR (${res.status})`);
+  return `data:${type};base64,${Buffer.from(await res.arrayBuffer()).toString('base64')}`;
+}
+
 const parseRef = (ref) => {
   const m = /^(tcn?):(\d+):(\d+)$/.exec(String(ref || ''));
   return m ? { system: m[1], packageId: Number(m[2]), days: Number(m[3]) } : null;
@@ -254,5 +301,5 @@ async function check(creds) {
 
 module.exports = {
   TelecomError, COMPANIES, DURATIONS, check, page, balance, packages, catalog, leads, lead, findLead, extend,
-  extensionPrice, parseRef, localNumber, _deps: deps, _session: session,
+  extensionPrice, parseRef, localNumber, esimNumbers, takeEsim, newEsimLine, qrImage, _deps: deps, _session: session,
 };

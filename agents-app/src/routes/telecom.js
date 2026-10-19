@@ -143,4 +143,19 @@ route('GET', '/api/telecom/reprice', ADMIN, ({ query }) => {
   return { total: r.total, edited: r.edited || 0, pending: pendingCount(kind), markup: markupFor(kind) };
 });
 
-module.exports = { syncKind, REF };
+// ---------- free ALOHA numbers for a new eSIM (the customer shop) ----------
+// Remembered for a while, so a sale can be checked to use one of them; the shop puts its order's number back here
+// before selling it (payment may take longer).
+const SERVED_MS = 2 * 60 * 60_000;
+const esimServed = new Map();
+function rememberEsim(packageId, phones) {
+  const t = now();
+  for (const [k, v] of esimServed) if (t - v.at > SERVED_MS) esimServed.delete(k);
+  for (const phone of phones) esimServed.set(`${packageId}:${phone}`, { phone, at: t });
+}
+function servedEsim(packageId, number) {
+  const v = esimServed.get(`${packageId}:${number}`);
+  return v && now() - v.at < SERVED_MS ? v : null;
+}
+
+module.exports = { syncKind, REF, rememberEsim, servedEsim };
