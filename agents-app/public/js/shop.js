@@ -74,28 +74,19 @@ function catalogPage() {
     <p class="small muted" style="text-align:center">تأكد أن هاتفك يدعم eSIM قبل الشراء (أغلب أجهزة آيفون من XS فما فوق، وأجهزة أندرويد الحديثة).</p>`);
 }
 
-// ---------- the package, its free numbers, and the customer's details ----------
+// ---------- the package and the customer's details (the number is given at random, and shown once paid) ----------
 async function esimForm(p) {
   const co = S.shop.companies.find((c) => c.id === p.companyId);
-  const st = { numbers: [], shown: [], picked: 0, loading: true, error: '' };
-  const head = `<a class="btn btn-ghost btn-sm" href="#/">${icon('arrowR')}كل الباقات</a>`;
-  const numbersHtml = () => {
-    if (st.loading) return '<div class="num-grid">' + '<div class="skel" style="height:48px"></div>'.repeat(4) + '</div>';
-    if (st.error) return `<div class="msg">${icon('alert')}<span>${esc(st.error)}</span></div><button type="button" class="btn btn-soft btn-sm" data-act="more">${icon('refresh')}حاول مرة أخرى</button>`;
-    if (!st.numbers.length) return `<div class="empty"><span class="tile">${icon('phone')}</span><b>لا توجد أرقام eSIM متاحة لهذه الباقة الآن</b><span>جرّب باقة أخرى أو عد لاحقاً.</span></div>`;
-    return `<div class="num-grid">${st.numbers.map((n) => `<button type="button" class="num-btn" data-num="${n.id}" aria-pressed="${st.picked === n.id}">${esc(fmtPhone(n.phone))}</button>`).join('')}</div>
-      <button type="button" class="btn btn-ghost btn-sm" data-act="more">${icon('refresh')}أرقام أخرى</button>`;
-  };
-  paint(`${head}
+  paint(`<a class="btn btn-ghost btn-sm" href="#/">${icon('arrowR')}كل الباقات</a>
     <form class="card card-pad shop-form" id="order-form" novalidate>
       <div class="item-top">${companyLogo(co, 'sm')}<div class="grow"><b class="item-title">${esc(p.companyName)} · ${esc(p.name)}</b>
         <div class="item-sub"><span>eSIM</span><span>${period(p)}</span></div></div><b class="ltr shop-amount">${fmtMoney(p.price)}</b></div>
-      <div class="field"><span class="label">اختر رقمك الجديد</span><div id="numbers">${numbersHtml()}</div></div>
+      <div id="avail"><div class="skel" style="height:48px"></div></div>
       <div class="field"><label for="f-name">الاسم الكامل</label><input class="input" id="f-name" name="customerName" autocomplete="name" required>
         <span class="hint">مطلوب لتسجيل الخط باسمك.</span></div>
       <div class="field"><label for="f-email">البريد الإلكتروني <span class="opt">(مستحسن)</span></label>
         <input class="input ltr" id="f-email" name="email" type="email" inputmode="email" autocomplete="email" placeholder="name@example.com">
-        <span class="hint">نرسل لك عليه رمز QR لتثبيت الـ eSIM، لتحتفظ به.</span></div>
+        <span class="hint">نرسل لك عليه رقمك ورمز QR لتثبيت الـ eSIM، لتحتفظ بهما.</span></div>
       <div class="field"><label for="f-contact">رقم للتواصل <span class="opt">(اختياري)</span></label>
         <input class="input ltr" id="f-contact" name="contactPhone" type="tel" inputmode="tel" placeholder="05X XXX XXXX"></div>
       <div class="msg" id="form-err" hidden></div>
@@ -103,40 +94,25 @@ async function esimForm(p) {
     </form>`);
   const form = document.getElementById('order-form');
   const submit = form.querySelector('[type=submit]');
-  const redraw = () => { document.getElementById('numbers').innerHTML = numbersHtml(); submit.disabled = !st.picked; };
-  const load = async (more) => {
-    st.loading = true;
-    st.error = '';
-    redraw();
-    try {
-      const exclude = more ? st.shown.join(',') : '';
-      const list = await call('GET', `/api/shop/numbers?packageId=${p.id}${exclude ? `&exclude=${exclude}` : ''}`);
-      // "More numbers" brings a new batch; when there is none, the ones shown stay.
-      if (!more || list.length) st.numbers = list;
-      st.shown.push(...list.map((n) => n.id));
-      if (!st.numbers.some((n) => n.id === st.picked)) st.picked = 0;
-      if (more && !list.length) toast('لا توجد أرقام أخرى الآن');
-    } catch (ex) {
-      st.error = ex.message;
-    }
-    st.loading = false;
-    redraw();
-  };
-  form.addEventListener('click', (e) => {
-    const n = e.target.closest('[data-num]');
-    if (n) { st.picked = Number(n.dataset.num); redraw(); return; }
-    if (e.target.closest('[data-act="more"]')) { e.stopPropagation(); load(st.numbers.length > 0 && !st.error); }
-  });
+  const avail = document.getElementById('avail');
+  try {
+    const r = await call('GET', `/api/shop/available?packageId=${p.id}`);
+    avail.innerHTML = r.available
+      ? `<div class="msg info">${icon('checkCircle')}<span>متوفر. يُخصَّص لك رقم جديد تلقائياً، ويظهر لك مع رمز QR بعد تأكيد الدفع.</span></div>`
+      : `<div class="msg">${icon('alert')}<span>نفدت أرقام eSIM لهذه الباقة الآن. جرّب باقة أخرى أو عد لاحقاً.</span></div>`;
+    submit.disabled = !r.available;
+  } catch (ex) {
+    avail.innerHTML = `<div class="msg">${icon('alert')}<span>${esc(ex.message)}</span></div>`;
+  }
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
     const err = document.getElementById('form-err');
     const v = (n) => form.elements[n].value.trim();
     err.hidden = true;
-    if (!st.picked) return;
     submit.disabled = true;
     try {
       const o = await call('POST', '/api/shop/orders', {
-        kind: 'esim', packageId: p.id, numberId: st.picked, customerName: v('customerName'), email: v('email'), contactPhone: v('contactPhone'),
+        kind: 'esim', packageId: p.id, customerName: v('customerName'), email: v('email'), contactPhone: v('contactPhone'),
       });
       remember(o.code);
       location.hash = `#/order/${o.code}`;
@@ -144,11 +120,8 @@ async function esimForm(p) {
       err.innerHTML = `${icon('alert')}<span>${esc(ex.message)}</span>`;
       err.hidden = false;
       submit.disabled = false;
-      // Taken meanwhile: show fresh numbers.
-      if (/محجوز|لم يعد متاحاً|من القائمة/.test(ex.message)) load(false);
     }
   });
-  load(false);
 }
 
 // ---------- order status ----------
@@ -180,7 +153,7 @@ function payBox(o) {
     <div class="shop-kv"><span>المبلغ</span><b class="ltr">${fmtMoney(o.amount)}</b><button class="btn btn-sm" data-act="copy" data-v="${o.amount}">${icon('copy')}نسخ</button></div>
     ${jp.number ? `<div class="shop-kv"><span>إلى المحفظة</span><b class="ltr">${esc(fmtPhone(jp.number))}</b><button class="btn btn-sm" data-act="copy" data-v="${esc(jp.number)}">${icon('copy')}نسخ</button></div>` : ''}
     ${jp.name ? `<div class="shop-kv"><span>باسم</span><b>${esc(jp.name)}</b></div>` : ''}
-    <p class="small muted">حوّل المبلغ نفسه بالضبط، بتحويل واحد.${o.reservedUntil ? ` الرقم <b class="ltr">${esc(fmtPhone(o.number))}</b> محجوز لك حتى <b>${fmtTime(o.reservedUntil)}</b>.` : ''}</p>
+    <p class="small muted">حوّل المبلغ نفسه بالضبط، بتحويل واحد.${o.reservedUntil ? ` رقمك محجوز لك حتى <b>${fmtTime(o.reservedUntil)}</b>، ويظهر بعد تأكيد الدفع.` : ''}</p>
   </section>
   <form class="card card-pad shop-form" id="proof-form" novalidate>
     <h2>${icon('shield')}٢. ${o.proofSent ? 'تحديث بيانات التحويل' : 'أكّد الشراء'}</h2>
@@ -229,7 +202,7 @@ function orderPage(o) {
       ${text ? `<p class="small" style="color:var(--ink-2)">${text}</p>` : ''}
       ${o.response ? `<div class="msg">${icon('info')}<span>${esc(o.response)}</span></div>` : ''}
       <div class="shop-kv"><span>الباقة</span><b>${esc(o.packageLabel)}${o.esim ? ' · eSIM' : ''}</b></div>
-      <div class="shop-kv"><span>${o.esim ? 'رقمك الجديد' : 'الرقم'}</span><b class="ltr">${esc(fmtPhone(o.number))}</b></div>
+      <div class="shop-kv"><span>${o.esim ? 'رقمك الجديد' : 'الرقم'}</span>${o.number ? `<b class="ltr">${esc(fmtPhone(o.number))}</b>` : '<b>يظهر بعد تأكيد الدفع</b>'}</div>
       <div class="shop-kv"><span>المبلغ</span><b class="ltr">${fmtMoney(o.amount)}</b></div>
       ${o.expiresAt ? `<div class="shop-kv"><span>سارية حتى</span><b>${fmtDate(o.expiresAt)}</b></div>` : ''}
       ${o.status === 'awaiting_payment' ? `<button class="btn btn-ghost btn-sm" data-act="cancel" data-code="${esc(o.code)}">إلغاء الطلب</button>` : ''}
@@ -293,7 +266,7 @@ async function ordersPage() {
   box.innerHTML = list.length ? list.map((o) => {
     const [ic, color, title] = STAGES[o.stage] || STAGES.verifying;
     return `<a class="item" href="#/order/${esc(o.code)}"><div class="item-top"><span class="tile sm ${color}">${icon(ic)}</span>
-      <div class="grow"><b class="item-title">${esc(o.packageLabel)}${o.esim ? ' · eSIM' : ''}</b><div class="item-sub"><span class="ltr">${esc(fmtPhone(o.number))}</span><span>${fmtDate(o.createdAt)}</span></div></div>
+      <div class="grow"><b class="item-title">${esc(o.packageLabel)}${o.esim ? ' · eSIM' : ''}</b><div class="item-sub">${o.number ? `<span class="ltr">${esc(fmtPhone(o.number))}</span>` : ''}<span>${fmtDate(o.createdAt)}</span></div></div>
       <span class="pill">${title}</span></div></a>`;
   }).join('') : `<div class="empty"><span class="tile">${icon('list')}</span><b>لا توجد طلبات</b></div>`;
 }

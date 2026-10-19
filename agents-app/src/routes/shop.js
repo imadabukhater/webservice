@@ -68,7 +68,8 @@ function stage(o, line) {
 function orderView(o, { admin = false } = {}) {
   const line = o.line_id ? q('SELECT id, status, expires_at, esim_qr FROM lines WHERE id = ?').get(o.line_id) : null;
   return {
-    code: o.code, packageLabel: o.package_label, kind: o.kind, number: o.number, customerName: o.customer_name,
+    // An eSIM's number (given at random) shows to the customer once the order is paid.
+    code: o.code, packageLabel: o.package_label, kind: o.kind, number: admin || !o.esim || o.status === 'paid' ? o.number : null, customerName: o.customer_name,
     amount: round(o.amount), status: o.status, stage: stage(o, line), response: o.response,
     proofSent: !!o.proof_at, createdAt: o.created_at, paidAt: o.paid_at, expiresAt: line?.expires_at ?? null,
     // eSIM: the number is held while the customer transfers; the QR code to install it shows once the line is active.
@@ -112,27 +113,38 @@ route('GET', '/api/shop', null, () => {
   };
 });
 
-// The free eSIM numbers of a package, without the ones other customers hold. exclude: ids already shown (for more).
-route('GET', '/api/shop/numbers', null, async ({ query, ip }) => {
-  const s = enabled();
-  throttle(ip, 'numbers', 120);
-  const { ref, layan } = esimPackage(query.packageId);
-  if (layan) return layanNumbers(s, ref, query);
-  if (!s.qlConfigured) fail(503, 'لا توجد أرقام متاحة الآن');
+// The free eSIM numbers of a package at its supplier (remembered there, so a sale can use one), without the ones other
+// customers hold: [{ id, phone, sim, qr }]. QuickLine's come with their eSIM and QR code; Layan's get theirs when
+// activated (its numbers have no id: the number is the id).
+async function freeEsimNumbers(s, { ref, layan }) {
   const held = heldNumbers();
-  const exclude = [...String(query.exclude || '').split(',').map(Number).filter(Boolean).slice(0, 300), ...held.map((h) => h.number_id).filter(Boolean)];
   let list;
   try {
-    list = await ql.freeNumbers(qlCredentials(), { packageId: ref.packageId, exclude, esim: true });
+    if (layan) {
+      if (!s.lyConfigured) fail(503, 'لا توجد أرقام متاحة الآن');
+      const phones = await ly.esimNumbers(require('../db').lyCredentials(), ref.packageId);
+      require('./layan').rememberEsim(ref.packageId, phones);
+      list = phones.map((phone) => ({ id: phoneId(phone), phone, sim: '', qr: '' }));
+    } else {
+      if (!s.qlConfigured) fail(503, 'لا توجد أرقام متاحة الآن');
+      list = await ql.freeNumbers(qlCredentials(), { packageId: ref.packageId, exclude: held.map((h) => h.number_id).filter(Boolean), esim: true });
+      require('./quickline').remember(ref.packageId, true, list);
+    }
   } catch (e) {
-    if (!(e instanceof ql.QuickLineError)) throw e;
+    if (!(e instanceof ql.QuickLineError) && !(e instanceof ly.LayanError)) throw e;
     console.error('shop numbers', e.message);
-    fail(502, 'تعذّر جلب الأرقام الآن. حاول بعد قليل.');
+    fail(502, 'تعذّر الوصول إلى الأرقام الآن. حاول بعد قليل.');
   }
-  require('./quickline').remember(ref.packageId, true, list);
   const taken = new Set(held.map((h) => h.number));
-  // The customer sees the numbers only: the eSIM and its QR code stay here until the line is paid and active.
-  return list.filter((n) => n.phone && !taken.has(n.phone)).map((n) => ({ id: n.id, phone: n.phone }));
+  return list.filter((n) => n.phone && !taken.has(n.phone));
+}
+
+// Whether a package has an eSIM number free now. The customer does not choose it: one is given at random with the
+// order, and shown once the order is paid.
+route('GET', '/api/shop/available', null, async ({ query, ip }) => {
+  const s = enabled();
+  throttle(ip, 'numbers', 120);
+  return { available: (await freeEsimNumbers(s, esimPackage(query.packageId))).length > 0 };
 });
 
 route('POST', '/api/shop/orders', null, ({ body, ip }) => {
@@ -154,46 +166,28 @@ route('POST', '/api/shop/orders', null, ({ body, ip }) => {
   return orderView(byCode(code));
 });
 
-// Layan's free eSIM numbers. It lists them all at once, so "more numbers" (exclude) leaves out the ones shown.
-async function layanNumbers(s, ref, query) {
-  if (!s.lyConfigured) fail(503, 'لا توجد أرقام متاحة الآن');
-  let list;
-  try {
-    list = await ly.esimNumbers(require('../db').lyCredentials(), ref.packageId);
-  } catch (e) {
-    if (!(e instanceof ly.LayanError)) throw e;
-    console.error('shop numbers', e.message);
-    fail(502, 'تعذّر جلب الأرقام الآن. حاول بعد قليل.');
-  }
-  require('./layan').rememberEsim(ref.packageId, list);
-  const taken = new Set(heldNumbers().map((h) => h.number));
-  const shown = new Set(String(query.exclude || '').split(',').map(Number).filter(Boolean));
-  return list.filter((phone) => !taken.has(phone) && !shown.has(phoneId(phone))).slice(0, 12).map((phone) => ({ id: phoneId(phone), phone }));
-}
-
-// An eSIM on one of the free numbers just shown. The number is held for this order (other customers no longer see it)
-// and is checked again when it is sold; its eSIM and QR code are kept with the order.
-function esimOrder(body, ip) {
-  const { p, ref, layan } = esimPackage(body.packageId);
+// An eSIM on a free number picked at random. It is held for this order (no other customer gets it) and checked again
+// when it is sold; QuickLine's eSIM and QR code are kept with the order. The customer sees the number once paid.
+async function esimOrder(body, ip) {
+  const s = getSettings();
+  const pk = esimPackage(body.packageId);
   const customerName = str(body.customerName, 80);
   if (customerName.length < 2) fail(400, 'اكتب اسمك — مطلوب لتسجيل الخط');
   const email = str(body.email, 120).toLowerCase();
   if (email && !validAddress(email)) fail(400, 'البريد الإلكتروني غير صحيح');
-  const numberId = Number(body.numberId) || 0;
-  // Layan gives the eSIM (and its QR code) only when activating: nothing to keep but the number.
-  const picked = layan
-    ? (() => { const v = require('./layan').servedEsim(ref.packageId, `0${numberId}`); return v && { phone: v.phone, sim: '', qr: '' }; })()
-    : require('./quickline').servedNumber(ref.packageId, true, numberId);
-  if (!picked) fail(400, 'اختر رقماً من القائمة. إن مرّ وقت طويل، حدّث قائمة الأرقام.');
-  if (heldNumbers().some((h) => h.number === picked.phone || h.number_id === numberId)) fail(409, 'هذا الرقم محجوز لزبون آخر الآن. اختر رقماً آخر.');
-  if (q("SELECT 1 FROM lines WHERE number = ? AND status != 'disconnected'").get(picked.phone)) fail(409, 'هذا الرقم لم يعد متاحاً. اختر رقماً آخر.');
   const contact = body.contactPhone ? validPhone(normalizePhone(body.contactPhone)) : '';
+  const list = await freeEsimNumbers(s, pk);
+  // From here on nothing waits, so no other order can take the same number in between.
+  const held = new Set(heldNumbers().map((h) => h.number));
+  const free = list.filter((n) => !held.has(n.phone) && !q("SELECT 1 FROM lines WHERE number = ? AND status != 'disconnected'").get(n.phone));
+  if (!free.length) fail(409, 'نفدت أرقام eSIM لهذه الباقة الآن. جرّب باقة أخرى أو عد لاحقاً.');
+  const picked = free[crypto.randomInt(free.length)];
   const t = now();
   const code = newCode();
   q(`INSERT INTO shop_orders (code, package_id, package_label, kind, number, sim, customer_name, contact_phone, amount, ip, created_at, updated_at,
        esim, number_id, esim_qr, email) VALUES (?, ?, ?, 'new', ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)`)
-    .run(code, p.id, D.packageLabel(p), picked.phone, String(picked.sim || '').replace(/\D/g, ''), customerName, contact, round(p.shop_price), ip, t, t,
-      numberId, picked.qr || '', email);
+    .run(code, pk.p.id, D.packageLabel(pk.p), picked.phone, String(picked.sim || '').replace(/\D/g, ''), customerName, contact, round(pk.p.shop_price), ip, t, t,
+      picked.id, picked.qr || '', email);
   return orderView(byCode(code));
 }
 
