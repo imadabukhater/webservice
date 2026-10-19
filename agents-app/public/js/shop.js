@@ -144,7 +144,7 @@ function shell(body, { sub = '' } = {}) {
         </nav>
 
         <div class="shop-utils">
-          ${wa ? `<a class="btn btn-sm ghost" href="${esc(wa)}" target="_blank" rel="noopener">${icon('whatsapp')}<span>الدعم</span></a>` : ''}
+          ${wa ? `<a class="btn btn-sm ghost shop-wa-btn" href="${esc(wa)}" target="_blank" rel="noopener">${icon('whatsapp')}<span>تواصل واتساب</span></a>` : ''}
           <button type="button" class="icon-btn sm" data-act="theme" aria-label="${dark ? 'الوضع الفاتح' : 'الوضع الداكن'}" title="${dark ? 'الوضع الفاتح' : 'الوضع الداكن'}">
             ${icon(dark ? 'sun' : 'moon')}
           </button>
@@ -157,21 +157,21 @@ function shell(body, { sub = '' } = {}) {
     <footer class="shop-footer no-print">
       <div class="shop-footer-inner">
         <div class="shop-footer-brand">
-          <div class="row" style="gap:8px">
+          <div class="row" style="gap:10px">
             <span class="shop-brand-mark sm">${icon('sim')}</span>
             <b>${esc(name)}</b>
           </div>
-          <p class="muted" style="margin:6px 0 0;font-size:.84rem">
+          <p class="muted" style="margin:6px 0 0;font-size:.84rem;line-height:1.6">
             منصة معتمدة لتفعيل شرائح eSIM الرقمية الفورية بكود QR مباشر، شحن الرصيد، وتجديد باقات الخليوي والإنترنت بأسعار واضحة وشاملة.
           </p>
         </div>
-        <div class="shop-footer-links">
-          <a href="#/compat" class="link-btn ${hash === 'compat' ? 'active' : ''}">فحص توافق الهاتف مع eSIM</a>
-          <a href="#/terms" class="link-btn ${hash === 'terms' ? 'active' : ''}">شروط البيع والتفعيل</a>
-          <a href="#/esim-policy" class="link-btn ${hash === 'esim-policy' ? 'active' : ''}">سياسة كود eSIM QR</a>
-          <a href="#/guarantee" class="link-btn ${hash === 'guarantee' ? 'active' : ''}">ضمان المتجر واسترجاع المبلغ</a>
-          <a href="#/track" class="link-btn ${hash === 'track' ? 'active' : ''}">تتبّع حالة طلب</a>
-        </div>
+        <nav class="shop-footer-links" aria-label="روابط صفحات المتجر والسياسات">
+          <a href="#/compat" class="shop-footer-link ${hash === 'compat' ? 'active' : ''}">${icon('chip')}<span>فحص توافق الهاتف مع eSIM</span></a>
+          <a href="#/terms" class="shop-footer-link ${hash === 'terms' ? 'active' : ''}">${icon('shield')}<span>شروط البيع والتفعيل</span></a>
+          <a href="#/esim-policy" class="shop-footer-link ${hash === 'esim-policy' ? 'active' : ''}">${icon('qr')}<span>سياسة كود eSIM QR</span></a>
+          <a href="#/guarantee" class="shop-footer-link ${hash === 'guarantee' ? 'active' : ''}">${icon('checkCircle')}<span>ضمان المتجر واسترجاع المبلغ</span></a>
+          <a href="#/track" class="shop-footer-link ${hash === 'track' ? 'active' : ''}">${icon('search')}<span>تتبّع حالة طلب</span></a>
+        </nav>
       </div>
     </footer>
   `;
@@ -1037,13 +1037,25 @@ function viewCatalog() {
             ${S.q ? `<button type="button" class="icon-btn sm" id="shop-q-clear" aria-label="مسح البحث">${icon('x')}</button>` : ''}
           </div>
 
+          <div class="esim-hero-actions">
+            <button type="button" class="esim-hero-btn primary" data-act="nav-esim">
+              ${icon('qr')}
+              <span>شرائح eSIM الفورية</span>
+            </button>
+            <a href="#/compat" class="esim-hero-btn ghost">
+              ${icon('chip')}
+              <span>فحص توافق الهاتف مع eSIM</span>
+            </a>
+            <a href="#/track" class="esim-hero-btn ghost">
+              ${icon('search')}
+              <span>تتبّع حالة طلب</span>
+            </a>
+          </div>
+
           <div class="esim-trust-row">
             <span>${icon('qr')} استلام فوري لكود eSIM QR</span>
             <span>${icon('shield')} أسعار نهائية شاملة بدون رسوم مخفية</span>
-            <a href="#/compat" class="esim-compat-pill">
-              ${icon('chip')}
-              <span>هل هاتفي يدعم eSIM؟ افحص الآن</span>
-            </a>
+            <span>${icon('checkCircle')} ضمان التفعيل 100% أو استرداد المبلغ</span>
           </div>
         </div>
 
@@ -1177,6 +1189,7 @@ function renderPlanCard(pk, co, maxGb) {
   const qrFeeText = hasEsim
     ? (qrFee > 0 ? `+ ${fmtMoney(qrFee)} لكود eSIM QR` : 'كود eSIM QR مشمول مجاناً')
     : null;
+  const hasTwoBtns = pk.kind === 'card' && hasEsim;
 
   return `
     <article class="esim-card ${featured ? 'is-featured' : ''} ${hasEsim ? 'has-esim' : ''}" style="--co:${esc(coColor)}">
@@ -1236,27 +1249,27 @@ function renderPlanCard(pk, co, maxGb) {
 
       ${pk.description ? `<p class="esim-plan-desc">${esc(pk.description)}</p>` : ''}
 
-      <!-- Price & Action Footer -->
+      <!-- Clean Stacked Price & Action Bar Footer -->
       <div class="esim-card-foot">
-        <div class="esim-price-block">
-          <span class="esim-price-label">
-            سعر الباقة
-            ${perDay ? `<small class="esim-daily-hint">(≈ ${perDay} ₪ / يوم)</small>` : ''}
-          </span>
+        <div class="esim-price-row">
+          <div class="esim-price-block">
+            <span class="esim-price-label">سعر الباقة</span>
+            ${perDay ? `<small class="esim-daily-hint">≈ ${perDay} ₪ / يوم</small>` : ''}
+          </div>
           <div class="esim-price-val">
             ${hasDiscount ? `<s>${fmtMoney(pk.oldPrice)}</s>` : ''}
             <b>${fmtMoney(pk.price)}</b>
           </div>
         </div>
 
-        <div class="esim-card-btns">
-          ${pk.kind === 'card' && hasEsim ? `
-            <a href="#/buy/${pk.id}" class="btn ghost btn-sm">شحن رقم</a>
-            <a href="#/buy/${pk.id}?esim=1" class="btn primary btn-sm">${icon('qr')}<span>تفعيل eSIM</span></a>
+        <div class="esim-card-btns ${hasTwoBtns ? 'has-two' : 'has-one'}">
+          ${hasTwoBtns ? `
+            <a href="#/buy/${pk.id}" class="btn ghost">${icon('refresh')}<span>شحن رقم</span></a>
+            <a href="#/buy/${pk.id}?esim=1" class="btn primary">${icon('qr')}<span>تفعيل eSIM</span></a>
           ` : hasEsim ? `
             <a href="#/buy/${pk.id}?esim=1" class="btn primary">${icon('qr')}<span>تفعيل شريحة eSIM الآن</span></a>
           ` : `
-            <a href="#/buy/${pk.id}" class="btn primary">${icon('arrowL')}<span>اختيار الباقة</span></a>
+            <a href="#/buy/${pk.id}" class="btn primary">${icon('arrowL')}<span>اختيار الباقة وتفعيلها</span></a>
           `}
         </div>
       </div>
@@ -1280,10 +1293,10 @@ function viewBuy(id) {
 
   shell(`
     <form id="buy-f" class="card shop-form" style="--co:${esc(co?.color || '#2563eb')}">
-      <div class="row between">
+      <div class="shop-card-topbar">
         <a href="#/" class="btn ghost btn-sm">→ العودة للباقات</a>
         ${canEsim ? `
-          <button type="button" class="esim-compat-pill" data-act="compat-sheet">
+          <button type="button" class="btn ghost btn-sm" data-act="compat-sheet">
             ${icon('chip')}<span>فحص توافق الجهاز مع eSIM</span>
           </button>` : ''}
       </div>
@@ -1372,7 +1385,7 @@ function viewBuy(id) {
           <input type="checkbox" name="consent" required>
           <span>أقرّ بصحة الرقم المدخل وبموافقتي على شروط التفعيل.</span>
         </label>
-        <button type="button" class="link-btn" data-act="legal-sheet" data-tab="terms">عرض الشروط والضمان</button>
+        <button type="button" class="btn ghost btn-sm" data-act="legal-sheet" data-tab="terms">${icon('shield')}<span>عرض الشروط والضمان</span></button>
       </div>
 
       <button class="btn primary lg" type="submit">
@@ -1437,9 +1450,9 @@ async function esimForm(pk, co, canSwitchToCard = false) {
 
   shell(`
     <form id="buy-f" class="card shop-form" style="--co:${esc(co?.color || '#2563eb')}">
-      <div class="row between">
+      <div class="shop-card-topbar">
         <a href="#/" class="btn ghost btn-sm">→ العودة للباقات</a>
-        <button type="button" class="esim-compat-pill" data-act="compat-sheet">
+        <button type="button" class="btn ghost btn-sm" data-act="compat-sheet">
           ${icon('chip')}<span>فحص توافق الجهاز مع eSIM</span>
         </button>
       </div>
@@ -1538,7 +1551,7 @@ async function esimForm(pk, co, canSwitchToCard = false) {
           <input type="checkbox" name="consent" required>
           <span>أؤكد أن هاتفي يدعم شريحة eSIM ومفتوح الشبكة وأوافق على شروط التفعيل.</span>
         </label>
-        <button type="button" class="link-btn" data-act="legal-sheet" data-tab="esim">سياسة eSIM والضمان</button>
+        <button type="button" class="btn ghost btn-sm" data-act="legal-sheet" data-tab="esim">${icon('shield')}<span>سياسة eSIM والضمان</span></button>
       </div>
 
       <button class="btn primary lg" type="submit" ${available ? '' : 'disabled'}>
@@ -1613,7 +1626,7 @@ async function viewOrder(code) {
       <div class="card empty">
         ${icon('alert')}
         <p>${esc(err.message)}</p>
-        <div class="row" style="gap:8px">
+        <div class="row" style="gap:8px;justify-content:center;flex-wrap:wrap">
           <a href="#/track" class="btn ghost">تتبّع طلب آخر</a>
           <a href="#/" class="btn primary">العودة للمتجر</a>
         </div>
@@ -1648,9 +1661,9 @@ function renderOrder() {
   shell(`
     <!-- Order Summary Card -->
     <div class="card shop-status">
-      <div class="row between no-print">
+      <div class="shop-card-topbar no-print">
         <a href="#/" class="btn ghost btn-sm">← المتجر</a>
-        <div class="row" style="gap:6px">
+        <div class="row" style="gap:8px;flex-wrap:wrap">
           <button type="button" class="btn ghost btn-sm" id="copy-code">${icon('copy')}<span class="ltr">${esc(o.code)}</span></button>
           <button type="button" class="btn ghost btn-sm" id="print-order">${icon('print')}<span>طباعة الإيصال</span></button>
         </div>
@@ -1707,26 +1720,28 @@ function renderOrder() {
         <p class="muted" style="margin:0">
           حوّل المبلغ المحدّد بالضبط بتحويل واحد إلى المحفظة التالية.${o.reservedUntil ? ` رقمك محجوز لك حتى <b>${fmtTime(o.reservedUntil)}</b>.` : ''}
         </p>
-        <div class="shop-kv">
-          <span>المبلغ المطلوب تحويله</span>
-          <b class="ltr mono">${fmtMoney(o.amount)}</b>
-          <button type="button" class="btn ghost btn-sm" data-copy="${esc(String(o.amount))}">${icon('copy')}<span>نسخ</span></button>
+        <div class="shop-pay-kvs">
+          <div class="shop-kv">
+            <span>المبلغ المطلوب تحويله</span>
+            <b class="ltr mono">${fmtMoney(o.amount)}</b>
+            <button type="button" class="btn ghost btn-sm" data-copy="${esc(String(o.amount))}">${icon('copy')}<span>نسخ</span></button>
+          </div>
+          ${jp.number ? `
+            <div class="shop-kv">
+              <span>إلى رقم محفظة جوال باي</span>
+              <b class="ltr mono">${esc(fmtPhone(jp.number))}</b>
+              <button type="button" class="btn ghost btn-sm" data-copy="${esc(jp.number)}">${icon('copy')}<span>نسخ</span></button>
+            </div>
+          ` : ''}
+          ${jp.name ? `
+            <div class="shop-kv">
+              <span>باسم المستلم</span>
+              <b>${esc(jp.name)}</b>
+            </div>
+          ` : ''}
         </div>
-        ${jp.number ? `
-          <div class="shop-kv">
-            <span>إلى رقم محفظة جوال باي</span>
-            <b class="ltr mono">${esc(fmtPhone(jp.number))}</b>
-            <button type="button" class="btn ghost btn-sm" data-copy="${esc(jp.number)}">${icon('copy')}<span>نسخ</span></button>
-          </div>
-        ` : ''}
-        ${jp.name ? `
-          <div class="shop-kv">
-            <span>باسم المستلم</span>
-            <b>${esc(jp.name)}</b>
-          </div>
-        ` : ''}
 
-        <hr style="border:0;border-top:1px solid var(--line);margin:6px 0">
+        <hr style="border:0;border-top:1px solid var(--line);margin:4px 0">
 
         <h3>٢. ${o.proofSent ? 'تحديث بيانات تأكيد الدفع' : 'تأكيد الدفع لتفعيل الطلب تلقائياً'}</h3>
         <p class="muted" style="margin:0;font-size:.85rem">
