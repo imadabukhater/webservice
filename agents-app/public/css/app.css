@@ -863,28 +863,33 @@ body.shop { background: var(--bg); min-height: 100dvh; display: flex; flex-direc
 .shop .upload-box svg { width: 20px; height: 20px; }
 
 /* Dedicated Secondary Pages (Compat, Terms, eSIM Policy, Guarantee, Track) */
-.esim-page-wrap { width: min(100%, 880px); margin: 0 auto; }
-.esim-page-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-start; gap: 14px; padding-bottom: 12px; border-bottom: 1px solid var(--line); }
-.esim-page-cta { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 14px; background: linear-gradient(135deg, var(--primary-soft), var(--surface)); border-color: color-mix(in srgb, var(--primary) 28%, var(--line)); }
+.esim-page-wrap { width: min(100%, 900px); margin: 0 auto; display: grid; gap: 18px; }
+.esim-page-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-start; gap: 14px; padding-bottom: 14px; border-bottom: 1px solid var(--line); }
+.esim-page-head h1 { margin: 6px 0 4px; font: 700 clamp(1.35rem, 2.5vw, 1.75rem) var(--f-display); color: var(--ink); }
+.esim-page-head p { margin: 0; font-size: .92rem; }
+#compat-page-body, #compat-sheet-body, .esim-legal-page-body { display: grid; gap: 16px; }
+.esim-page-cta { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 14px; padding: 18px 20px; border-radius: 16px; background: linear-gradient(135deg, var(--primary-soft), var(--surface)); border: 1px solid color-mix(in srgb, var(--primary) 28%, var(--line)); box-shadow: var(--shadow-sm); }
 
 /* Compatibility Page & Sheet */
-.esim-eid-check { display: flex; align-items: flex-start; gap: 14px; padding: 16px; border-radius: 16px; background: var(--primary-soft); border: 1px solid color-mix(in srgb, var(--primary) 28%, transparent); }
+.esim-eid-check { display: flex; align-items: flex-start; gap: 14px; padding: 16px 18px; border-radius: 16px; background: var(--primary-soft); border: 1px solid color-mix(in srgb, var(--primary) 28%, transparent); }
 .esim-eid-icon { width: 42px; height: 42px; border-radius: 12px; background: var(--primary); color: #fff; display: grid; place-items: center; flex: none; }
 .esim-eid-icon svg { width: 22px; height: 22px; }
 .esim-eid-check kbd, .esim-legal-list kbd { padding: 2px 7px; border-radius: 6px; background: var(--surface); border: 1px solid var(--line); font: 700 .82rem var(--f-mono); }
 
 .esim-info-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px; }
 .esim-info-card { padding: 16px; border-radius: 16px; background: var(--surface); border: 1px solid var(--line); display: grid; gap: 8px; align-content: start; box-shadow: var(--shadow-sm); }
-.esim-info-card strong { font-family: var(--f-display); font-size: .95rem; color: var(--ink); }
-.esim-step-num { width: 30px; height: 30px; border-radius: 9px; background: var(--primary-soft); color: var(--primary); font: 700 .86rem var(--f-mono); display: grid; place-items: center; }
+.esim-info-card strong, .esim-info-card h4 { margin: 0; font: 700 .96rem var(--f-display); color: var(--ink); }
+.esim-info-card p { margin: 0; font-size: .85rem; line-height: 1.65; }
+.esim-step-num { width: 32px; height: 32px; border-radius: 10px; background: var(--primary-soft); color: var(--primary); font: 700 .88rem var(--f-mono); display: grid; place-items: center; }
+.esim-step-num svg { width: 17px; height: 17px; }
 
-.esim-compat-search-card { border-color: color-mix(in srgb, var(--primary) 30%, var(--line)); }
-.esim-sec-title { display: inline-flex; align-items: center; gap: 8px; font: 700 1.02rem var(--f-display); color: var(--ink); }
-.esim-sec-title svg { width: 19px; height: 19px; color: var(--primary); }
+.esim-compat-search-card { padding: 16px 18px; border-radius: 16px; background: var(--surface); border: 1px solid color-mix(in srgb, var(--primary) 30%, var(--line)); display: grid; gap: 12px; box-shadow: var(--shadow-sm); }
+.esim-sec-title { display: inline-flex; align-items: center; gap: 8px; font: 700 .96rem var(--f-display); color: var(--ink); }
+.esim-sec-title svg { width: 19px; height: 19px; color: var(--primary); flex: none; }
 .esim-compat-search-row { display: flex; gap: 10px; flex-wrap: wrap; }
 .esim-compat-search-row input { flex: 1 1 240px; }
-.esim-compat-result { display: flex; align-items: flex-start; gap: 10px; padding: 12px 14px; border-radius: 12px; font-size: .88rem; border: 1px solid var(--line); }
-.esim-compat-result svg { width: 20px; height: 20px; flex: none; margin-top: 2px; }
+.esim-compat-result { display: grid; gap: 6px; padding: 12px 14px; border-radius: 12px; font-size: .88rem; border: 1px solid var(--line); }
+.esim-compat-result svg { width: 20px; height: 20px; flex: none; }
 .esim-compat-result.is-ok { background: var(--good-soft); border-color: color-mix(in srgb, var(--good) 35%, transparent); color: var(--ink); }
 .esim-compat-result.is-ok svg { color: var(--good); }
 .esim-compat-result.is-warn { background: var(--warn-soft); border-color: color-mix(in srgb, var(--warn) 35%, transparent); color: var(--ink); }
@@ -893,22 +898,25 @@ body.shop { background: var(--bg); min-height: 100dvh; display: flex; flex-direc
 .esim-compat-result.is-bad svg { color: var(--bad); }
 
 .esim-brand-tabs { display: flex; flex-wrap: wrap; gap: 8px; }
-.esim-brand-tab { min-height: 38px; padding: 6px 14px; border-radius: 10px; background: var(--surface-2); border: 1px solid var(--line); color: var(--ink-2); font: 600 .84rem var(--f-ui); cursor: pointer; transition: all .15s; }
+.esim-brand-tab { min-height: 44px; padding: 8px 14px; border-radius: 12px; background: var(--surface); border: 1px solid var(--line); color: var(--ink-2); font: 600 .85rem var(--f-ui); cursor: pointer; transition: all .15s; display: inline-flex; flex-direction: column; align-items: flex-start; justify-content: center; gap: 2px; text-decoration: none; }
+.esim-brand-tab small { font-size: .74rem; font-weight: 500; opacity: .8; }
 .esim-brand-tab:hover { border-color: var(--primary); color: var(--primary); }
-.esim-brand-tab.active { background: var(--primary); border-color: var(--primary); color: #fff; }
-.esim-compat-steps-box { padding: 12px 14px; border-radius: 12px; background: var(--surface-2); border: 1px solid var(--line); display: grid; gap: 4px; }
+.esim-brand-tab[aria-selected="true"], .esim-brand-tab.active { background: var(--primary); border-color: var(--primary); color: #fff; box-shadow: 0 8px 20px -10px color-mix(in srgb, var(--primary) 70%, transparent); }
+.esim-brand-tab[aria-selected="true"] small, .esim-brand-tab.active small { color: rgba(255, 255, 255, .88); }
+.esim-compat-steps-box { padding: 14px 16px; border-radius: 12px; background: var(--surface-2); border: 1px solid var(--line); display: grid; gap: 6px; }
 .esim-compat-note { display: flex; align-items: flex-start; gap: 8px; padding: 10px 12px; border-radius: 10px; background: var(--warn-soft); color: var(--ink-2); font-size: .82rem; }
 .esim-compat-note svg { width: 16px; height: 16px; color: var(--warn); flex: none; margin-top: 2px; }
 
-.esim-compat-box, .esim-legal-panel { padding: 16px 18px; border-radius: 16px; background: var(--surface); border: 1px solid var(--line); box-shadow: var(--shadow-sm); }
-.esim-compat-list { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 8px; }
+.esim-compat-box, .esim-legal-panel { padding: 18px 20px; border-radius: 16px; background: var(--surface); border: 1px solid var(--line); box-shadow: var(--shadow-sm); }
+.esim-compat-list { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px; }
 .esim-compat-list li { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-radius: 10px; background: var(--surface-2); border: 1px solid var(--line); font-size: .84rem; font-weight: 600; color: var(--ink); }
 .esim-compat-list li svg { width: 16px; height: 16px; color: var(--good); flex: none; }
 
 /* Legal, Policy & Guarantee Pages */
-.esim-legal-hero { display: flex; align-items: flex-start; gap: 14px; background: linear-gradient(135deg, var(--primary-soft), var(--surface)); border-color: color-mix(in srgb, var(--primary) 28%, var(--line)); }
-.esim-legal-page-body .esim-legal-panel h4 { margin: 0 0 10px; font: 700 1rem var(--f-display); color: var(--ink); }
-.esim-legal-panel h4 { margin: 0 0 10px; color: var(--ink); }
+.esim-legal-hero { display: flex; align-items: flex-start; gap: 14px; padding: 18px 20px; border-radius: 16px; background: linear-gradient(135deg, var(--primary-soft), var(--surface)); border: 1px solid color-mix(in srgb, var(--primary) 28%, var(--line)); }
+.esim-legal-hero h3 { margin: 0 0 4px; font: 700 1.08rem var(--f-display); color: var(--ink); }
+.esim-legal-hero p { margin: 0; font-size: .88rem; line-height: 1.6; }
+.esim-legal-page-body .esim-legal-panel h4, .esim-legal-panel h4 { margin: 0 0 10px; font: 700 1rem var(--f-display); color: var(--ink); }
 .esim-legal-list { margin: 0; padding-inline-start: 20px; display: grid; gap: 8px; font-size: .9rem; color: var(--ink-2); line-height: 1.7; }
 .esim-policy-table-wrap { overflow-x: auto; border-radius: 12px; border: 1px solid var(--line); background: var(--surface); }
 .esim-policy-table { width: 100%; border-collapse: collapse; font-size: .86rem; text-align: start; }
@@ -918,7 +926,8 @@ body.shop { background: var(--bg); min-height: 100dvh; display: flex; flex-direc
 
 /* Track Order Page */
 .esim-track-card { border-color: color-mix(in srgb, var(--primary) 30%, var(--line)); }
-.esim-track-form { max-width: 520px; }
+.esim-track-form { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px; width: 100%; }
+.esim-track-form .field { flex: 1 1 260px; margin: 0; }
 
 /* Footer */
 .shop-footer { border-top: 1px solid var(--line); background: var(--surface); padding: 22px 16px; margin-top: auto; }
