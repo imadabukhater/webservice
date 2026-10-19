@@ -702,3 +702,13 @@ body.shop { background: var(--bg); }
 .tile.pulse { animation: shop-pulse 1.6s ease-in-out infinite; }
 @keyframes shop-pulse { 50% { box-shadow: 0 0 0 8px var(--primary-soft); } }
 @media (prefers-reduced-motion: reduce) { .tile.pulse { animation: none; } }
+/* eSIM: the free numbers to pick from, and the QR code to install it */
+.num-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
+.num-btn { min-height: 48px; padding: 0 12px; border-radius: 14px; border: 1.5px solid var(--line); background: var(--surface); color: var(--ink); font: 600 1.02rem var(--f-ui); direction: ltr; letter-spacing: .02em; }
+.num-btn:hover { border-color: var(--line-strong); }
+.num-btn[aria-pressed="true"] { border-color: var(--primary); background: var(--primary-soft); box-shadow: 0 0 0 3px var(--primary-soft); }
+.shop-verify { display: grid; gap: 10px; padding: 14px; border-radius: 16px; background: var(--surface-2); border: 1px solid var(--line); }
+.shop-verify ol { margin: 0; padding-inline-start: 20px; display: grid; gap: 6px; color: var(--ink-2); font-size: .92rem; }
+.shop-qr { display: grid; gap: 12px; width: min(100%, 620px); justify-self: center; text-align: center; }
+.shop-qr img { width: min(260px, 100%); height: auto; aspect-ratio: 1; justify-self: center; padding: 10px; border-radius: 16px; background: #fff; border: 1px solid var(--line); }
+.shop-qr ol { text-align: start; margin: 0; padding-inline-start: 20px; display: grid; gap: 6px; color: var(--ink-2); font-size: .92rem; }

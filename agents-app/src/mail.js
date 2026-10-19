@@ -214,7 +214,13 @@ function localPhone(s) {
   return d;
 }
 
+// Money that came in, as JawwalPay words it ("لقد استلمت حركه تحويل اموال بقيمة: ILS 1.00 من …"). Its other e-mails —
+// a transfer sent from the wallet ("تمت حركة تحويل الأموال لمبلغ … للمشترك …"), a one-time code — are not payments.
+// Also "<name> قام بتحويل مبلغ ILS 50.00 لحسابك بتاريخ …": no reference, and the sender's name (often in English) first.
+const INCOMING = /استلمت|تم استلام|استلام حوالة|وصلتك|وصلك|حوالة واردة|لحسابك|\breceived\b|\bcredited\b/i;
+
 // What can be read from a transfer notification. Every field may be null: the format is matched loosely.
+// incoming: the notification says money was received (only such a notification can pay an order).
 function parseJawwalPay({ subject = '', text = '' }, { ownNumber = '' } = {}) {
   const t = toLatinDigits(`${subject}\n${text}`);
   const amountRes = [
@@ -225,28 +231,34 @@ function parseJawwalPay({ subject = '', text = '' }, { ownNumber = '' } = {}) {
   let amount = null;
   for (const re of amountRes) { const m = t.match(re); if (m) { amount = money(m[1]); break; } }
 
-  const ref = t.match(/(?:الرقم المرجعي|رقم مرجعي|رقم المرجع|المرجع|رقم العملية|رقم الحركة|رقم التحويل|reference(?:\s*(?:no\.?|number|#))?|ref\.?(?:\s*no\.?)?|transaction\s*(?:id|no\.?|number))\s*[:：#-]?\s*([A-Za-z0-9][A-Za-z0-9-]{3,40})/i);
+  // The reference may stand in brackets: "المرجع :(2922922722823)".
+  const ref = t.match(/(?:الرقم المرجعي|رقم مرجعي|رقم المرجع|المرجع|رقم العملية|رقم الحركة|رقم التحويل|reference(?:\s*(?:no\.?|number|#))?|ref\.?(?:\s*no\.?)?|transaction\s*(?:id|no\.?|number))\s*[:：#-]?\s*[(\[]?\s*([A-Za-z0-9][A-Za-z0-9-]{3,40})/i);
   const own = localPhone(ownNumber);
   const phones = [...new Set([...t.matchAll(/(?:\+?97[02][\s-]?|0)5\d(?:[\s-]?\d){7}/g)].map((m) => localPhone(m[0])))].filter((p) => p !== own);
-  const name = t.match(/(?:اسم المرسل|المرسل|المحوِّل|المحول|من|sender(?:\s*name)?|from)\s*[:：]\s*([^\n\r\d:|]{2,50})/i)
+  const name = t.match(/^\s*([^\n\r\d:|.,]{2,60}?)\s+قام\s+بتحويل/m)
+    || t.match(/(?:اسم المرسل|المرسل|المحوِّل|المحول|من|sender(?:\s*name)?|from)\s*[:：]\s*([^\n\r\d:|]{2,50})/i)
     || t.match(/(?:من|from)\s+([^\n\r\d:|.,]{2,40}?)\s*(?:[.,]|\s(?:بمبلغ|مبلغ|amount)|$)/im);
   return {
     amount: Number.isFinite(amount) ? amount : null,
     reference: ref ? ref[1].toUpperCase() : null,
     senderPhone: phones[0] || null,
     senderName: name ? name[1].replace(/\s+/g, ' ').trim() : null,
+    incoming: INCOMING.test(t),
   };
 }
 
-// True when the receiving server (Gmail) authenticated the sender for a domain containing `term`:
-// DMARC passed for the From domain, or a DKIM signature passed for such a domain. A From header alone can be forged.
+// True when the receiving server (Gmail) authenticated the sender for the domain `term`: DMARC passed for the From
+// domain, or a DKIM signature passed for that domain. A From header alone can be forged. A term with a dot is a domain
+// and must be the domain itself or one under it (jawwalpay.ps: not jawwalpay.ps.example.com, not myjawwalpay.ps);
+// a term without one ("jawwal") is matched anywhere in the domain, as before.
 function authenticSender({ from, auth }, term) {
   const t = String(term || '').toLowerCase().trim();
   if (!t || !auth) return false;
   const a = auth.toLowerCase();
+  const fits = (d) => (t.includes('.') ? d === t || d.endsWith(`.${t}`) : d.includes(t));
   const fromDomain = (String(from).toLowerCase().match(/@([a-z0-9.-]+)/) || [])[1] || '';
-  if (/\bdmarc=pass\b/.test(a) && fromDomain.includes(t)) return true;
-  return [...a.matchAll(/\bdkim=pass\b[^;]*?header\.(?:d|i)=@?([a-z0-9.-]+)/g)].some((m) => m[1].includes(t));
+  if (/\bdmarc=pass\b/.test(a) && fits(fromDomain)) return true;
+  return [...a.matchAll(/\bdkim=pass\b[^;]*?header\.(?:d|i)=@?([a-z0-9.-]+)/g)].some((m) => fits(m[1]));
 }
 
 module.exports = {

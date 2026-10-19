@@ -1,12 +1,30 @@
 'use strict';
 // Customer shop: public catalog and orders (/api/shop/...), and the manager's side (/api/shop/admin/...).
 const crypto = require('node:crypto');
-const { q, getSettings } = require('../db');
+const { q, getSettings, qlCredentials } = require('../db');
 const { fail, now, round, str, normalizePhone, validPhone, normalizeIccid, validIccid, imageOrEmpty } = require('../util');
 const D = require('../domain');
 const shop = require('../shop');
+const ql = require('../quickline');
 const { MailError } = require('../mail');
+const { validAddress } = require('../smtp');
 const { route, ADMIN } = require('../router');
+
+// An eSIM number picked by a customer is held for them this long while they transfer, and for as long as their
+// transfer is being checked or their paid order waits.
+const RESERVE_MS = 30 * 60_000;
+const heldNumbers = () => q(`SELECT number, number_id FROM shop_orders WHERE esim = 1 AND ((status = 'awaiting_payment' AND created_at > ?)
+  OR status IN ('verifying','review') OR (status = 'paid' AND line_id IS NULL))`).all(now() - RESERVE_MS);
+// A package sold as an eSIM: a new line whose number (with its eSIM and QR code) comes from the supplier's free
+// eSIM numbers, activated automatically.
+const isEsimRef = (ref) => /^qln:/.test(String(ref || ''));
+function esimPackage(id) {
+  const p = q(`SELECT p.*, c.name AS company_name FROM packages p JOIN companies c ON c.id = p.company_id
+               WHERE p.id = ? AND p.active = 1 AND p.shop_price > 0`).get(Number(id));
+  const ref = p && isEsimRef(p.art_card_id) ? ql.parseRef(p.art_card_id) : null;
+  if (!ref) fail(404, 'الباقة غير متوفرة');
+  return { p, ref };
+}
 
 // ---------- per-address throttle ----------
 const hits = new Map();
@@ -43,15 +61,19 @@ function stage(o, line) {
 }
 
 function orderView(o, { admin = false } = {}) {
-  const line = o.line_id ? q('SELECT id, status, expires_at FROM lines WHERE id = ?').get(o.line_id) : null;
+  const line = o.line_id ? q('SELECT id, status, expires_at, esim_qr FROM lines WHERE id = ?').get(o.line_id) : null;
   return {
     code: o.code, packageLabel: o.package_label, kind: o.kind, number: o.number, customerName: o.customer_name,
     amount: round(o.amount), status: o.status, stage: stage(o, line), response: o.response,
     proofSent: !!o.proof_at, createdAt: o.created_at, paidAt: o.paid_at, expiresAt: line?.expires_at ?? null,
+    // eSIM: the number is held while the customer transfers; the QR code to install it shows once the line is active.
+    esim: !!o.esim, email: o.email, qrMailed: !!o.qr_mailed_at,
+    reservedUntil: o.esim && o.status === 'awaiting_payment' ? o.created_at + RESERVE_MS : null,
+    esimQr: o.esim && line?.status === 'active' && line.esim_qr ? line.esim_qr : null,
     ...(admin ? {
       id: o.id, sim: o.sim, contactPhone: o.contact_phone, payPhone: o.pay_phone, payName: o.pay_name, payReference: o.pay_reference,
       hasReceipt: !!o.receipt, proofAt: o.proof_at, mailId: o.mail_id, verifiedBy: o.verified_by, lineId: o.line_id, error: o.error,
-      ip: o.ip, updatedAt: o.updated_at,
+      ip: o.ip, updatedAt: o.updated_at, qrMailedAt: o.qr_mailed_at,
     } : {}),
   };
 }
@@ -79,14 +101,38 @@ route('GET', '/api/shop', null, () => {
     companies: q('SELECT id, name, color, logo FROM companies ORDER BY sort, id').all().filter((c) => ids.has(c.id)),
     packages: packages.map((p) => ({
       id: p.id, companyId: p.company_id, companyName: p.company_name, name: p.name, price: round(p.shop_price),
-      dataGb: p.data_gb, minutes: p.minutes, sms: p.sms, tag: p.tag, description: p.description,
+      dataGb: p.data_gb, minutes: p.minutes, sms: p.sms, tag: p.tag, description: p.description, days: p.days || null,
+      esim: isEsimRef(p.art_card_id),
     })),
   };
+});
+
+// The free eSIM numbers of a package, without the ones other customers hold. exclude: ids already shown (for more).
+route('GET', '/api/shop/numbers', null, async ({ query, ip }) => {
+  const s = enabled();
+  throttle(ip, 'numbers', 120);
+  const { ref } = esimPackage(query.packageId);
+  if (!s.qlConfigured) fail(503, 'لا توجد أرقام متاحة الآن');
+  const held = heldNumbers();
+  const exclude = [...String(query.exclude || '').split(',').map(Number).filter(Boolean).slice(0, 300), ...held.map((h) => h.number_id).filter(Boolean)];
+  let list;
+  try {
+    list = await ql.freeNumbers(qlCredentials(), { packageId: ref.packageId, exclude, esim: true });
+  } catch (e) {
+    if (!(e instanceof ql.QuickLineError)) throw e;
+    console.error('shop numbers', e.message);
+    fail(502, 'تعذّر جلب الأرقام الآن. حاول بعد قليل.');
+  }
+  require('./quickline').remember(ref.packageId, true, list);
+  const taken = new Set(held.map((h) => h.number));
+  // The customer sees the numbers only: the eSIM and its QR code stay here until the line is paid and active.
+  return list.filter((n) => n.phone && !taken.has(n.phone)).map((n) => ({ id: n.id, phone: n.phone }));
 });
 
 route('POST', '/api/shop/orders', null, ({ body, ip }) => {
   enabled();
   throttle(ip, 'order', 20);
+  if (body.kind === 'esim') return esimOrder(body, ip);
   const p = q(`SELECT p.*, c.name AS company_name FROM packages p JOIN companies c ON c.id = p.company_id
                WHERE p.id = ? AND p.active = 1 AND p.shop_price > 0`).get(Number(body.packageId));
   if (!p) fail(404, 'الباقة غير متوفرة');
@@ -101,6 +147,29 @@ route('POST', '/api/shop/orders', null, ({ body, ip }) => {
     .run(code, p.id, D.packageLabel(p), kind, number, sim, str(body.customerName, 80), contact, round(p.shop_price), ip, t, t);
   return orderView(byCode(code));
 });
+
+// An eSIM on one of the free numbers just shown. The number is held for this order (other customers no longer see it)
+// and is checked again when it is sold; its eSIM and QR code are kept with the order.
+function esimOrder(body, ip) {
+  const { p, ref } = esimPackage(body.packageId);
+  const customerName = str(body.customerName, 80);
+  if (customerName.length < 2) fail(400, 'اكتب اسمك — مطلوب لتسجيل الخط');
+  const email = str(body.email, 120).toLowerCase();
+  if (email && !validAddress(email)) fail(400, 'البريد الإلكتروني غير صحيح');
+  const numberId = Number(body.numberId) || 0;
+  const picked = require('./quickline').servedNumber(ref.packageId, true, numberId);
+  if (!picked) fail(400, 'اختر رقماً من القائمة. إن مرّ وقت طويل، حدّث قائمة الأرقام.');
+  if (heldNumbers().some((h) => h.number === picked.phone || h.number_id === numberId)) fail(409, 'هذا الرقم محجوز لزبون آخر الآن. اختر رقماً آخر.');
+  if (q("SELECT 1 FROM lines WHERE number = ? AND status != 'disconnected'").get(picked.phone)) fail(409, 'هذا الرقم لم يعد متاحاً. اختر رقماً آخر.');
+  const contact = body.contactPhone ? validPhone(normalizePhone(body.contactPhone)) : '';
+  const t = now();
+  const code = newCode();
+  q(`INSERT INTO shop_orders (code, package_id, package_label, kind, number, sim, customer_name, contact_phone, amount, ip, created_at, updated_at,
+       esim, number_id, esim_qr, email) VALUES (?, ?, ?, 'new', ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)`)
+    .run(code, p.id, D.packageLabel(p), picked.phone, String(picked.sim || '').replace(/\D/g, ''), customerName, contact, round(p.shop_price), ip, t, t,
+      numberId, picked.qr || '', email);
+  return orderView(byCode(code));
+}
 
 route('GET', '/api/shop/orders/:code', null, ({ params, ip }) => {
   throttle(ip, 'view', 600);

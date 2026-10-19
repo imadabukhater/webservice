@@ -1,5 +1,6 @@
 'use strict';
-// Customer shop orders paid by JawwalPay. A transfer is confirmed automatically when an authenticated JawwalPay email
+// Customer shop orders paid by JawwalPay (for now eSIMs: a QuickLine number picked by the customer, its QR code shown and
+// e-mailed once active). A transfer is confirmed automatically when an authenticated JawwalPay email
 // in Gmail has the order's exact amount and matches what the customer reported (reference, sender phone or name).
 // Anything else goes to the manager. Paid orders are sold through the "shop" agent account, so they follow the same
 // rules as any agent sale (manual companies become tasks, art-topup recharges run automatically).
@@ -9,6 +10,8 @@ const { ApiError, now } = require('./util');
 const { hashPassword } = require('./passwords');
 const D = require('./domain');
 const mail = require('./mail');
+const smtp = require('./smtp');
+const ql = require('./quickline');
 const { createLine } = require('./routes/lines');
 
 const VERIFY_MS = Number(process.env.SHOP_VERIFY_MS) || 15 * 60_000; // unmatched this long after the proof: to the manager
@@ -18,6 +21,13 @@ const IMAP = {
   port: Number(process.env.IMAP_PORT) || 993,
   secure: process.env.IMAP_SECURE !== '0',
 };
+// The eSIM's QR code goes to the customer from the same Gmail.
+const SMTP = {
+  host: process.env.SMTP_HOST || 'smtp.gmail.com',
+  port: Number(process.env.SMTP_PORT) || 465,
+  secure: process.env.SMTP_SECURE !== '0',
+};
+const MAIL_TRIES = 5;
 
 // ---------- the shop's agent account ----------
 function shopAgent() {
@@ -97,14 +107,18 @@ const ACTOR_NAME = 'موقع الزبائن';
 function fulfil(orderId) {
   const o = q("SELECT * FROM shop_orders WHERE id = ? AND status = 'paid' AND line_id IS NULL").get(orderId);
   if (!o) return null;
+  // An eSIM is sold on the number the customer picked, which the order kept: it goes back on the list of numbers
+  // shown, which a sale is checked against (payment may have taken longer than that list lasts).
+  const ref = o.esim ? ql.parseRef(q('SELECT art_card_id FROM packages WHERE id = ?').get(o.package_id)?.art_card_id) : null;
+  if (ref) require('./routes/quickline').remember(ref.packageId, true, [{ id: o.number_id, phone: o.number, sim: o.sim, qr: o.esim_qr }]);
   try {
     const r = tx(() => {
       const agent = shopAgent();
       D.changeBalance(agent, o.amount, { type: 'topup', actor: { id: null, name: ACTOR_NAME }, detail: `دفعة جوال باي — طلب ${o.code}` });
-      const sale = createLine(agent, {
-        kind: o.kind === 'recharge' ? 'external' : 'new', number: o.number, sim: o.sim, packageId: o.package_id, months: 1,
-        customerName: o.customer_name, customerPrice: o.amount, note: `طلب موقع الزبائن ${o.code}`,
-      });
+      const note = `طلب موقع الزبائن ${o.code}`;
+      const sale = createLine(agent, o.esim
+        ? { kind: 'new', esim: true, number: o.number, qlNumberId: o.number_id, packageId: o.package_id, months: 1, customerName: o.customer_name, customerPrice: o.amount, note }
+        : { kind: o.kind === 'recharge' ? 'external' : 'new', number: o.number, sim: o.sim, packageId: o.package_id, months: 1, customerName: o.customer_name, customerPrice: o.amount, note });
       q("UPDATE shop_orders SET line_id = ?, error = '', updated_at = ? WHERE id = ?").run(sale.line.id, now(), o.id);
       return sale;
     });
@@ -118,6 +132,61 @@ function fulfil(orderId) {
   }
 }
 
+// ---------- the eSIM's QR code by e-mail ----------
+const html = (v) => String(v ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+function qrMail(o, s) {
+  return `<!doctype html><html dir="rtl" lang="ar"><body style="margin:0;padding:24px;background:#f4f5f8;font-family:Tahoma,Arial,sans-serif;color:#111">
+  <div style="max-width:480px;margin:0 auto;background:#fff;border-radius:14px;padding:24px">
+    <h2 style="margin:0 0 10px">شريحتك الإلكترونية (eSIM) جاهزة</h2>
+    <p style="margin:0 0 6px">${o.customer_name ? `مرحباً ${html(o.customer_name)}، ` : ''}تم تفعيل خطك:</p>
+    <p style="margin:0 0 16px;font-size:20px;direction:ltr;text-align:right"><b>${html(o.number)}</b></p>
+    <p style="margin:0 0 16px">${html(o.package_label)}</p>
+    <p style="text-align:center;margin:0 0 16px"><img src="cid:esim-qr" alt="رمز QR لتثبيت eSIM" width="240" height="240" style="border:1px solid #ddd;border-radius:8px"></p>
+    <p style="margin:0 0 6px"><b>طريقة التثبيت</b></p>
+    <ul style="margin:0 0 16px;padding-inline-start:20px">
+      <li>آيفون: الإعدادات ← الخلوي ← إضافة eSIM ← استخدام رمز QR.</li>
+      <li>أندرويد: الإعدادات ← الاتصالات ← مدير SIM ← إضافة eSIM ← مسح رمز QR.</li>
+    </ul>
+    <p style="margin:0 0 6px;color:#555">امسح الرمز على جهاز واحد فقط واحتفظ بهذه الرسالة. يحتاج الجهاز إلى اتصال بالإنترنت أثناء التثبيت.</p>
+    <p style="margin:0;color:#555">رقم الطلب: <span dir="ltr">${html(o.code)}</span>${s.supportWhatsapp ? ` · للمساعدة واتساب <span dir="ltr">${html(s.supportWhatsapp)}</span>` : ''}</p>
+  </div></body></html>`;
+}
+
+// Sends each active eSIM's QR code once to the e-mail its customer gave. A failure is tried again on the next round,
+// a few times, and then left to the manager (the QR code stays on the order page either way).
+const mailTries = new Map();
+async function deliverQr() {
+  const s = getSettings();
+  if (!s.gmailConfigured) return 0;
+  const rows = q(`SELECT o.*, l.esim_qr AS line_qr FROM shop_orders o JOIN lines l ON l.id = o.line_id
+                  WHERE o.esim = 1 AND o.email != '' AND o.qr_mailed_at IS NULL AND l.status = 'active' AND l.esim_qr != ''`).all();
+  let sent = 0;
+  for (const o of rows) {
+    const tries = mailTries.get(o.id) || 0;
+    if (tries >= MAIL_TRIES) continue;
+    const img = /^data:(image\/[a-z0-9.+-]+);base64,(.+)$/i.exec(o.line_qr);
+    if (!img) continue;
+    const creds = gmailCredentials();
+    try {
+      await smtp.sendMail({
+        ...SMTP, user: creds.user, pass: creds.pass, fromName: s.appName, to: o.email, subject: `رمز تفعيل eSIM — ${o.number}`,
+        html: qrMail(o, s), images: [{ cid: 'esim-qr', name: `esim-${o.number}.${img[1].split('/')[1].replace('jpeg', 'jpg')}`, type: img[1], content: Buffer.from(img[2], 'base64') }],
+      });
+      q('UPDATE shop_orders SET qr_mailed_at = ?, updated_at = ? WHERE id = ?').run(now(), now(), o.id);
+      mailTries.delete(o.id);
+      sent++;
+    } catch (e) {
+      mailTries.set(o.id, tries + 1);
+      console.error('shop qr mail', o.code, e.message);
+      if (tries + 1 >= MAIL_TRIES) {
+        D.notify({ role: 'admin', kind: 'task', title: `تعذّر إرسال رمز eSIM بالبريد ${o.code}`, body: `${o.email}: ${e.message}`, link: '#/shop' });
+      }
+    }
+  }
+  return sent;
+}
+
 // ---------- mailbox ----------
 function saveMail(uidValidity, uid, raw, settings) {
   const p = mail.parseMessage(raw);
@@ -125,6 +194,9 @@ function saveMail(uidValidity, uid, raw, settings) {
   const term = String(settings.mailFrom || '').toLowerCase();
   if (term && !p.from.toLowerCase().includes(term)) return null;
   const f = mail.parseJawwalPay(p, { ownNumber: settings.jawwalpayNumber });
+  // Only money that came in can pay an order: a transfer sent from the wallet (or a one-time code) is kept without an
+  // amount, so it never matches, even when its reference or the number it went to is known.
+  if (!f.incoming) f.amount = null;
   const trusted = mail.authenticSender(p, term) ? 1 : 0;
   return Number(q(`INSERT OR IGNORE INTO payment_mails (uid_validity, uid, message_id, trusted, from_addr, subject, received_at, amount, reference,
                      sender_phone, sender_name, body, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
@@ -169,10 +241,12 @@ async function run(force) {
   let matched = 0;
   for (const { id } of q("SELECT id FROM shop_orders WHERE status IN ('verifying','review') ORDER BY proof_at").all()) if (tryMatch(id)) matched++;
   const escalated = escalate();
-  return { fetched, matched, escalated };
+  let mailed = 0;
+  try { mailed = await deliverQr(); } catch (e) { console.error('shop qr mail', e.message); }
+  return { fetched, matched, escalated, mailed };
 }
 
 const timer = setInterval(() => { checkMail().catch((e) => console.error('shop mail', e.message)); }, LOOP_MS);
 timer.unref();
 
-module.exports = { shopAgent, namesMatch, matchReason, findMail, claim, tryMatch, fulfil, checkMail, escalate, saveMail };
+module.exports = { shopAgent, namesMatch, matchReason, findMail, claim, tryMatch, fulfil, checkMail, escalate, saveMail, deliverQr };

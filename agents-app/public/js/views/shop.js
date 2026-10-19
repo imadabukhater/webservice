@@ -18,7 +18,7 @@ function orderCard(o) {
   return `<article class="item">
     <div class="item-top"><span class="tile sm ${o.stage === 'done' ? 'green' : o.stage === 'review' || o.stage === 'paid_issue' ? 'red' : 'amber'}">${icon('card')}</span>
       <div class="grow"><b class="item-title">${esc(o.packageLabel)} · <span class="ltr">${fmtMoney(o.amount)}</span></b>
-        <div class="item-sub"><span class="ltr">${esc(o.code)}</span>${phone(o.number)}<span>${o.kind === 'new' ? 'خط جديد' : 'شحن'}</span><span>${relTime(o.createdAt)}</span></div></div>
+        <div class="item-sub"><span class="ltr">${esc(o.code)}</span>${phone(o.number)}<span>${o.esim ? 'eSIM' : o.kind === 'new' ? 'خط جديد' : 'شحن'}</span><span>${relTime(o.createdAt)}</span></div></div>
       <span class="pill s-${cls}">${label}</span></div>
     ${o.customerName ? `<p class="small">الزبون: ${esc(o.customerName)}${o.contactPhone && o.contactPhone !== o.number ? ` · تواصل ${phone(o.contactPhone)}` : ''}</p>` : ''}
     ${proof ? `<p class="small" style="color:var(--ink-2)">${proof}</p>` : ''}
@@ -81,7 +81,7 @@ function openSettings() {
       <div class="field"><label for="st-gp">كلمة مرور التطبيقات ${s.gmailConfigured ? '<span class="opt">(محفوظة — اتركها فارغة للإبقاء عليها)</span>' : ''}</label>
         <input class="input ltr" id="st-gp" name="gmailPass" type="password" autocomplete="new-password" placeholder="xxxx xxxx xxxx xxxx"></div>
       <div class="field"><label for="st-mf">نطاق مرسل الإشعارات</label><input class="input ltr" id="st-mf" name="mailFrom" value="${esc(s.mailFrom)}">
-        <span class="hint">جزء من عنوان المرسل، مثل jawwal. يُعتمد الإشعار تلقائياً فقط إذا وثّق Gmail أن المرسل من هذا النطاق.</span></div>
+        <span class="hint">نطاق المرسل، مثل jawwalpay.ps (إشعارات جوال باي تأتي من noreply@jawwalpay.ps). يُعتمد الإشعار تلقائياً فقط إذا وثّق Gmail أن المرسل من هذا النطاق نفسه، وفقط إشعارات الاستلام («لقد استلمت…»).</span></div>
       <button type="button" class="btn btn-soft btn-block" id="st-check">${icon('refresh')}فحص البريد الآن</button>`,
     submit: 'حفظ',
     onMount(form) {
@@ -117,7 +117,8 @@ async function openOrder(id) {
       <div class="kv">${kv('الرقم', phone(o.number))}${kv('الشريحة', o.sim ? `<span class="ltr">${esc(o.sim)}</span>` : '')}${kv('الزبون', esc(o.customerName))}
         ${kv('رقم التواصل', o.contactPhone && o.contactPhone !== o.number ? phone(o.contactPhone) : '')}${kv('أُنشئ', fmtDateTime(o.createdAt))}${kv('أرسل التحويل', o.proofAt ? fmtDateTime(o.proofAt) : '')}
         ${kv('الرقم المرجعي', o.payReference ? `<span class="ltr">${esc(o.payReference)}</span>` : '')}${kv('رقم المحوِّل', o.payPhone ? phone(o.payPhone) : '')}${kv('اسم المحوِّل', esc(o.payName))}
-        ${kv('التحقق', esc(o.verifiedBy))}</div>
+        ${kv('التحقق', esc(o.verifiedBy))}${kv('البريد', o.email ? `<span class="ltr">${esc(o.email)}</span>` : '')}
+        ${o.esim ? kv('رمز QR', o.qrMailedAt ? `أُرسل بالبريد ${fmtDateTime(o.qrMailedAt)}` : o.email ? 'يُرسل بالبريد بعد التفعيل' : 'يظهر للزبون في صفحة الطلب') : ''}</div>
       ${o.receipt ? `<img class="thumb" style="max-height:50vh" src="${esc(o.receipt)}" alt="صورة إشعار التحويل">` : ''}
       ${o.mail ? `<h3>الإشعار المعتمد</h3><pre class="small" style="white-space:pre-wrap">${esc(o.mail.body)}</pre>` : ''}
       ${decidable ? `<h3>تأكيد الدفع</h3>

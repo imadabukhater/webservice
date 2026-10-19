@@ -87,12 +87,26 @@ test('email parsing: MIME, encoded headers, Arabic digits and sender authenticat
   const p = mail.parseMessage(Buffer.from(raw, 'latin1'));
   assert.equal(p.from, 'جوال باي <noreply@jawwal.ps>');
   assert.match(p.text, /المبلغ: ٧٠ ₪/);
-  assert.deepEqual(mail.parseJawwalPay(p), { amount: 70, reference: 'AB-7781', senderPhone: null, senderName: null });
+  assert.deepEqual(mail.parseJawwalPay(p), { amount: 70, reference: 'AB-7781', senderPhone: null, senderName: null, incoming: false });
   assert.equal(mail.authenticSender(p, 'jawwal'), true);
   assert.equal(mail.authenticSender({ ...p, auth: 'mx.google.com; dkim=none; dmarc=fail header.from=jawwal.ps' }, 'jawwal'), false);
   assert.equal(mail.authenticSender({ ...p, auth: '' }, 'jawwal'), false);
   const f = mail.parseJawwalPay({ text: 'You received 1,250.50 ILS from Ahmad Ali. Mobile: +970 59 912 3456. Transaction ID: 99887766' }, { ownNumber: '0599000000' });
-  assert.deepEqual(f, { amount: 1250.5, reference: '99887766', senderPhone: '0599123456', senderName: 'Ahmad Ali' });
+  assert.deepEqual(f, { amount: 1250.5, reference: '99887766', senderPhone: '0599123456', senderName: 'Ahmad Ali', incoming: true });
+  // JawwalPay's own wording: money received (the reference in brackets), and a transfer sent from the wallet,
+  // which is not a payment (the number in it is where the money went, not who paid).
+  assert.deepEqual(mail.parseJawwalPay({ text: 'لقد استلمت حركه تحويل اموال بقيمة: ILS 1.00 من المعتز بالله عاطف ابو خاطر . الرصيد الحالي: ILS 425.00 .المرجع :(2922922722823)' }),
+    { amount: 1, reference: '2922922722823', senderPhone: null, senderName: 'المعتز بالله عاطف ابو خاطر', incoming: true });
+  assert.equal(mail.parseJawwalPay({ text: 'تمت حركة تحويل الأموال لمبلغ: ILS 10.00 للمشترك: 00970592578034 بنجاح! رصيدك الحالي: ILS 415.00. رقم الحركة: 2922925325476.' }).incoming, false);
+  assert.deepEqual(mail.parseJawwalPay({ text: 'Mona Mohammed Omar Hasaballah قام بتحويل مبلغ ILS 50.00 لحسابك بتاريخ 19-10-2026 11:17:00 AM. الرصيد المتوفر ILS 852.00.' }),
+    { amount: 50, reference: null, senderPhone: null, senderName: 'Mona Mohammed Omar Hasaballah', incoming: true });
+  assert.equal(mail.parseJawwalPay({ text: 'حركة طلب رقم سري لمرة واحدة والمخصص لعملية تعديل الايميل تمت بنجاح. الرقم هو 59806.' }).incoming, false);
+  // A domain is that domain (or one under it), never a look-alike.
+  const jp = { from: 'Jawwal Pay <noreply@jawwalpay.ps>', auth: 'mx.google.com; spf=pass smtp.mailfrom=jawwalpay.ps; dmarc=pass (p=NONE) header.from=jawwalpay.ps' };
+  assert.equal(mail.authenticSender(jp, 'jawwalpay.ps'), true);
+  assert.equal(mail.authenticSender({ ...jp, from: 'x <a@myjawwalpay.ps>' }, 'jawwalpay.ps'), false);
+  assert.equal(mail.authenticSender({ ...jp, from: 'x <a@jawwalpay.ps.example.com>' }, 'jawwalpay.ps'), false);
+  assert.equal(mail.authenticSender({ ...jp, from: 'x <a@mail.jawwalpay.ps>' }, 'jawwalpay.ps'), true);
   const { namesMatch } = require('../src/shop');
   assert.ok(namesMatch('محمد احمد', 'مُحمّد أحمد خليل'));
   assert.ok(!namesMatch('محمد', 'محمد أحمد'), 'one word is not enough unless it is the whole name');
@@ -157,7 +171,7 @@ test('customer shop: order, JawwalPay proof, automatic match from Gmail, fulfilm
   assert.equal(lines[0].customerPrice, 95);
 
   // ----- 2: a forged email (no Gmail authentication) is never trusted -----
-  addMail('حوالة بمبلغ 95 ₪ من الرقم 0597777777', { from: 'JawwalPay <notify@jawwal.ps>', auth: '' });
+  addMail('استلمت حوالة بمبلغ 95 ₪ من الرقم 0597777777', { from: 'JawwalPay <notify@jawwal.ps>', auth: '' });
   const o2 = await ok(call(null, 'POST', '/api/shop/orders', { packageId: p500.id, number: '0527654321' }));
   v = await ok(call(null, 'POST', `/api/shop/orders/${o2.code}/proof`, { payPhone: '0597777777', receipt: PNG }));
   assert.equal(v.status, 'verifying');
@@ -196,7 +210,7 @@ test('customer shop: order, JawwalPay proof, automatic match from Gmail, fulfilm
   const ag = await ok(call(admin, 'POST', '/api/agents', { name: 'وكيل', username: 'ag1', password: 'secret1', balance: 500 }));
   const agTok = (await ok(call(null, 'POST', '/api/login', { username: 'ag1', password: 'secret1' }))).token;
   await ok(call(agTok, 'POST', '/api/lines', { kind: 'external', number: '0539999999', packageId: p500.id }));
-  addMail('حوالة 95 شيكل Reference: RR-5');
+  addMail('استلمت حوالة 95 شيكل Reference: RR-5');
   const o5 = await ok(call(null, 'POST', '/api/shop/orders', { packageId: p500.id, number: '0539999999' }));
   v = await ok(call(null, 'POST', `/api/shop/orders/${o5.code}/proof`, { payReference: 'RR-5' }));
   assert.equal(v.status, 'paid');
@@ -208,7 +222,7 @@ test('customer shop: order, JawwalPay proof, automatic match from Gmail, fulfilm
   assert.equal(v.stage, 'done');
 
   // ----- 5: manual company: paid orders become the manager's tasks -----
-  addMail('حوالة 40.00 ₪ Ref: PP-9');
+  addMail('استلمت حوالة 40.00 ₪ Ref: PP-9');
   const o6 = await ok(call(null, 'POST', '/api/shop/orders', { packageId: pPartner.id, number: '0541234567', customerName: 'زبون بارتنر' }));
   v = await ok(call(null, 'POST', `/api/shop/orders/${o6.code}/proof`, { payReference: 'pp-9' }));
   assert.equal(v.stage, 'processing');

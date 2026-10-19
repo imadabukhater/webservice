@@ -348,6 +348,15 @@ ensureColumn('tasks', 'auto_ref', "auto_ref TEXT NOT NULL DEFAULT ''");
 ensureColumn('tasks', 'auto_at', 'auto_at INTEGER');
 // Customer shop: the price customers pay (null = not sold in the shop).
 ensureColumn('packages', 'shop_price', 'shop_price REAL');
+// Customer shop eSIM orders: the number picked from the supplier's free eSIM numbers (its id there, its eSIM in `sim`
+// and the QR code to install it, kept for the manager until the line is active), and the e-mail the QR is sent to.
+ensureColumn('shop_orders', 'esim', 'esim INTEGER NOT NULL DEFAULT 0');
+ensureColumn('shop_orders', 'number_id', 'number_id INTEGER');
+ensureColumn('shop_orders', 'esim_qr', "esim_qr TEXT NOT NULL DEFAULT ''");
+ensureColumn('shop_orders', 'email', "email TEXT NOT NULL DEFAULT ''");
+ensureColumn('shop_orders', 'qr_mailed_at', 'qr_mailed_at INTEGER');
+// JawwalPay e-mails come from noreply@jawwalpay.ps: the first default ("jawwal") also trusted look-alike domains.
+db.exec("UPDATE settings SET value = 'jawwalpay.ps' WHERE key = 'mail_from' AND value = 'jawwal'");
 // QuickLine lines: a state change made here (close, pause, activate) still to be carried out there.
 ensureColumn('lines', 'ql_pending', "ql_pending TEXT NOT NULL DEFAULT ''");
 // QuickLine lines: a new SIM put on the line here, still to be put on it there.
@@ -394,7 +403,7 @@ function tx(fn) {
 const DEFAULT_SETTINGS = {
   app_name: 'بوابة الوكلاء', warn_days: '7', low_balance: '50', esim_fee: '7', support_whatsapp: '972567725080',
   art_user: '', art_pass: '', art_markup: '15',
-  shop_enabled: '0', jawwalpay_number: '', jawwalpay_name: '', gmail_user: '', gmail_pass: '', mail_from: 'jawwal', shop_agent_id: '',
+  shop_enabled: '0', jawwalpay_number: '', jawwalpay_name: '', gmail_user: '', gmail_pass: '', mail_from: 'jawwalpay.ps', shop_agent_id: '',
   ql_user: '', ql_pass: '', ql_markup: '15',
   ly_user: '', ly_pass: '', ly_secret: '', ly_markup: '15',
   tc_user: '', tc_pass: '', tc_mail_user: '', tc_mail_pass: '', tc_markup: '15',
