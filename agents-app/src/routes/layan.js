@@ -151,4 +151,18 @@ function servedNumber(packageId, number) {
   return v && now() - v.at < SERVED_MS ? v : null;
 }
 
-module.exports = { syncKind, REF, freeNumbers, servedNumber, packageInfo };
+// ---------- free numbers that come as a new eSIM (the customer shop) ----------
+// Remembered like the suspended numbers above, so a sale can be checked to use one of them; the shop also keeps the
+// picked number with its order and puts it back here before selling it.
+const esimServed = new Map();
+function rememberEsim(packageId, phones) {
+  const t = now();
+  for (const [k, v] of esimServed) if (t - v.at > SERVED_MS) esimServed.delete(k);
+  for (const phone of phones) esimServed.set(`${packageId}:${phone}`, { phone, at: t });
+}
+function servedEsim(packageId, number) {
+  const v = esimServed.get(`${packageId}:${number}`);
+  return v && now() - v.at < SERVED_MS ? v : null;
+}
+
+module.exports = { syncKind, REF, freeNumbers, servedNumber, packageInfo, rememberEsim, servedEsim };

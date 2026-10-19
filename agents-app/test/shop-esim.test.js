@@ -136,6 +136,35 @@ const smtpServer = net.createServer((sock) => {
   sock.on('error', () => {});
 });
 
+// ---------- Layan, with free eSIM numbers on its WE package ----------
+const LY_SECRET = 'JBSWY3DPEHPK3PXP';
+const LY_PKG = '22222222-2222-2222-2222-222222222222';
+const PNG = Buffer.from('89504e470d0a1a0a0000000d49484452', 'hex');
+const lyFake = { newLines: [], emptySims: [], free: ['0515102941', '0515102942'] };
+const lyApi = http.createServer((req, res) => {
+  let body = '';
+  req.on('data', (c) => { body += c; });
+  req.on('end', () => {
+    const json = (v, status = 200) => { res.writeHead(status, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(v)); };
+    const text = (v, status = 200) => { res.writeHead(status, { 'Content-Type': 'text/plain; charset=utf-8' }); res.end(v); };
+    if (req.url === '/qr/esim-1.png') { res.writeHead(200, { 'Content-Type': 'image/png' }); return res.end(PNG); }
+    const url = req.url.replace(/^\/api\//, '');
+    const f = body ? JSON.parse(body) : {};
+    if (url === 'Auth/Login') return f.username === 'ly.dealer' && f.password === 'ly-pass' ? json({ statusCode: 202, data: { requestId: 'r1', verificationMethod: 2 } }) : text('خطأ', 400);
+    if (url === 'Auth/VerifyCode') return f.code === require('../src/layan').totp(LY_SECRET) ? json({ jwt: 'ly.jwt' }) : text('קוד שגוי', 400);
+    if (req.headers.authorization !== 'Bearer ly.jwt') return text('unauthorized', 401);
+    if (url === 'Packages/GetPackageDuration') return json([{ name: 'חודש', value: 30 }]);
+    if (url === 'Packages/GetPackagesSortedByCompanies/false') {
+      return json([{ company: { id: 'c9', name: 'We' }, packages: [{ id: LY_PKG, name: 'חבילת 500 גיגה 2026', internet: '500', cost: 32, isActive: true, saleId: null, duration: null }] }]);
+    }
+    if (url === `Numbers/GetAvailableNumbersForPackage/${LY_PKG}/true`) return json(lyFake.free.map((phoneNumber) => ({ phoneNumber })));
+    const empty = /^Packages\/GetEmptySim\/([^/]+)\/(\d+)$/.exec(url);
+    if (empty) { lyFake.emptySims.push(empty[2]); return json({ sim: '8997209000000000071', url: '/qr/esim-1.png', price: '7' }); }
+    if (url === 'Deals/NewLine') { lyFake.newLines.push(f); return text('בוצע בהצלחה'); }
+    return text('not found', 404);
+  });
+});
+
 let base;
 let server;
 const call = async (token, method, url, body) => {
@@ -152,13 +181,15 @@ test.before(async () => {
   await new Promise((r) => qlApi.listen(0, '127.0.0.1', r));
   await new Promise((r) => imap.listen(0, '127.0.0.1', r));
   await new Promise((r) => smtpServer.listen(0, '127.0.0.1', r));
+  await new Promise((r) => lyApi.listen(0, '127.0.0.1', r));
+  process.env.LY_BASE = `http://127.0.0.1:${lyApi.address().port}`;
   process.env.QL_BASE = `http://127.0.0.1:${qlApi.address().port}`;
   process.env.IMAP_PORT = String(imap.address().port);
   process.env.SMTP_PORT = String(smtpServer.address().port);
   ({ server } = require('../server'));
   await new Promise((r) => server.listen(0, () => { base = `http://127.0.0.1:${server.address().port}`; r(); }));
 });
-test.after(() => { server.close(); qlApi.close(); imap.close(); smtpServer.close(); });
+test.after(() => { server.close(); qlApi.close(); lyApi.close(); imap.close(); smtpServer.close(); });
 
 test('eSIM shop: pick a number, pay by JawwalPay, confirmed from the e-mail, activated, QR shown and e-mailed', async () => {
   const admin = (await ok(call(null, 'POST', '/api/login', { username: 'admin', password: 'admin-pass' }))).token;
@@ -233,4 +264,33 @@ test('eSIM shop: pick a number, pay by JawwalPay, confirmed from the e-mail, act
   assert.ok(shopAgent.balance > 0 && shopAgent.balance < 180, String(shopAgent.balance));
   // The order B is still waiting (its "payment" was our own transfer), and holds its number.
   assert.equal((await ok(call(null, 'GET', `/api/shop/orders/${b.code}`))).status, 'verifying');
+});
+
+test('eSIM shop with Layan: its free eSIM numbers, activated after payment with the QR code Layan gives', async () => {
+  const admin = (await ok(call(null, 'POST', '/api/login', { username: 'admin', password: 'admin-pass' }))).token;
+  await ok(call(admin, 'PUT', '/api/settings', { lyUser: 'ly.dealer', lyPass: 'ly-pass', lySecret: LY_SECRET }));
+  await ok(call(admin, 'POST', '/api/layan/sync', { kind: 'invoice' }));
+  const pkg = (await ok(call(admin, 'GET', '/api/catalog'))).packages.find((p) => p.supplier === 'ly' && p.kind === 'invoice');
+  await ok(call(admin, 'PUT', `/api/packages/${pkg.id}`, { shopPrice: 60 }));
+  assert.equal((await ok(call(null, 'GET', '/api/shop'))).packages.find((p) => p.id === pkg.id).esim, true);
+
+  const nums = await ok(call(null, 'GET', `/api/shop/numbers?packageId=${pkg.id}`));
+  assert.deepEqual(nums.map((n) => n.phone), ['0515102941', '0515102942']);
+  assert.equal(lyFake.emptySims.length, 0, 'no eSIM is taken from Layan before payment');
+  const o = await ok(call(null, 'POST', '/api/shop/orders', { kind: 'esim', packageId: pkg.id, numberId: nums[0].id, customerName: 'زبون ليان', email: 'ly@example.com' }));
+  assert.deepEqual([o.number, o.esim, o.amount], ['0515102941', true, 60]);
+  assert.deepEqual((await ok(call(null, 'GET', `/api/shop/numbers?packageId=${pkg.id}`))).map((n) => n.phone), ['0515102942'], 'held for this customer');
+
+  jawwalPay('لقد استلمت حركه تحويل اموال بقيمة: ILS 60.00 من زبون ليان . الرصيد الحالي: ILS 700.00 .المرجع :(2922950000001)');
+  assert.equal((await ok(call(null, 'POST', `/api/shop/orders/${o.code}/proof`, { payReference: '2922950000001' }))).status, 'paid');
+  const done = await until(async () => { const v = await ok(call(null, 'GET', `/api/shop/orders/${o.code}`)); return v.stage === 'done' && v; });
+  assert.equal(done.esimQr, `data:image/png;base64,${PNG.toString('base64')}`);
+  assert.deepEqual(lyFake.emptySims, ['0515102941']);
+  const sent = lyFake.newLines[0];
+  assert.deepEqual([sent.Number, sent.packageId, sent.SimNumber, sent.isEsim, sent.Customer.Fullname, sent.Duration, sent.Price, sent.isPaid],
+    ['0515102941', LY_PKG, '8997209000000000071', true, 'زبون ليان', 30, 60, true]);
+  const task = (await ok(call(admin, 'GET', '/api/tasks'))).find((t) => t.lineNumber === '0515102941');
+  assert.deepEqual([task.type, task.status, task.source], ['esim', 'done', 'ليان']);
+  assert.equal((await ok(call(admin, 'POST', '/api/shop/admin/check-mail'))).mailed, 1, 'its QR code e-mailed too');
+  assert.match(outbox.at(-1).to, /ly@example.com/);
 });

@@ -54,7 +54,7 @@ function job(taskId) {
   const ref = p.art_card_id;
   const supplier = ['recharge', 'renew'].includes(t.type)
     ? (/^(ic|pb|pc):/.test(ref) ? 'art' : /^ql:/.test(ref) ? 'ql' : /^ly:/.test(ref) ? 'ly' : /^tc:/.test(ref) ? 'tc' : null)
-    : (/^qln:/.test(ref) ? 'qln' : /^lyn:/.test(ref) && t.type === 'activate' ? 'lyn' : null);
+    : (/^qln:/.test(ref) ? 'qln' : /^lyn:/.test(ref) && t.type === 'activate' ? 'lyn' : /^lyn:/.test(ref) && t.type === 'esim' ? 'lye' : null);
   if (!supplier) return null;
   // The supplier is paid its own current price, never the cost the manager may have typed.
   return { t, supplier, line, number: line.number, ref, price: p.art_price ?? p.cost };
@@ -76,7 +76,7 @@ async function send(taskId) {
   const j = job(taskId);
   if (!j) return;
   const s = getSettings();
-  const ready = { art: s.artConfigured, ly: s.lyConfigured, lyn: s.lyConfigured, tc: s.tcReady }[j.supplier] ?? s.qlConfigured;
+  const ready = { art: s.artConfigured, ly: s.lyConfigured, lyn: s.lyConfigured, lye: s.lyConfigured, tc: s.tcReady }[j.supplier] ?? s.qlConfigured;
   if (!ready) return;
   // Claim it: only one sender, only once.
   if (!q("UPDATE tasks SET auto_status = 'sending', auto_at = ? WHERE id = ? AND status = 'open' AND auto_status = ''").run(now(), taskId).changes) return;
@@ -84,6 +84,7 @@ async function send(taskId) {
   if (j.supplier === 'qln') return sendQlNew(taskId, j);
   if (j.supplier === 'ly' || j.supplier === 'lyn') return sendLy(taskId, j);
   if (j.supplier === 'tc') return sendTc(taskId, j);
+  if (j.supplier === 'lye') return sendLyEsim(taskId, j);
   return sendArt(taskId, j);
 }
 
@@ -149,6 +150,90 @@ async function checkLy(t, before) {
   } else {
     later(t.id);
   }
+}
+
+// ---------- Layan: a new eSIM line on one of its free numbers ----------
+// Nothing is sent when Layan's price for the package is above the approved one, or when Layan has no eSIM for the
+// number (taken meanwhile). Layan's answer is the proof: done at once (the QR code is the eSIM's, read before), or —
+// for a company that makes its eSIM later — followed until its QR code is ready. Without a QR code the task stays with
+// the manager, who attaches it.
+async function sendLyEsim(taskId, j) {
+  const fail = (note) => { setAuto(taskId, 'failed', note); tellManager('تعذّر تفعيل eSIM التلقائي', `${j.number}: ${note}`); };
+  const number = ly.localNumber(j.number);
+  const ref = ly.parseRef(j.ref);
+  if (!number || !ref) { setAuto(taskId, 'failed', 'ناقصة بيانات ليان لهذا الخط — نفّذه يدوياً'); return undefined; }
+  const creds = lyCredentials();
+  let pkg;
+  let esim;
+  try {
+    pkg = (await ly.catalog(creds, 'invoice')).find((c) => c.ref === j.ref);
+    if (pkg) esim = await ly.emptyEsim(creds, ref.packageId, number);
+  } catch (e) {
+    return notSentYet({ ...j.t, number }, taskId, e, 'تعذّر تفعيل eSIM التلقائي');
+  }
+  if (!pkg) return fail('الرزمة لم تعد عند ليان بهذه المدة — زامن ليان ثم نفّذه يدوياً أو ارفضه');
+  if (pkg.agentPrice > Number(j.price) + 0.01) return fail(`سعر ليان الآن ${pkg.agentPrice} ₪ وهو أعلى من المعتمد ${j.price} ₪ — زامن ليان وراجع السعر، ثم نفّذه يدوياً أو ارفضه`);
+  if (!esim?.sim) return fail('ليان لم يعطِ eSIM لهذا الرقم (ربما أُخذ) — اختر رقماً آخر في ليان أو ارفض الطلب');
+  let qr = '';
+  try { qr = await ly.imageDataUrl(esim.qrUrl); } catch (e) { console.error('layan esim qr', e.message); }
+  const before = { lye: true, number, sim: esim.sim };
+  let r;
+  try {
+    r = await ly.newEsimLine(creds, {
+      packageId: ref.packageId, number, sim: esim.sim, customerName: j.line.customer_name, price: j.line.customer_price ?? pkg.agentPrice, days: ref.days, saleId: ref.saleId,
+    });
+  } catch (e) {
+    if (e.refused) {
+      setAuto(taskId, 'failed', `رفض ليان تفعيل eSIM: ${e.message}`, { ref: JSON.stringify(before) });
+      tellManager('رفض ليان تفعيل eSIM', `${number}: ${e.message}. ارفض الطلب ليُسترد المبلغ أو نفّذه يدوياً.`);
+      return undefined;
+    }
+    setAuto(taskId, 'unknown', `انقطع الاتصال أثناء الإرسال (${e.message}). افحص ليان قبل أي تنفيذ يدوي.`, { ref: JSON.stringify(before) });
+    tellManager('تفعيل eSIM تلقائي غير مؤكد', `${number}: افحص ليان قبل التنفيذ`);
+    return undefined;
+  }
+  // The eSIM is the line's SIM.
+  q('UPDATE lines SET sim = ? WHERE id = ?').run(esim.sim, j.t.line_id);
+  if (r.asyncActionId) {
+    setAuto(taskId, 'sent', `أُرسل تفعيل eSIM إلى ليان — بانتظار أن تجهّز الشركة الـ eSIM (${pkg.agentPrice} ₪)`, { ref: JSON.stringify({ ...before, asyncActionId: r.asyncActionId }) });
+    later(taskId);
+    return undefined;
+  }
+  if (r.esimLink) { try { qr = await ly.imageDataUrl(r.esimLink); } catch (e) { console.error('layan esim qr', e.message); } }
+  setAuto(taskId, 'sent', `ليان: ${r.text || 'تم'}`, { ref: JSON.stringify(before) });
+  return esimDone(taskId, number, qr, `ليان: تم تفعيل eSIM (${pkg.agentPrice} ₪)`);
+}
+
+function esimDone(taskId, number, qr, note) {
+  if (qr) {
+    finish(taskId, note, 'تم التفعيل', LY_ACTOR, { attachment: qr });
+    return undefined;
+  }
+  setAuto(taskId, 'unknown', `${note}، لكن رمز QR لم يصل من ليان — خذه من ليان وأرفقه عند تنفيذ الطلب.`);
+  tellManager('eSIM مفعّل بلا رمز QR', `${number}: أرفق رمز QR من ليان`);
+  return undefined;
+}
+
+// A company that makes its eSIM later (Partner): Layan says when its QR code (or an activation link) is ready.
+async function checkLyEsim(t, before) {
+  const st = await ly.esimStatus(lyCredentials(), before.asyncActionId);
+  if (/^(Pending|PendingEsimUrl)$/.test(st.status)) {
+    if (now() - t.auto_at > GIVE_UP_MS) {
+      setAuto(t.id, 'unknown', 'ما زالت ليان تجهّز الـ eSIM بعد 30 دقيقة. افحص هناك قبل أي تنفيذ يدوي.');
+      tellManager('تفعيل eSIM تلقائي متأخر', `${before.number}: ما زال قيد التجهيز في ليان`);
+    } else later(t.id);
+    return;
+  }
+  if (st.esimLink) {
+    let qr = '';
+    try { qr = await ly.imageDataUrl(st.esimLink); } catch (e) { console.error('layan esim qr', e.message); }
+    esimDone(t.id, before.number, qr, `ليان: eSIM جاهز (${st.status})`);
+    return;
+  }
+  setAuto(t.id, 'unknown', st.esimUrl
+    ? `ليان: eSIM جاهز برابط تفعيل وليس رمز QR — ${st.esimUrl.slice(0, 200)}. أرسله للزبون أو حوّله إلى رمز QR وأرفقه.`
+    : `ليان: حالة الـ eSIM «${st.status || 'غير معروفة'}» — افحص هناك قبل أي تنفيذ يدوي.`);
+  tellManager('تفعيل eSIM يحتاج تدخلك', `${before.number}: ${st.esimUrl ? 'رابط تفعيل بدل رمز QR' : st.status || 'حالة غير معروفة'}`);
 }
 
 // ---------- telecom: extend a subscriber the dealer already has ----------
@@ -430,6 +515,7 @@ async function check(taskId) {
     try { before = JSON.parse(t.auto_ref); } catch { before = {}; }
     if (before.ly) return checkLy(t, before);
     if (before.tc) return checkTc(t, before);
+    if (before.lye) return checkLyEsim(t, before);
     return before.new ? checkQlNew(t, before) : checkQl(t);
   }
   const line = q('SELECT number FROM lines WHERE id = ?').get(t.line_id);

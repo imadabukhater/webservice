@@ -102,8 +102,16 @@ function createLine(user, body) {
   }
   // A Layan new line is one of the dealer's suspended numbers there, which comes with its SIM: the agent picks it from
   // the list shown, and nothing else (no SIM, no porting, no eSIM switch — an eSIM package brings its eSIM).
+  // Or, as an eSIM: one of the free numbers Layan offers as a new eSIM, whose eSIM (and QR code) Layan gives when it is
+  // activated — the customer shop sells these.
   const lyRef = kind === 'new' && /^lyn:/.test(pkg.art_card_id || '') ? require('../layan').parseRef(pkg.art_card_id) : null;
-  if (lyRef) {
+  let lyJob = null;
+  if (lyRef && esim) {
+    if (port) fail(400, 'هذه الرزمة لا تدعم تحويل الرقم مع eSIM');
+    if (!str(body.customerName, 80)) fail(400, 'اكتب اسم الزبون — مطلوب لتفعيل هذا الخط');
+    if (!require('./layan').servedEsim(lyRef.packageId, number)) fail(400, 'اختر رقم الهاتف من قائمة الأرقام المتاحة');
+    lyJob = { esim: true };
+  } else if (lyRef) {
     if (port || esim) fail(400, 'هذه الرزمة لا تدعم تحويل الرقم أو eSIM');
     const picked = require('./layan').servedNumber(lyRef.packageId, number);
     if (!picked) fail(400, 'اختر رقم الهاتف من قائمة الأرقام المتاحة');
@@ -130,7 +138,7 @@ function createLine(user, body) {
   const direct = D.directCompany(pkg.company_id) && !port && !esim && !viaQl;
   const manual = !direct && !port && !esim && !isAdmin;
   // The eSIM's QR code is kept with the task; it is shown on the line once QuickLine has activated it.
-  const taskPayload = qlJob ? { ql: qlJob } : null;
+  const taskPayload = qlJob ? { ql: qlJob } : lyJob ? { ly: lyJob } : null;
   // A QuickLine sale is pending until QuickLine has carried it out, whoever sold it.
   const pending = port || esim || manual || viaQl;
   const t = now();

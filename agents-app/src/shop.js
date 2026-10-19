@@ -109,8 +109,11 @@ function fulfil(orderId) {
   if (!o) return null;
   // An eSIM is sold on the number the customer picked, which the order kept: it goes back on the list of numbers
   // shown, which a sale is checked against (payment may have taken longer than that list lasts).
-  const ref = o.esim ? ql.parseRef(q('SELECT art_card_id FROM packages WHERE id = ?').get(o.package_id)?.art_card_id) : null;
-  if (ref) require('./routes/quickline').remember(ref.packageId, true, [{ id: o.number_id, phone: o.number, sim: o.sim, qr: o.esim_qr }]);
+  const art = o.esim ? q('SELECT art_card_id FROM packages WHERE id = ?').get(o.package_id)?.art_card_id || '' : '';
+  const qlRef = /^qln:/.test(art) ? ql.parseRef(art) : null;
+  const lyRef = /^lyn:/.test(art) ? require('./layan').parseRef(art) : null;
+  if (qlRef) require('./routes/quickline').remember(qlRef.packageId, true, [{ id: o.number_id, phone: o.number, sim: o.sim, qr: o.esim_qr }]);
+  if (lyRef) require('./routes/layan').rememberEsim(lyRef.packageId, [o.number]);
   try {
     const r = tx(() => {
       const agent = shopAgent();

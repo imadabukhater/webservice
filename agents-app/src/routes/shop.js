@@ -17,14 +17,19 @@ const heldNumbers = () => q(`SELECT number, number_id FROM shop_orders WHERE esi
   OR status IN ('verifying','review') OR (status = 'paid' AND line_id IS NULL))`).all(now() - RESERVE_MS);
 // A package sold as an eSIM: a new line whose number (with its eSIM and QR code) comes from the supplier's free
 // eSIM numbers, activated automatically.
-const isEsimRef = (ref) => /^qln:/.test(String(ref || ''));
+// QuickLine (its eSIM numbers come with their QR code) and Layan (it gives the eSIM's QR code when activating).
+const isEsimRef = (ref) => /^(qln|lyn):/.test(String(ref || ''));
+const ly = require('../layan');
 function esimPackage(id) {
   const p = q(`SELECT p.*, c.name AS company_name FROM packages p JOIN companies c ON c.id = p.company_id
                WHERE p.id = ? AND p.active = 1 AND p.shop_price > 0`).get(Number(id));
-  const ref = p && isEsimRef(p.art_card_id) ? ql.parseRef(p.art_card_id) : null;
+  const art = p?.art_card_id || '';
+  const ref = /^qln:/.test(art) ? ql.parseRef(art) : /^lyn:/.test(art) ? ly.parseRef(art) : null;
   if (!ref) fail(404, 'الباقة غير متوفرة');
-  return { p, ref };
+  return { p, ref, layan: /^lyn:/.test(art) };
 }
+// Layan's numbers have no id of their own: the number is the id.
+const phoneId = (phone) => Number(String(phone).replace(/\D/g, ''));
 
 // ---------- per-address throttle ----------
 const hits = new Map();
@@ -111,7 +116,8 @@ route('GET', '/api/shop', null, () => {
 route('GET', '/api/shop/numbers', null, async ({ query, ip }) => {
   const s = enabled();
   throttle(ip, 'numbers', 120);
-  const { ref } = esimPackage(query.packageId);
+  const { ref, layan } = esimPackage(query.packageId);
+  if (layan) return layanNumbers(s, ref, query);
   if (!s.qlConfigured) fail(503, 'لا توجد أرقام متاحة الآن');
   const held = heldNumbers();
   const exclude = [...String(query.exclude || '').split(',').map(Number).filter(Boolean).slice(0, 300), ...held.map((h) => h.number_id).filter(Boolean)];
@@ -148,16 +154,36 @@ route('POST', '/api/shop/orders', null, ({ body, ip }) => {
   return orderView(byCode(code));
 });
 
+// Layan's free eSIM numbers. It lists them all at once, so "more numbers" (exclude) leaves out the ones shown.
+async function layanNumbers(s, ref, query) {
+  if (!s.lyConfigured) fail(503, 'لا توجد أرقام متاحة الآن');
+  let list;
+  try {
+    list = await ly.esimNumbers(require('../db').lyCredentials(), ref.packageId);
+  } catch (e) {
+    if (!(e instanceof ly.LayanError)) throw e;
+    console.error('shop numbers', e.message);
+    fail(502, 'تعذّر جلب الأرقام الآن. حاول بعد قليل.');
+  }
+  require('./layan').rememberEsim(ref.packageId, list);
+  const taken = new Set(heldNumbers().map((h) => h.number));
+  const shown = new Set(String(query.exclude || '').split(',').map(Number).filter(Boolean));
+  return list.filter((phone) => !taken.has(phone) && !shown.has(phoneId(phone))).slice(0, 12).map((phone) => ({ id: phoneId(phone), phone }));
+}
+
 // An eSIM on one of the free numbers just shown. The number is held for this order (other customers no longer see it)
 // and is checked again when it is sold; its eSIM and QR code are kept with the order.
 function esimOrder(body, ip) {
-  const { p, ref } = esimPackage(body.packageId);
+  const { p, ref, layan } = esimPackage(body.packageId);
   const customerName = str(body.customerName, 80);
   if (customerName.length < 2) fail(400, 'اكتب اسمك — مطلوب لتسجيل الخط');
   const email = str(body.email, 120).toLowerCase();
   if (email && !validAddress(email)) fail(400, 'البريد الإلكتروني غير صحيح');
   const numberId = Number(body.numberId) || 0;
-  const picked = require('./quickline').servedNumber(ref.packageId, true, numberId);
+  // Layan gives the eSIM (and its QR code) only when activating: nothing to keep but the number.
+  const picked = layan
+    ? (() => { const v = require('./layan').servedEsim(ref.packageId, `0${numberId}`); return v && { phone: v.phone, sim: '', qr: '' }; })()
+    : require('./quickline').servedNumber(ref.packageId, true, numberId);
   if (!picked) fail(400, 'اختر رقماً من القائمة. إن مرّ وقت طويل، حدّث قائمة الأرقام.');
   if (heldNumbers().some((h) => h.number === picked.phone || h.number_id === numberId)) fail(409, 'هذا الرقم محجوز لزبون آخر الآن. اختر رقماً آخر.');
   if (q("SELECT 1 FROM lines WHERE number = ? AND status != 'disconnected'").get(picked.phone)) fail(409, 'هذا الرقم لم يعد متاحاً. اختر رقماً آخر.');

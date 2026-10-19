@@ -205,6 +205,45 @@ async function extend(creds, { number, days, saleId }) {
   await api(creds, 'POST', 'Deals/Extend', { Number: number, Duration: saleId ? null : days, SaleId: saleId || null, UserPaid: false });
 }
 
+// ---------- a new eSIM line (as Layan's "join a package" page does it) ----------
+// 1. Numbers/GetAvailableNumbersForPackage/<package>/true — the free numbers that come as an eSIM;
+// 2. Packages/GetEmptySim/<package>/<number> — the eSIM for that number: { sim, url (its QR code), price };
+// 3. Deals/NewLine — activates it. 200: done (the QR code is the one from step 2). 202 with asyncActionId: the
+//    company (Partner) makes the eSIM later, followed with Deals/PartnerAsyncActionStatus/<id>; 202 without it
+//    (019): its own esimLink.
+async function esimNumbers(creds, packageId) {
+  const { data } = await api(creds, 'POST', `Numbers/GetAvailableNumbersForPackage/${packageId}/true`, {});
+  return (Array.isArray(data) ? data : []).map((n) => localNumber(n.phoneNumber)).filter(Boolean);
+}
+async function emptyEsim(creds, packageId, number) {
+  const { data } = await api(creds, 'GET', `Packages/GetEmptySim/${packageId}/${number}`);
+  return { sim: String(data?.sim || '').replace(/\D/g, ''), qrUrl: data?.url || '', price: money(data?.price) };
+}
+async function newEsimLine(creds, { packageId, number, sim, customerName, price, days, saleId }) {
+  const r = await api(creds, 'POST', 'Deals/NewLine', {
+    Price: Number(price) || 0, Number: number, packageId, SimNumber: sim, isEsim: true,
+    Customer: { Id: null, IdentityNum: '', Fullname: customerName, Address: '', Phone: '', Email: '' },
+    Duration: saleId ? null : days, AutomaticRenew: false, isPaid: true, SaleId: saleId || null, recommendedPhoneNumber: '',
+  });
+  const d = r.data && typeof r.data === 'object' ? r.data : {};
+  return { status: r.status, asyncActionId: d.asyncActionId || null, esimLink: d.esimLink || '', text: String(d.message || r.text || '').slice(0, 200) };
+}
+async function esimStatus(creds, asyncActionId) {
+  const { data } = await api(creds, 'GET', `Deals/PartnerAsyncActionStatus/${asyncActionId}`);
+  return { status: data?.status || '', esimLink: data?.esimLink || '', esimUrl: data?.esimUrl || '' };
+}
+// A QR code image Layan links to, kept as a data URL (so it stays with the line and can be e-mailed).
+async function imageDataUrl(url) {
+  if (!url) return '';
+  if (/^data:image\//.test(url)) return url;
+  const res = await fetch(new URL(url, BASE), { signal: AbortSignal.timeout(TIMEOUT_MS) });
+  const type = (res.headers.get('content-type') || '').split(';')[0].trim();
+  if (!res.ok || !/^image\//.test(type)) throw new LayanError(`ليان: رمز QR غير متاح (${res.status})`);
+  const buf = Buffer.from(await res.arrayBuffer());
+  if (buf.length > 500 * 1024) throw new LayanError('ليان: صورة رمز QR كبيرة جداً');
+  return `data:${type};base64,${buf.toString('base64')}`;
+}
+
 const parseRef = (ref) => {
   const m = /^(lyn?):([0-9a-f-]{36}):(\d+)(?::([0-9a-f-]{36}))?$/i.exec(String(ref));
   return m ? { system: m[1], packageId: m[2], days: Number(m[3]), saleId: m[4] || null } : null;
@@ -218,4 +257,5 @@ function localNumber(n) {
 
 module.exports = {
   LayanError, normalizeSecret, totp, login, api, balance, durations, catalog, numbers, quote, activate, extend, parseRef, localNumber,
+  esimNumbers, emptyEsim, newEsimLine, esimStatus, imageDataUrl,
 };
