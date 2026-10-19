@@ -391,6 +391,11 @@ if (!db.prepare("SELECT 1 FROM settings WHERE key = 'migr_ql_gone'").get()) {
   db.prepare("UPDATE packages SET gone_at = ? WHERE active = 0 AND gone_at IS NULL AND art_card_id LIKE 'ql%'").run(Date.now());
   db.prepare("INSERT INTO settings (key, value) VALUES ('migr_ql_gone', '1')").run();
 }
+// Security hardening: disable unverified instant self-activation by default so orders require payment verification unless explicitly enabled by admin.
+if (!db.prepare("SELECT 1 FROM settings WHERE key = 'migr_disable_instant_default'").get()) {
+  db.prepare("INSERT INTO settings (key, value) VALUES ('shop_instant', '0') ON CONFLICT(key) DO UPDATE SET value = '0'").run();
+  db.prepare("INSERT INTO settings (key, value) VALUES ('migr_disable_instant_default', '1')").run();
+}
 
 const q = (sql) => db.prepare(sql);
 
@@ -410,7 +415,7 @@ function tx(fn) {
 const DEFAULT_SETTINGS = {
   app_name: 'بوابة الوكلاء', warn_days: '7', low_balance: '50', esim_fee: '7', support_whatsapp: '972567725080',
   art_user: '', art_pass: '', art_markup: '15',
-  shop_enabled: '0', shop_instant: '1', shop_title: '', shop_subtitle: '',
+  shop_enabled: '0', shop_instant: '0', shop_title: '', shop_subtitle: '',
   jawwalpay_number: '', jawwalpay_name: '', gmail_user: '', gmail_pass: '', mail_from: 'jawwalpay.ps', shop_agent_id: '',
   ql_user: '', ql_pass: '', ql_markup: '15',
   ly_user: '', ly_pass: '', ly_secret: '', ly_markup: '15',
@@ -473,7 +478,7 @@ function getSettings() {
     backupError: out.backup_error || '',
     // Customer shop paid by JawwalPay or instant self-service; transfers are confirmed from the notification emails in Gmail.
     shopEnabled: out.shop_enabled === '1',
-    shopInstant: out.shop_instant !== '0',
+    shopInstant: out.shop_instant === '1',
     shopTitle: out.shop_title || '',
     shopSubtitle: out.shop_subtitle || '',
     jawwalpayNumber: out.jawwalpay_number,

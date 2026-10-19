@@ -72,7 +72,7 @@ function openSettings() {
     subtitle: `رابط المتجر: ${location.origin}/shop`,
     body: `
       <label class="switch-row"><span class="grow"><b>المتجر مفتوح للزبائن</b><small>الباقات التي لها «سعر الزبون» في الشركات والرزم تظهر فيه</small></span><input class="switch" type="checkbox" name="shopEnabled" ${s.shopEnabled ? 'checked' : ''}></label>
-      <label class="switch-row"><span class="grow"><b>تفعيل مباشر وإظهار كود QR للـ eSIM فوراً</b><small>إتاحة زر التفعيل المباشر وإظهار كود QR للزبون مباشرة بعد الطلب</small></span><input class="switch" type="checkbox" name="shopInstant" ${s.shopInstant !== false ? 'checked' : ''}></label>
+      <label class="switch-row"><span class="grow"><b>وضع التفعيل التجريبي بدون انتظار الدفع</b><small>إتاحة تفعيل الطلبات وإظهار كود QR مباشرة عبر واجهة البرمجة دون انتظار التحقق من الدفع (أبقِه مغلقاً في الوضع الفعلي)</small></span><input class="switch" type="checkbox" name="shopInstant" ${s.shopInstant ? 'checked' : ''}></label>
       <div class="row2"><div class="field"><label for="st-title">عنوان المتجر الترحيبي <span class="opt">(اختياري)</span></label><input class="input" id="st-title" name="shopTitle" value="${esc(s.shopTitle || '')}" placeholder="فعّل خطك أو شريحتك الإلكترونية eSIM فوراً"></div>
         <div class="field"><label for="st-sub">وصف المتجر الفرعي <span class="opt">(اختياري)</span></label><input class="input" id="st-sub" name="shopSubtitle" value="${esc(s.shopSubtitle || '')}" placeholder="أفضل الباقات المحلية والـ eSIM بأسعار شفافة وتفعيل فوري"></div></div>
       <div class="row2"><div class="field"><label for="st-jp">رقم محفظة جوال باي</label><input class="input ltr" id="st-jp" name="jawwalpayNumber" value="${esc(s.jawwalpayNumber)}" inputmode="tel"></div>
@@ -118,7 +118,7 @@ async function openOrder(id) {
   const kv = (k, v) => (v ? `<div>${k}</div><div>${v}</div>` : '');
   sheet({
     title: `طلب ${o.code}`,
-    subtitle: `${o.packageLabel} · ${fmtMoney(o.amount)}`,
+    subtitle: `${esc(o.packageLabel)} · ${fmtMoney(o.amount)}`,
     wide: true,
     body: `
       <div class="kv">${kv('الرقم', phone(o.number))}${kv('الشريحة', o.sim ? `<span class="ltr">${esc(o.sim)}</span>` : '')}${kv('الزبون', esc(o.customerName))}
@@ -227,7 +227,7 @@ export default {
     'open-order': (btn) => openOrder(Number(btn.dataset.id)),
     async 'open-mail'(btn) {
       const m = await api.get(`/api/shop/admin/mails/${btn.dataset.id}`);
-      sheet({ title: m.subject || 'إشعار', subtitle: m.from, body: `<pre class="small" style="white-space:pre-wrap">${esc(m.body)}</pre>`, submit: 'إغلاق', async onSubmit() { return ''; } });
+      sheet({ title: m.subject || 'إشعار', subtitle: esc(m.from), body: `<pre class="small" style="white-space:pre-wrap">${esc(m.body)}</pre>`, submit: 'إغلاق', async onSubmit() { return ''; } });
     },
     retry(btn) {
       const o = byId(V.orders, btn);

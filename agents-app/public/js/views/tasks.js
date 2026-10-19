@@ -106,7 +106,7 @@ async function resolveTask(t) {
         <button type="button" class="btn btn-sm" data-copy-note>${icon('copy')}نسخ</button></div>` : '';
   sheet({
     title: `تنفيذ: ${TASK_TYPE[t.type]}`,
-    subtitle: `${esc(t.agentName)}${t.lineNumber ? ` · ${t.lineNumber}` : ''}`,
+    subtitle: `${esc(t.agentName)}${t.lineNumber ? ` · ${esc(t.lineNumber)}` : ''}`,
     body: `${details}${body}<div class="field"><label for="rs-resp">ملاحظة للوكيل <span class="opt">(اختياري)</span></label><input class="input" id="rs-resp" name="response"></div>`,
     submit: 'تم التنفيذ',
     onMount(form) {

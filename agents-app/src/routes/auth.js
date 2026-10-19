@@ -18,8 +18,16 @@ function createSession(userId) {
   return token;
 }
 
-// Login attempts: in-memory throttle per username + address.
+// Login attempts: in-memory throttle per username + address and per address overall.
 const attempts = new Map();
+function recordAttempt(key, limit) {
+  const a = attempts.get(key) || { n: 0, until: 0 };
+  a.n += 1;
+  if (a.n >= limit) { a.until = now() + 60_000; a.n = 0; }
+  attempts.delete(key);
+  attempts.set(key, a);
+  if (attempts.size > 5000) attempts.delete(attempts.keys().next().value);
+}
 
 route('GET', '/api/public', null, () => {
   const { appName, supportWhatsapp } = getSettings();
@@ -29,13 +37,14 @@ route('GET', '/api/public', null, () => {
 route('POST', '/api/login', null, ({ body, ip }) => {
   const username = str(body.username, 64);
   const key = username.toLowerCase() + '|' + ip;
-  const a = attempts.get(key) || { n: 0, until: 0 };
-  if (a.until > now()) fail(429, 'محاولات كثيرة. حاول بعد دقيقة.');
+  const ipKey = 'ip|' + ip;
+  const a = attempts.get(key);
+  const ipA = attempts.get(ipKey);
+  if ((a && a.until > now()) || (ipA && ipA.until > now())) fail(429, 'محاولات كثيرة. حاول بعد دقيقة.');
   const u = q('SELECT * FROM users WHERE username = ?').get(username);
   if (!u || !verifyPassword(String(body.password || ''), u.password_hash)) {
-    a.n += 1;
-    if (a.n >= 5) { a.until = now() + 60_000; a.n = 0; }
-    attempts.set(key, a);
+    recordAttempt(key, 5);
+    recordAttempt(ipKey, 20);
     fail(401, 'اسم المستخدم أو كلمة المرور غير صحيحة');
   }
   attempts.delete(key);

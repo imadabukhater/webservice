@@ -43,8 +43,9 @@ function throttle(ip, kind, max) {
   const list = (hits.get(key) || []).filter((x) => x > t - 3600_000);
   if (list.length >= max) fail(429, 'طلبات كثيرة من هذا الجهاز. حاول لاحقاً.');
   list.push(t);
+  hits.delete(key);
   hits.set(key, list);
-  if (hits.size > 5000) hits.clear();
+  if (hits.size > 5000) hits.delete(hits.keys().next().value);
 }
 
 const enabled = () => {
@@ -247,7 +248,7 @@ async function esimOrder(body, ip) {
   const esimFee = (hasCompanyFee || body.includeEsimFee) ? round(compFee) : 0;
   const totalAmount = round(pk.p.shop_price + esimFee);
   const esimCode = `LPA:1$rsp.${String(pk.p.company_name || 'esim').toLowerCase().replace(/[^a-z0-9]/g, '') || 'telecom'}.portal$ESIM-${code}-${picked.phone}`;
-  const qrData = picked.qr || (pk.direct || body.instant ? shop.makeEsimQr(esimCode, picked.phone) : '');
+  const qrData = picked.qr || (pk.direct || (body.instant && s.shopInstant) ? shop.makeEsimQr(esimCode, picked.phone) : '');
   const row = q(`INSERT INTO shop_orders (code, package_id, package_label, kind, number, sim, customer_name, contact_phone, amount, esim_fee, esim_code, ip, created_at, updated_at,
        esim, number_id, esim_qr, email) VALUES (?, ?, ?, 'new', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)`)
     .run(code, pk.p.id, D.packageLabel(pk.p), picked.phone, String(picked.sim || '').replace(/\D/g, ''), customerName, contact, totalAmount, esimFee, esimCode, ip, t, t,
@@ -315,7 +316,8 @@ route('POST', '/api/shop/orders/:code/proof', null, async ({ params, body, ip })
   return orderView(byCode(o.code));
 }, { maxBody: 2200 * 1024 });
 
-route('POST', '/api/shop/orders/:code/cancel', null, ({ params }) => {
+route('POST', '/api/shop/orders/:code/cancel', null, ({ params, ip }) => {
+  throttle(ip, 'cancel', 30);
   const o = byCode(params.code);
   if (o.status !== 'awaiting_payment') fail(400, 'لا يمكن إلغاء الطلب بعد إرسال بيانات التحويل. تواصل مع الدعم.');
   q("UPDATE shop_orders SET status = 'cancelled', updated_at = ? WHERE id = ?").run(now(), o.id);

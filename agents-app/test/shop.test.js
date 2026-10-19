@@ -319,7 +319,17 @@ test('custom company eSIM QR fee, direct eSIM instant QR activation, and bulk pa
   assert.equal(sp1.popular, true);
   assert.equal(sp1.esim, true);
 
-  // Order with eSIM adds company's custom esimFee (60 + 25 = 85) and instant endpoint returns QR immediately
+  // When shopInstant is off (default), client-supplied instant:true cannot bypass payment
+  await ok(call(admin, 'PUT', '/api/settings', { shopInstant: false }));
+  const unpaidAttempt = await ok(call(null, 'POST', '/api/shop/orders', {
+    packageId: p1.id, kind: 'new', esim: true, instant: true, number: '0591112222', customerName: 'محاولة', contactPhone: '0591112222',
+  }));
+  assert.equal(unpaidAttempt.status, 'awaiting_payment');
+  assert.equal(unpaidAttempt.esimQr, null);
+  assert.equal((await call(null, 'POST', `/api/shop/orders/${unpaidAttempt.code}/instant`, {})).status, 403);
+
+  // Re-enable shopInstant explicitly and verify instant endpoint works when admin opts in
+  await ok(call(admin, 'PUT', '/api/settings', { shopInstant: true }));
   const ord = await ok(call(null, 'POST', '/api/shop/orders', {
     packageId: p1.id, kind: 'new', esim: true, number: '0591234567', customerName: 'أحمد', contactPhone: '0591234567',
   }));
