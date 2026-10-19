@@ -7,7 +7,7 @@ import { openOfferForm } from './offers.js';
 // list of price changes awaiting the manager. Packages the manager typed by hand belong to no supplier and are shown
 // with art-topup's two tabs, the ones that existed before any supplier.
 // co: the company shown (0 = all); sort: how packages are ordered in a company; open: companies unfolded.
-const V = { tab: 'invoice', q: '', msg: {}, co: 0, sort: 'size', open: new Set() };
+const V = { tab: 'invoice', q: '', msg: {}, co: 0, sort: 'size', open: new Set(), selected: new Set() };
 const TABS = {
   invoice: { label: 'الفواتير', icon: 'sim', color: '', supplier: 'art', kind: 'invoice', note: 'رزم تفعيل خط جديد بشريحة. تظهر للوكيل في «اشتراك فاتورة جديدة».' },
   card: { label: 'كروت الشحن', icon: 'card', color: 'green', supplier: 'art', kind: 'card', note: 'كروت وحزم ورصيد لرقم موجود. تظهر للوكيل في «زبون دفع مسبق» و«تمديد».' },
@@ -16,7 +16,7 @@ const TABS = {
   lycard: { label: 'تمديد ليان', short: 'التمديد', icon: 'refresh', color: 'green', supplier: 'ly', kind: 'card', note: 'تمديد رقم فعّال للوكالة في ليان. يُنفَّذ تلقائياً.' },
   tccard: { label: 'تمديد telecom', short: 'التمديد', icon: 'refresh', color: 'green', supplier: 'tc', kind: 'card', note: 'تمديد مشترك فعّال للوكالة في telecom على رزمته. يُنفَّذ تلقائياً بعد فحص السعر.' },
   tcinvoice: { label: 'خطوط telecom', short: 'الخط الجديد', icon: 'sim', color: '', supplier: 'tc', kind: 'invoice', note: 'تفعيل خط جديد في telecom (شريحة أو تحويل رقم). يصلك كطلب تنفّذه على موقع telecom.' },
-  lyinvoice: { label: 'خطوط ليان', short: 'الخط الجديد', icon: 'sim', color: '', supplier: 'ly', kind: 'invoice', note: 'تفعيل رقم موقوف من أرقام الوكالة في ليان (مع شريحته). يُنفَّذ تلقائياً.' },
+  lyinvoice: { label: 'خطوط ليان', short: 'الخط الجديد', icon: 'sim', color: '', supplier: 'ly', kind: 'invoice', note: 'تفعيل رقم موقوف من أرقام الوكالة في ليان (مع شريحته أو eSIM). يُنفَّذ تلقائياً.' },
 };
 // What the manager sees: art-topup's two systems each in its own tab, and each other supplier's two together in one.
 const VIEWS = {
@@ -28,7 +28,7 @@ const VIEWS = {
   },
   ly: {
     label: 'ليان', icon: 'refresh', systems: ['lycard', 'lyinvoice'],
-    note: 'تمديد أرقام الوكالة الفعّالة في ليان، وتفعيل أرقامها الموقوفة كخطوط جديدة — تُنفَّذ تلقائياً بعد فحص السعر.',
+    note: 'تمديد أرقام الوكالة الفعّالة في ليان، وتفعيل أرقامها الموقوفة أو eSIM كخطوط جديدة — مع إظهار الكود مباشرة بعد التفعيل.',
   },
   tc: {
     label: 'telecom', icon: 'refresh', systems: ['tccard', 'tcinvoice'],
@@ -86,19 +86,24 @@ export function openCompanyForm(c) {
           <label class="btn btn-sm" for="co-logo">${icon('image')}${logo ? 'تغيير الشعار' : 'رفع شعار'}</label><input id="co-logo" type="file" accept="image/*" hidden>
           <button type="button" class="btn btn-sm btn-ghost" id="co-logo-rm" ${logo ? '' : 'hidden'}>${icon('trash')}إزالة الشعار</button></div></div>
       <div class="field"><label for="co-name">اسم الشركة</label><input class="input" id="co-name" name="name" value="${esc(c?.name || '')}" placeholder="مثال: سلكوم" required></div>
-      <div class="field"><label for="co-color">اللون</label><div class="input-group"><input class="input" id="co-color" name="color" type="color" value="${esc(c?.color || '#2563eb')}" style="padding:4px;max-width:90px">
-        <span class="hint">يُستعمل عندما لا يوجد شعار، وفي النقاط الملونة بجانب الأرقام.</span></div></div>
+      <div class="row2">
+        <div class="field"><label for="co-color">اللون</label><div class="input-group"><input class="input" id="co-color" name="color" type="color" value="${esc(c?.color || '#2563eb')}" style="padding:4px;max-width:90px">
+          <span class="hint">للنقاط والشعار الافتراضي</span></div></div>
+        <div class="field"><label for="co-esim-fee">سعر كود QR / eSIM للشركة (₪)</label>
+          <input class="input ltr" id="co-esim-fee" name="esimFee" type="number" min="0" step="0.5" inputmode="decimal" value="${c?.esimFee ?? ''}" placeholder="افتراضي (${S.settings?.esimFee ?? 0} ₪)">
+          <span class="hint">يُخصَّص لكل شركة على حدة. اتركه فارغاً لاستعمال السعر العام.</span></div>
+      </div>
       <div class="field"><label for="co-prefix">بادئات أرقام الشرائح (ICCID)</label><input class="input ltr mono" id="co-prefix" name="prefixes" value="${esc((c?.prefixes || []).join(', '))}" placeholder="8997202">
         <span class="hint">أول 7 أرقام من شرائح هذه الشركة. تتعلّمها المنصّة تلقائياً من أول تفعيل، ويمكنك تعديلها هنا.</span></div>
       <div class="field"><span class="label">طريقة التفعيل</span>
         <div class="switches">
           <label class="switch-row"><span class="tile sm">${icon('tasks')}</span><span class="grow"><b>طلب للمدير</b><small>يُخصم المبلغ ويصلك طلب، تفعّل الخط على موقع الشركة ثم تضغط «تنفيذ». يُسترد المبلغ إن رفضت.</small></span>
             <input type="radio" name="activation" value="manual" ${!['direct', 'auto'].includes(c?.activation) ? 'checked' : ''}></label>
-          <label class="switch-row"><span class="tile sm green">${icon('refresh')}</span><span class="grow"><b>تلقائي عبر المورّد</b><small>شحن الكروت (art-topup) وتمديد الخطوط (QuickLine) يُنفَّذ تلقائياً من حسابك هناك، للرزم المستوردة منه. وتفعيل خطوط QuickLine الجديدة (شريحة، eSIM، تحويل رقم) تلقائي أيضاً. تفعيل فواتير art-topup يبقى طلباً لك.</small></span>
+          <label class="switch-row"><span class="tile sm green">${icon('refresh')}</span><span class="grow"><b>تلقائي عبر المورّد</b><small>شحن الكروت (art-topup) وتمديد الخطوط وتفعيل خطوط ليان وQuickLine (بما فيها eSIM وإظهار رمز QR فوراً) يُنفَّذ تلقائياً.</small></span>
             <input type="radio" name="activation" value="auto" ${c?.activation === 'auto' ? 'checked' : ''}></label>
           <label class="switch-row"><span class="tile sm amber">${icon('bolt')}</span><span class="grow"><b>تفعيل مباشر</b><small>الخط فعّال فوراً. لا يستطيع الوكيل فصله ولا يُسترد المبلغ.</small></span>
             <input type="radio" name="activation" value="direct" ${c?.activation === 'direct' ? 'checked' : ''}></label>
-        </div><span class="hint">eSIM وتحويل الأرقام تصلك دائماً كطلبات.</span></div>`,
+        </div></div>`,
     submit: c ? 'حفظ' : 'إضافة الشركة',
     onMount(form) {
       const prev = () => { form.querySelector('#co-prev').innerHTML = companyLogo({ name: field(form, 'name') || '؟', color: field(form, 'color'), logo }); };
@@ -113,7 +118,10 @@ export function openCompanyForm(c) {
       form.addEventListener('input', prev);
     },
     async onSubmit(form) {
-      const body = { name: field(form, 'name'), color: field(form, 'color'), logo, prefixes: field(form, 'prefixes'), activation: form.elements.activation.value };
+      const body = {
+        name: field(form, 'name'), color: field(form, 'color'), logo, prefixes: field(form, 'prefixes'),
+        activation: form.elements.activation.value, esimFee: field(form, 'esimFee'),
+      };
       await (c ? api.put(`/api/companies/${c.id}`, body) : api.post('/api/companies', body));
       await loadCatalog(true);
       changed();
@@ -140,17 +148,23 @@ export function openPackageForm(p, companyId, kind = 'invoice') {
       <div class="field"><label for="pk-name">اسم الرزمة</label><input class="input" id="pk-name" name="name" value="${esc(p?.name || '')}" placeholder="مثال: 300 جيجا رزمة شهرية" required></div>
       <div class="row2"><div class="field"><label for="pk-gb">حجم الإنترنت (GB)</label><input class="input ltr" id="pk-gb" name="dataGb" type="number" min="0" step="1" inputmode="numeric" value="${p?.dataGb ?? ''}"></div>
         <div class="field"><label for="pk-days">المدة بالأيام <span class="opt">(فارغ = شهرية)</span></label><input class="input ltr" id="pk-days" name="days" type="number" min="1" max="730" step="1" inputmode="numeric" value="${p?.days ?? ''}" placeholder="30، 90…"></div></div>
-      <div class="field"><label for="pk-tag">وسم <span class="opt">(مثل RENTERS)</span></label><input class="input ltr" id="pk-tag" name="tag" value="${esc(p?.tag || '')}"></div>
+      <div class="field"><label for="pk-tag">وسم <span class="opt">(مثل RENTERS / 5G)</span></label><input class="input ltr" id="pk-tag" name="tag" value="${esc(p?.tag || '')}"></div>
       <div class="row2"><div class="field"><label for="pk-min">الدقائق</label><input class="input ltr" id="pk-min" name="minutes" list="unlimited" value="${esc(amountVal(p?.minutes))}" placeholder="5000"></div>
         <div class="field"><label for="pk-sms">الرسائل</label><input class="input ltr" id="pk-sms" name="sms" list="unlimited" value="${esc(amountVal(p?.sms))}" placeholder="5000"></div></div>
       <datalist id="unlimited"><option value="غير محدود"></option></datalist>
       <div class="field"><label for="pk-desc">وصف قصير <span class="opt">(اختياري)</span></label><input class="input" id="pk-desc" name="description" value="${esc(p?.description || '')}"></div>
       <div class="row2"><div class="field"><label for="pk-cost">التكلفة عليك (₪)</label><input class="input ltr" id="pk-cost" name="cost" type="number" min="0" step="0.01" inputmode="decimal" value="${p ? round(p.cost) : ''}"></div>
         <div class="field"><label for="pk-price">سعر الوكيل (₪)</label><input class="input ltr" id="pk-price" name="price" type="number" min="0" step="0.01" inputmode="decimal" value="${p ? round(p.price) : ''}"></div></div>
-      <div class="field"><label for="pk-shop">سعر الزبون في المتجر (₪) <span class="opt">(فارغ = لا تظهر في متجر الزبائن)</span></label>
-        <input class="input ltr" id="pk-shop" name="shopPrice" type="number" min="0" step="0.01" inputmode="decimal" value="${p?.shopPrice ?? ''}"></div>
+      <div class="row2">
+        <div class="field"><label for="pk-shop">سعر الزبون في المتجر (₪)</label>
+          <input class="input ltr" id="pk-shop" name="shopPrice" type="number" min="0" step="0.01" inputmode="decimal" value="${p?.shopPrice ?? ''}" placeholder="فارغ = مخفية عن المتجر"></div>
+        <div class="field"><label for="pk-old">السعر قبل الخصم (₪) <span class="opt">(اختياري)</span></label>
+          <input class="input ltr" id="pk-old" name="oldPrice" type="number" min="0" step="0.01" inputmode="decimal" value="${p?.oldPrice ?? ''}" placeholder="مثال: 120 لإظهار التوفير"></div>
+      </div>
       <div class="hint" id="pk-margin"></div>
-      <label class="switch-row"><span class="grow"><b>ظاهرة للوكلاء</b><small>أوقفها لإخفائها عن الوكلاء</small></span><input class="switch" type="checkbox" name="active" ${!p || p.active ? 'checked' : ''}></label>`,
+      <label class="switch-row"><span class="tile sm cyan">${icon('qr')}</span><span class="grow"><b>تفعيل مباشر eSIM وإظهار الكود فوراً</b><small>إتاحة الرزمة في قسم التفعيل المباشر لـ eSIM مع توليد وإظهار رمز QR فوراً وسعر QR الخاص بالشركة</small></span><input class="switch" type="checkbox" name="esimEnabled" ${p?.esimEnabled || p?.lyEsim ? 'checked' : ''}></label>
+      <label class="switch-row"><span class="tile sm amber">${icon('bolt')}</span><span class="grow"><b>الأكثر مبيعاً / مميزة في المتجر</b><small>إبراز الباقة بشارة «الأكثر طلباً» في متجر الزبائن</small></span><input class="switch" type="checkbox" name="popular" ${p?.popular ? 'checked' : ''}></label>
+      <label class="switch-row"><span class="grow"><b>ظاهرة للوكلاء والزبائن</b><small>أوقفها لإخفائها مؤقتاً</small></span><input class="switch" type="checkbox" name="active" ${!p || p.active ? 'checked' : ''}></label>`,
     submit: p ? 'حفظ' : 'إضافة الرزمة',
     onMount(form) {
       form.querySelectorAll('#pk-kind [data-kind]').forEach((b) => b.addEventListener('click', () => {
@@ -168,8 +182,10 @@ export function openPackageForm(p, companyId, kind = 'invoice') {
     async onSubmit(form) {
       const body = {
         companyId: Number(field(form, 'companyId')), name: field(form, 'name'), dataGb: field(form, 'dataGb'), minutes: field(form, 'minutes'), sms: field(form, 'sms'),
-        tag: field(form, 'tag'), description: field(form, 'description'), cost: field(form, 'cost') || 0, price: field(form, 'price') || 0, shopPrice: field(form, 'shopPrice'), active: form.elements.active.checked,
-        kind: form.elements.kind.value, days: field(form, 'days'),
+        tag: field(form, 'tag'), description: field(form, 'description'), cost: field(form, 'cost') || 0, price: field(form, 'price') || 0,
+        shopPrice: field(form, 'shopPrice'), oldPrice: field(form, 'oldPrice'),
+        popular: form.elements.popular.checked, esimEnabled: form.elements.esimEnabled.checked,
+        active: form.elements.active.checked, kind: form.elements.kind.value, days: field(form, 'days'),
       };
       await (p ? api.put(`/api/packages/${p.id}`, body) : api.post('/api/packages', body));
       await loadCatalog(true);
@@ -470,13 +486,18 @@ function packageCardAdmin(p) {
 // One package as a compact row: what it is, what it costs and earns, and its actions.
 function packageRowAdmin(p) {
   const profit = p.price - p.cost;
+  const checked = V.selected.has(p.id);
   const pills = [
     p.active ? '' : p.gone ? `<span class="pill s-expiring">لم تعد عند ${supplierName(p)}</span>` : '<span class="pill">مخفية</span>',
     p.shopPrice ? `<span class="pill s-active">المتجر ${money(p.shopPrice)}</span>` : '',
+    p.esimEnabled || p.lyEsim ? '<span class="pill plain">eSIM مباشر</span>' : '',
+    p.popular ? '<span class="pill s-expiring">الأكثر طلباً</span>' : '',
     p.artPending ? '<span class="pill s-expiring">سعر جديد</span>' : '',
   ].join('');
   return `<article class="item pk-row ${p.active ? '' : 'inactive'}">
-    <div class="item-top"><div class="grow"><b class="item-title">${esc(p.name)}</b> ${pills}
+    <div class="item-top">
+      <input type="checkbox" class="pk-check" data-action="check-package" data-id="${p.id}" ${checked ? 'checked' : ''} style="width:18px;height:18px;accent-color:var(--brand);cursor:pointer;margin-top:2px" aria-label="تحديد ${esc(p.name)}">
+      <div class="grow"><b class="item-title">${esc(p.name)}</b> ${pills}
       <div class="item-sub">${p.dataGb ? `<span><b>${fmtNum(p.dataGb)}</b> GB</span>` : ''}<span>${p.days ? `${p.days} يوماً` : 'شهرية'}</span>
         <span>التكلفة ${money(p.cost)}</span><span>للوكيل <b>${money(p.price)}</b></span><span class="${profit < 0 ? 'minus' : 'plus'}">ربح ${money(profit)}</span>
         ${p.artCode ? `<span class="mono ltr">${esc(p.artCode)}</span>` : ''}${p.edited ? '<span>معدّلة</span>' : ''}</div></div>
@@ -485,6 +506,28 @@ function packageRowAdmin(p) {
         <button class="icon-btn pk-act" data-action="edit-package" data-id="${p.id}" title="تعديل" aria-label="تعديل">${icon('edit')}</button>
         <button class="icon-btn plain pk-act" data-action="delete-package" data-id="${p.id}" title="حذف" aria-label="حذف">${icon('trash')}</button></div></div>
   </article>`;
+}
+
+function bulkToolbar(mine) {
+  const selCount = [...V.selected].filter((id) => S.catalog.packages.some((p) => p.id === id)).length;
+  const allInViewSelected = mine.length > 0 && mine.every((p) => V.selected.has(p.id));
+  return `<section class="card card-pad" style="display:flex;flex-wrap:wrap;align-items:center;gap:8px;justify-content:space-between;background:var(--surface-2)">
+    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+      <button type="button" class="btn btn-sm ${allInViewSelected ? 'btn-soft' : ''}" data-action="select-all-view">
+        ${icon('check')}${allInViewSelected ? 'إلغاء تحديد المعروض' : `تحديد كل المعروض (${mine.length})`}
+      </button>
+      ${selCount ? `<span class="pill s-active">محدد: ${selCount} رزمة</span>
+        <button type="button" class="btn btn-sm btn-good" data-action="bulk-act" data-bulk="show">${icon('eye')}إظهار المحدد</button>
+        <button type="button" class="btn btn-sm" data-action="bulk-act" data-bulk="hide">${icon('eyeOff')}إخفاء المحدد</button>
+        <button type="button" class="btn btn-sm btn-soft" data-action="bulk-shop">${icon('card')}إظهار في المتجر</button>
+        <button type="button" class="btn btn-sm btn-soft" data-action="bulk-act" data-bulk="esim-enable">${icon('qr')}تفعيل eSIM</button>
+        <button type="button" class="btn btn-sm btn-danger" data-action="bulk-delete">${icon('trash')}حذف المحدد (${selCount})</button>
+        <button type="button" class="btn btn-sm btn-ghost" data-action="clear-selection">مسح التحديد</button>` : '<span class="muted small">حدد رزماً من القائمة لإخفائها أو إظهارها أو حذفها دفعة واحدة</span>'}
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <button type="button" class="btn btn-sm btn-danger" data-action="reset-resync">${icon('refresh')}إلغاء جميع الرزم الحالية وإعادة المزامنة</button>
+    </div>
+  </section>`;
 }
 // The order inside a company: what the supplier dropped last, extensions before new lines, then the chosen order.
 const SORTS = { size: 'الحجم', price: 'السعر', days: 'المدة', name: 'الاسم' };
@@ -528,20 +571,19 @@ export default {
     }).join('')}
       <button data-action="tab" data-tab="companies" aria-pressed="${V.tab === 'companies'}">${icon('building')}الشركات (${companies.length})</button></div>`;
     if (V.tab === 'companies') {
-      return `${tabs}<div class="page-head"><p>الشعار واللون وبادئات الشرائح وطريقة التفعيل لكل شركة.</p><button class="btn btn-primary" data-action="add-company">${icon('plus')}شركة جديدة</button></div>
+      return `${tabs}<div class="page-head"><p>الشعار واللون وسعر رمز QR (eSIM) وبادئات الشرائح وطريقة التفعيل لكل شركة.</p><button class="btn btn-primary" data-action="add-company">${icon('plus')}شركة جديدة</button></div>
         ${companies.length ? `<div class="grid-cards">${companies.map((c) => `<article class="item"><div class="item-top">${companyLogo(c, 'sm')}
-          <div class="grow"><b class="item-title">${esc(c.name)}</b><div class="item-sub"><span>${c.packageCount} رزمة${c.packageCount ? ` (${sourceCounts(c.id)})` : ''}</span><span class="mono ltr">${esc((c.prefixes || []).join(', ') || 'بدون بادئة')}</span></div></div>
+          <div class="grow"><b class="item-title">${esc(c.name)}</b><div class="item-sub"><span>${c.packageCount} رزمة${c.packageCount ? ` (${sourceCounts(c.id)})` : ''}</span><span>سعر QR: <b>${c.esimFee !== null && c.esimFee !== undefined ? fmtMoney(c.esimFee) : `${fmtMoney(S.settings?.esimFee || 0)} (عام)`}</b></span><span class="mono ltr">${esc((c.prefixes || []).join(', ') || 'بدون بادئة')}</span></div></div>
             <span class="pill ${c.activation === 'direct' ? 's-expiring' : c.activation === 'auto' ? 's-active' : 'plain'}">${{ direct: 'تفعيل مباشر', auto: 'تلقائي' }[c.activation] || 'طلب للمدير'}</span></div>
           <div class="item-actions"><button class="btn btn-sm btn-soft" data-action="company-packages" data-id="${c.id}">${icon('box')}الرزم والعروض</button>
-            <button class="btn btn-sm" data-action="edit-company" data-id="${c.id}">${icon('edit')}تعديل</button>
+            <button class="btn btn-sm" data-action="edit-company" data-id="${c.id}">${icon('edit')}تعديل وتحديد سعر QR</button>
             <button class="btn btn-sm btn-ghost" data-action="delete-company" data-id="${c.id}">${icon('trash')}حذف</button></div></article>`).join('')}</div>`
           : empty('building', 'لا توجد شركات', 'أضف أول شركة اتصالات.')}`;
     }
     const vk = viewKey();
     const v = VIEWS[vk];
     const t = v.label ? v : TABS[v.systems[0]];
-    // QuickLine's packages come from its sync only; hand-typed packages go in art-topup's tabs.
-    const canAdd = !isSupplierView(vk);
+    const canAdd = true;
     const term = V.q.trim().toLowerCase();
     const mine = packages.filter((p) => inView(p, v) && (!term || `${p.name} ${p.companyName} ${p.artCode}`.toLowerCase().includes(term)));
     const shown = mine.filter((p) => p.active).length;
@@ -549,6 +591,7 @@ export default {
     // Packages the supplier no longer lists go last.
     return `${tabs}${similarBanner()}${isSupplierView(vk) ? supplierBar(vk) : systemBar(v.systems[0])}<div class="page-head"><p><b>${t.label}:</b> ${t.note} ظاهرة للوكلاء ${shown} من ${mine.length}.</p>
         ${canAdd ? `<button class="btn btn-primary" data-action="add-package">${icon('plus')}رزمة جديدة</button>` : ''}</div>
+      ${bulkToolbar(mine)}
       <div class="search-box">${icon('search', 'i lead')}<input class="input" id="pkg-q" type="search" placeholder="ابحث باسم الرزمة أو الشركة أو رمز المورّد…" value="${esc(V.q)}" aria-label="بحث في الرزم"></div>
       ${(() => {
         // The companies that have packages here, as chips; one chosen shows only it.
@@ -588,6 +631,104 @@ export default {
       });
     },
     'add-package': (btn) => openPackageForm(null, Number(btn.dataset.company) || undefined, TABS[VIEWS[viewKey()].systems[0]].kind),
+    'check-package'(btn, e, ctx) {
+      const id = Number(btn.dataset.id);
+      if (btn.checked) V.selected.add(id); else V.selected.delete(id);
+      ctx.rerender();
+    },
+    'select-all-view'(btn, e, ctx) {
+      const vk = viewKey();
+      const v = VIEWS[vk];
+      const term = V.q.trim().toLowerCase();
+      const mine = S.catalog.packages.filter((p) => inView(p, v) && (!V.co || p.companyId === V.co) && (!term || `${p.name} ${p.companyName} ${p.artCode}`.toLowerCase().includes(term)));
+      const allSel = mine.length > 0 && mine.every((p) => V.selected.has(p.id));
+      for (const p of mine) {
+        if (allSel) V.selected.delete(p.id);
+        else V.selected.add(p.id);
+      }
+      ctx.rerender();
+    },
+    'clear-selection'(btn, e, ctx) {
+      V.selected.clear();
+      ctx.rerender();
+    },
+    async 'bulk-act'(btn, e, ctx) {
+      const ids = [...V.selected];
+      if (!ids.length) return;
+      btn.disabled = true;
+      try {
+        const action = btn.dataset.bulk;
+        const r = await api.post('/api/packages/bulk', { ids, action });
+        toast(`تم تحديث ${r.affected} رزمة`);
+        await loadCatalog(true);
+        ctx.rerender();
+      } finally { btn.disabled = false; }
+    },
+    'bulk-shop'(btn, e, ctx) {
+      const ids = [...V.selected];
+      if (!ids.length) return;
+      sheet({
+        title: `إظهار ${ids.length} رزمة في متجر الزبائن`,
+        subtitle: 'يمكنك تحديد سعر موحّد للمتجر أو تركه ليُحسب تلقائياً (+15% فوق سعر الوكيل)',
+        body: `<div class="field"><label for="bs-price">سعر الزبون في المتجر (₪) <span class="opt">(اختياري)</span></label>
+          <input class="input ltr" id="bs-price" name="shopPrice" type="number" min="0" step="0.5" placeholder="اتركه فارغاً للحساب التلقائي"></div>`,
+        submit: 'تطبيق وإظهار في المتجر',
+        async onSubmit(form) {
+          const shopPrice = field(form, 'shopPrice');
+          const r = await api.post('/api/packages/bulk', { ids, action: 'shop-show', shopPrice: shopPrice || undefined });
+          await loadCatalog(true);
+          ctx.rerender();
+          return `تم إظهار ${r.affected} رزمة في المتجر`;
+        },
+      });
+    },
+    'bulk-delete'(btn, e, ctx) {
+      const ids = [...V.selected];
+      if (!ids.length) return;
+      sheet({
+        title: `حذف ${ids.length} رزمة محددة`,
+        body: `<p>هل أنت متأكد من حذف <b>${ids.length}</b> رزمة نهائياً؟ يمكنك إعادة المزامنة لاحقاً لجلب الرزم الجديدة.</p>`,
+        submit: `حذف ${ids.length} رزمة`,
+        danger: true,
+        async onSubmit() {
+          const r = await api.post('/api/packages/bulk', { ids, action: 'delete' });
+          V.selected.clear();
+          await loadCatalog(true);
+          ctx.rerender();
+          return `تم حذف ${r.affected} رزمة`;
+        },
+      });
+    },
+    'reset-resync'(btn, e, ctx) {
+      const totalAll = S.catalog.packages.length;
+      sheet({
+        title: 'إلغاء جميع الرزم الحالية وإعادة المزامنة',
+        subtitle: 'حذف كافة الباقات الحالية وإعادة جلب أحدث الباقات والأسعار من المورّدين',
+        body: `<div class="msg warn">${icon('alert')}<span>سيتم حذف جميع الرزم الحالية (${totalAll} رزمة) وإعادة المزامنة تلقائياً مع المورّدين المفعّلين لظهور الرزم الجديدة وتحديث الأسعار حسب نسبة ربحك.</span></div>
+          <label class="switch-row"><span class="grow"><b>إعادة المزامنة تلقائياً بعد الحذف</b><small>يجلب أحدث الرزم والأسعار فوراً من المورّدين المتصلين</small></span><input class="switch" type="checkbox" name="doSync" checked></label>`,
+        submit: 'حذف الكل وإعادة المزامنة الآن',
+        danger: true,
+        async onSubmit(form) {
+          const doSync = form.elements.doSync.checked;
+          const delRes = await api.post('/api/packages/bulk', { all: true, action: 'delete' });
+          V.selected.clear();
+          const syncedParts = [];
+          if (doSync) {
+            for (const [, sup] of Object.entries(SUPPLIERS)) {
+              if (!sup.configured()) continue;
+              for (const kind of ['invoice', 'card']) {
+                try {
+                  const r = await api.post(`/api/${sup.api}/sync`, { kind });
+                  if (r.added) syncedParts.push(`${sup.name} (${kind === 'card' ? 'تمديد/كروت' : 'خطوط'}): +${r.added}`);
+                } catch { /* ignore unconfigured kind */ }
+              }
+            }
+          }
+          await refreshAll(ctx);
+          return `تم حذف ${delRes.affected} رزمة${syncedParts.length ? ` · المزامنة: ${syncedParts.join(' ، ')}` : ''}`;
+        },
+      });
+    },
     // Both QuickLine systems, one after the other, reported together.
     // Both systems of a supplier (QuickLine or Layan), one after the other, reported together.
     async 'sync-ql'(btn, e, ctx) {

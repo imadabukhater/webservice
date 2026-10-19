@@ -35,7 +35,11 @@ const unit = () => {
 };
 // The two systems have separate packages: a new subscriber takes an invoice, a card recharge takes a card.
 const sellable = (p) => p.active && priceOf(p) > 0 && (p.kind || 'invoice') === (external() ? 'card' : 'invoice');
-const esimFee = () => (W.esim && !external() ? Number(S.settings.esimFee) || 0 : 0);
+const esimFee = () => {
+  if (!W.esim || external()) return 0;
+  const cFee = company()?.esimFee;
+  return cFee !== null && cFee !== undefined ? Number(cFee) || 0 : Number(S.settings.esimFee) || 0;
+};
 // A package with a fixed duration (days) is sold once.
 const months = () => (pkg()?.days ? 1 : W.months);
 const total = () => round(unit() * months() + esimFee());
@@ -184,16 +188,18 @@ function stepCard() {
 
 function step3() {
   if (external()) return stepCard();
-  const fee = Number(S.settings.esimFee) || 0;
+  const cFee = company()?.esimFee;
+  const fee = cFee !== null && cFee !== undefined ? Number(cFee) || 0 : Number(S.settings.esimFee) || 0;
+  const canEsimOnOwnSim = !!(pkg()?.lyEsim || pkg()?.esimEnabled);
   return `<section class="card card-pad" style="display:grid;gap:18px">
     <h2 class="dot-title">إعدادات الشريحة ورقم الهاتف</h2>
-    ${ownSim() ? `<div class="msg info">${icon('sim')}<span>اختر الرقم من القائمة: شريحته جاهزة معه، ولا حاجة لمسح شريحة.</span></div>` : `<div class="switches">
-      <label class="switch-row"><span class="tile sm cyan">${icon('qr')}</span><span class="grow"><b>eSIM</b><small>بدون شريحة — ${qlSale() ? 'رمز QR يصل تلقائياً' : 'يرسل المدير رمز QR'}${fee ? ` · رسوم التفعيل ${fmtMoney(fee)}` : ''}</small></span>
+    ${ownSim() && !canEsimOnOwnSim ? `<div class="msg info">${icon('sim')}<span>اختر الرقم من القائمة: شريحته جاهزة معه، ولا حاجة لمسح شريحة.</span></div>` : `<div class="switches">
+      <label class="switch-row"><span class="tile sm cyan">${icon('qr')}</span><span class="grow"><b>eSIM — تفعيل شريحة إلكترونية</b><small>بدون شريحة بلاستيكية — يظهر رمز QR فوراً بعد التفعيل${fee ? ` · رسوم كود QR للشركة ${fmtMoney(fee)}` : ' · مجاناً'}</small></span>
         <input class="switch" type="checkbox" id="wz-esim" ${W.esim ? 'checked' : ''}></label>
-      <label class="switch-row"><span class="tile sm amber">${icon('repeat')}</span><span class="grow"><b>تحويل رقم</b><small>الزبون ينقل رقمه من شركة أخرى</small></span>
-        <input class="switch" type="checkbox" id="wz-port" ${W.port ? 'checked' : ''}></label>
+      ${ownSim() ? '' : `<label class="switch-row"><span class="tile sm amber">${icon('repeat')}</span><span class="grow"><b>تحويل رقم</b><small>الزبون ينقل رقمه من شركة أخرى</small></span>
+        <input class="switch" type="checkbox" id="wz-port" ${W.port ? 'checked' : ''}></label>`}
     </div>`}
-    ${(W.esim || W.port) && !qlSale() ? `<div class="msg warn">${icon('clock')}<span>يُرسَل الطلب إلى المدير لتنفيذه، ويبدأ احتساب مدة الرزمة من لحظة التنفيذ. يُسترد المبلغ كاملاً إن رُفض الطلب.</span></div>` : ''}
+    ${(W.esim || W.port) && !qlSale() && !canEsimOnOwnSim ? `<div class="msg warn">${icon('clock')}<span>يُرسَل الطلب إلى المدير لتنفيذه، ويبدأ احتساب مدة الرزمة من لحظة التنفيذ. يُسترد المبلغ كاملاً إن رُفض الطلب.</span></div>` : ''}
     ${W.esim || ownSim() ? '' : `<div id="wz-sim-box">${simFieldHtml({ id: 'wz-sim', label: 'رقم الشريحة — امسحه بالكاميرا أو اكتبه', value: W.sim.iccid })}</div>`}
     ${poolSale() ? `<div class="field"><span class="label">رقم الهاتف — اختر من الأرقام المتاحة${W.esim ? ' (eSIM)' : ''}</span>${poolHtml()}</div>`
       : `<div class="field"><label for="wz-number">${W.port ? 'الرقم المراد تحويله' : 'رقم الهاتف'}</label>
@@ -247,6 +253,8 @@ function resultView() {
     <h2>${pending ? (autoSale() ? (qlSale() ? 'جاري التفعيل تلقائياً' : 'جاري الشحن تلقائياً') : 'أُرسل الطلب إلى المدير') : external() ? 'تم شحن الرقم' : 'تم تفعيل الخط'}</h2>
     ${pending ? `<p class="small muted">${autoSale() ? `يصلك تنبيه عند اكتمال ${qlSale() ? 'التفعيل' : 'الشحن'} خلال دقيقة تقريباً.` : 'ستصلك رسالة عند التنفيذ.'} يُسترد المبلغ كاملاً إن رُفض الطلب.</p>` : ''}
     <p class="muted">${phone(l.number)} · ${esc(l.packageLabel)}${l.expiresAt && !pending ? ` · <span class="nowrap">حتى ${fmtDate(l.expiresAt)}</span>` : ''}</p>
+    ${l.esimQr ? `<div class="shop-qr" style="margin:12px 0"><img src="${esc(l.esimQr)}" alt="رمز QR لـ eSIM"><p class="small muted">امسح رمز الـ QR من كاميرا جهاز الزبون لتثبيت الشريحة الإلكترونية eSIM فوراً</p>
+      <a class="btn btn-primary btn-sm" href="${esc(l.esimQr)}" download="esim-${esc(l.number)}.png">${icon('download')}تنزيل صورة رمز QR</a></div>` : ''}
     <p class="small muted">الرصيد المتاح الآن ${fmtMoney(W.result.available)}</p>
     <div class="btn-row" style="width:100%;max-width:420px">
       <button class="btn" data-action="wz-share">${icon('share')}مشاركة مع الزبون</button>

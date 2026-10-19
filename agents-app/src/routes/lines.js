@@ -9,7 +9,11 @@ const { route, ADMIN, ANY } = require('../router');
 const monthsText = (m) => (m === 1 ? 'شهر' : m === 2 ? 'شهران' : m <= 10 ? `${m} أشهر` : `${m} شهراً`);
 const durationText = (months, days) => (days ? `${days} يوماً` : monthsText(months));
 
-const view = (lineId, user) => D.lineView(D.getLine(lineId, user), user.role);
+const view = (lineId, user) => {
+  const l = D.getLine(lineId, user);
+  const qr = q('SELECT esim_qr FROM lines WHERE id = ?').get(l.id)?.esim_qr || '';
+  return { ...D.lineView(l, user.role), ...(qr ? { esimQr: qr } : {}) };
+};
 
 function listLines(user, query) {
   const args = [];
@@ -74,8 +78,9 @@ function createLine(user, body) {
   // A package with a set duration (e.g. 90 days) is sold once, not per month.
   const days = pkg.days || null;
   if (days) months = 1;
-  // The eSIM activation fee is passed through at cost, so it adds to the price but not to the profit.
-  const esimFee = esim ? getSettings().esimFee : 0;
+  // The eSIM activation fee uses the company's custom eSIM QR fee if configured, or the global esimFee setting.
+  const companyFee = pkg.company_esim_fee === null || pkg.company_esim_fee === undefined ? null : Number(pkg.company_esim_fee);
+  const esimFee = esim ? (companyFee !== null && Number.isFinite(companyFee) ? companyFee : getSettings().esimFee) : 0;
   const total = round(unit * months + esimFee);
   const cost = round(pkg.cost * months + esimFee);
 
@@ -103,7 +108,7 @@ function createLine(user, body) {
   // A Layan new line is one of the dealer's suspended numbers there, which comes with its SIM: the agent picks it from
   // the list shown, and nothing else (no SIM, no porting, no eSIM switch — an eSIM package brings its eSIM).
   // Or, as an eSIM: one of the free numbers Layan offers as a new eSIM, whose eSIM (and QR code) Layan gives when it is
-  // activated — the customer shop sells these.
+  // activated — the customer shop and agents can both sell these.
   const lyRef = kind === 'new' && /^lyn:/.test(pkg.art_card_id || '') ? require('../layan').parseRef(pkg.art_card_id) : null;
   let lyJob = null;
   if (lyRef && esim) {
@@ -154,12 +159,13 @@ function createLine(user, body) {
   const t = now();
   const label = D.packageLabel(pkg);
   const customerName = str(body.customerName, 80);
+  const initialQr = esim ? (qlJob?.qr || (pkg.esim_enabled && !viaQl ? require('../shop').makeEsimQr(`LPA:1$rsp.esim.portal$ESIM-${number}-${t}`, number) : '')) : '';
   const lineId = Number(q(`INSERT INTO lines (number, sim, company_id, package_id, package_label, agent_id, kind, esim, port, direct, months, days, price, cost,
-                                              offer_id, status, customer_name, customer_price, note, activated_at, expires_at, updated_at)
-                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+                                              offer_id, status, customer_name, customer_price, note, activated_at, expires_at, updated_at, esim_qr)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
     .run(number, sim.iccid, pkg.company_id, pkg.id, label, agent.id, kind, esim ? 1 : 0, port ? 1 : 0, direct ? 1 : 0, months, days, total, cost,
       offer?.id ?? null, pending ? 'pending' : 'active', customerName, customerPrice, str(body.note, 300),
-      t, pending ? null : periodEnd(t, months, days), t).lastInsertRowid);
+      t, pending ? null : periodEnd(t, months, days), t, initialQr).lastInsertRowid);
   D.markSimUsed(sim.stockId, lineId);
   if (sim.iccid) D.learnPrefix(pkg.company_id, sim.iccid);
 

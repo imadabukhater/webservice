@@ -378,6 +378,13 @@ if (!/tcinvoice/.test(tableSql('agent_markups') || '')) {
 // gone_at: when a sync hid the package because its supplier no longer listed it. Such a package comes back by itself
 // when the supplier lists it again; a package the manager hid (gone_at NULL) stays hidden.
 ensureColumn('packages', 'gone_at', 'gone_at INTEGER');
+// Per-company eSIM QR fee (since QR code fee differs from one telecom company to another), package marketing/eSIM flags, and shop order QR code details.
+ensureColumn('companies', 'esim_fee', 'esim_fee REAL');
+ensureColumn('packages', 'popular', 'popular INTEGER NOT NULL DEFAULT 0');
+ensureColumn('packages', 'old_price', 'old_price REAL');
+ensureColumn('packages', 'esim_enabled', 'esim_enabled INTEGER NOT NULL DEFAULT 0');
+ensureColumn('shop_orders', 'esim_fee', 'esim_fee REAL NOT NULL DEFAULT 0');
+ensureColumn('shop_orders', 'esim_code', "esim_code TEXT NOT NULL DEFAULT ''");
 // Before gone_at, a sync that briefly got an incomplete list from QuickLine hid packages for good. The manager hid
 // none of them by hand, so they are marked as the sync's, once, and the next sync brings back those QuickLine lists.
 if (!db.prepare("SELECT 1 FROM settings WHERE key = 'migr_ql_gone'").get()) {
@@ -403,7 +410,8 @@ function tx(fn) {
 const DEFAULT_SETTINGS = {
   app_name: 'بوابة الوكلاء', warn_days: '7', low_balance: '50', esim_fee: '7', support_whatsapp: '972567725080',
   art_user: '', art_pass: '', art_markup: '15',
-  shop_enabled: '0', jawwalpay_number: '', jawwalpay_name: '', gmail_user: '', gmail_pass: '', mail_from: 'jawwalpay.ps', shop_agent_id: '',
+  shop_enabled: '0', shop_instant: '1', shop_title: '', shop_subtitle: '',
+  jawwalpay_number: '', jawwalpay_name: '', gmail_user: '', gmail_pass: '', mail_from: 'jawwalpay.ps', shop_agent_id: '',
   ql_user: '', ql_pass: '', ql_markup: '15',
   ly_user: '', ly_pass: '', ly_secret: '', ly_markup: '15',
   tc_user: '', tc_pass: '', tc_mail_user: '', tc_mail_pass: '', tc_markup: '15', tc_reg_address: '', tc_reg_city: '', tc_reg_zip: '',
@@ -463,8 +471,11 @@ function getSettings() {
     backupLastName: out.backup_last_name || '',
     backupLastBytes: Number(out.backup_last_bytes) || null,
     backupError: out.backup_error || '',
-    // Customer shop paid by JawwalPay; transfers are confirmed from the notification emails in Gmail.
+    // Customer shop paid by JawwalPay or instant self-service; transfers are confirmed from the notification emails in Gmail.
     shopEnabled: out.shop_enabled === '1',
+    shopInstant: out.shop_instant !== '0',
+    shopTitle: out.shop_title || '',
+    shopSubtitle: out.shop_subtitle || '',
     jawwalpayNumber: out.jawwalpay_number,
     jawwalpayName: out.jawwalpay_name,
     gmailUser: out.gmail_user,

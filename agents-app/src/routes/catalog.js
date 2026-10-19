@@ -6,6 +6,7 @@ const { route, ADMIN, ANY } = require('../router');
 
 const companyView = (c, admin) => ({
   id: c.id, name: c.name, sort: c.sort, color: c.color, logo: c.logo, prefixes: prefixesOf(c), activation: c.activation || 'manual',
+  esimFee: c.esim_fee === null || c.esim_fee === undefined ? null : round(c.esim_fee),
   ...(admin ? { packageCount: c.package_count ?? 0 } : {}),
 });
 
@@ -26,8 +27,12 @@ const packageAttrs = (p, admin = false) => {
   return {
     dataGb: p.data_gb, minutes: p.minutes, sms: p.sms, tag: p.tag, description: p.description,
     kind: p.kind === 'card' ? 'card' : 'invoice', days: p.days ?? null,
-    // ownSim: the number comes with its SIM (a Layan new line), so no SIM is asked for.
+    popular: !!p.popular,
+    oldPrice: p.old_price ? round(p.old_price) : null,
+    esimEnabled: !!p.esim_enabled,
+    // ownSim: the number comes with its SIM (a Layan new line), though Layan packages also support eSIM activation (lyEsim).
     auto: !!ref, pool: /^(qln|lyn):/.test(ref), waits: /^(qln?|lyn?|tcn?):/.test(ref), ownSim: /^lyn:/.test(ref),
+    lyEsim: /^lyn:/.test(ref) || !!p.esim_enabled,
     ...(admin ? { art: !!ref, ql: /^qln:/.test(ref), ...require('../quickline').supplierOfRef(ref) } : {}),
   };
 };
@@ -109,15 +114,18 @@ function companyFields(body, existing = {}) {
   const prefixes = String(rawPrefixes).split(/[\s,]+/).map((p) => p.replace(/\D/g, '')).filter((p) => p.length >= 4).slice(0, 20).join(',');
   const wanted = body.activation ?? existing.activation;
   const activation = ['direct', 'auto'].includes(wanted) ? wanted : 'manual';
-  return { name, color, logo, prefixes, activation };
+  const feeRaw = body.esimFee === undefined ? existing.esim_fee : body.esimFee;
+  const esimFee = isBlank(feeRaw) ? null : num(feeRaw, 'رسوم رمز QR للـ eSIM');
+  if (esimFee !== null && esimFee < 0) fail(400, 'رسوم eSIM لا تكون سالبة');
+  return { name, color, logo, prefixes, activation, esimFee };
 }
 
 route('POST', '/api/companies', ADMIN, ({ body }) => {
   const f = companyFields(body);
   if (q('SELECT 1 FROM companies WHERE name = ?').get(f.name)) fail(409, 'الشركة موجودة');
   const sort = q('SELECT COALESCE(MAX(sort), 0) + 1 AS s FROM companies').get().s;
-  return { id: Number(q('INSERT INTO companies (name, sort, color, logo, iccid_prefixes, activation) VALUES (?, ?, ?, ?, ?, ?)')
-    .run(f.name, sort, f.color, f.logo, f.prefixes, f.activation).lastInsertRowid) };
+  return { id: Number(q('INSERT INTO companies (name, sort, color, logo, iccid_prefixes, activation, esim_fee) VALUES (?, ?, ?, ?, ?, ?, ?)')
+    .run(f.name, sort, f.color, f.logo, f.prefixes, f.activation, f.esimFee).lastInsertRowid) };
 }, { maxBody: 600 * 1024 });
 
 route('PUT', '/api/companies/:id', ADMIN, ({ params, body }) => {
@@ -125,7 +133,8 @@ route('PUT', '/api/companies/:id', ADMIN, ({ params, body }) => {
   if (!c) fail(404, 'الشركة غير موجودة');
   const f = companyFields(body, c);
   if (q('SELECT 1 FROM companies WHERE name = ? AND id != ?').get(f.name, c.id)) fail(409, 'الشركة موجودة');
-  q('UPDATE companies SET name = ?, color = ?, logo = ?, iccid_prefixes = ?, activation = ? WHERE id = ?').run(f.name, f.color, f.logo, f.prefixes, f.activation, c.id);
+  q('UPDATE companies SET name = ?, color = ?, logo = ?, iccid_prefixes = ?, activation = ?, esim_fee = ? WHERE id = ?')
+    .run(f.name, f.color, f.logo, f.prefixes, f.activation, f.esimFee, c.id);
   return { ok: true };
 }, { maxBody: 600 * 1024 });
 
@@ -153,8 +162,14 @@ function packageFields(body, existing = {}) {
   const shopRaw = pick('shopPrice', 'shop_price');
   const shopPrice = isBlank(shopRaw) ? null : num(shopRaw, 'سعر الزبون');
   if (shopPrice !== null && shopPrice < 0) fail(400, 'الأسعار لا تكون سالبة');
+  const oldRaw = pick('oldPrice', 'old_price');
+  const oldPrice = isBlank(oldRaw) ? null : num(oldRaw, 'السعر قبل الخصم');
+  if (oldPrice !== null && oldPrice < 0) fail(400, 'الأسعار لا تكون سالبة');
   return {
     companyId, name, cost, price, dataGb, kind, days, shopPrice: shopPrice || null,
+    oldPrice: oldPrice || null,
+    popular: body.popular === undefined ? (existing.popular ?? 0) : body.popular ? 1 : 0,
+    esimEnabled: body.esimEnabled === undefined ? (existing.esim_enabled ?? 0) : body.esimEnabled ? 1 : 0,
     minutes: body.minutes === undefined ? existing.minutes ?? null : amount(body.minutes, 'الدقائق'),
     sms: body.sms === undefined ? existing.sms ?? null : amount(body.sms, 'الرسائل'),
     tag: str(pick('tag') ?? '', 30),
@@ -166,9 +181,9 @@ function packageFields(body, existing = {}) {
 route('POST', '/api/packages', ADMIN, ({ body }) => {
   const f = packageFields(body);
   const sort = q('SELECT COALESCE(MAX(sort), 0) + 1 AS s FROM packages WHERE company_id = ?').get(f.companyId).s;
-  return { id: Number(q(`INSERT INTO packages (company_id, name, cost, price, active, sort, data_gb, minutes, sms, tag, description, kind, days, edited, shop_price)
-                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`)
-    .run(f.companyId, f.name, f.cost, f.price, f.active, sort, f.dataGb, f.minutes, f.sms, f.tag, f.description, f.kind, f.days, f.shopPrice).lastInsertRowid) };
+  return { id: Number(q(`INSERT INTO packages (company_id, name, cost, price, active, sort, data_gb, minutes, sms, tag, description, kind, days, edited, shop_price, old_price, popular, esim_enabled)
+                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)`)
+    .run(f.companyId, f.name, f.cost, f.price, f.active, sort, f.dataGb, f.minutes, f.sms, f.tag, f.description, f.kind, f.days, f.shopPrice, f.oldPrice, f.popular, f.esimEnabled).lastInsertRowid) };
 });
 
 // Changing what agents see or pay marks the package as edited, so an art-topup sync keeps the manager's version.
@@ -179,8 +194,8 @@ route('PUT', '/api/packages/:id', ADMIN, ({ params, body }) => {
   const f = packageFields(body, p);
   const edited = p.edited || ['name', 'price', 'dataGb', 'description', 'days', 'minutes', 'sms', 'kind'].some((k) => body[k] !== undefined);
   q(`UPDATE packages SET company_id = ?, name = ?, cost = ?, price = ?, active = ?, data_gb = ?, minutes = ?, sms = ?, tag = ?, description = ?,
-       kind = ?, days = ?, edited = ?, shop_price = ? WHERE id = ?`)
-    .run(f.companyId, f.name, f.cost, f.price, f.active, f.dataGb, f.minutes, f.sms, f.tag, f.description, f.kind, f.days, edited ? 1 : 0, f.shopPrice, p.id);
+       kind = ?, days = ?, edited = ?, shop_price = ?, old_price = ?, popular = ?, esim_enabled = ? WHERE id = ?`)
+    .run(f.companyId, f.name, f.cost, f.price, f.active, f.dataGb, f.minutes, f.sms, f.tag, f.description, f.kind, f.days, edited ? 1 : 0, f.shopPrice, f.oldPrice, f.popular, f.esimEnabled, p.id);
   // Shown or hidden by the manager: from now on the manager's decision, not something a sync undoes.
   if (body.active !== undefined) q('UPDATE packages SET gone_at = NULL WHERE id = ?').run(p.id);
   return { ok: true };
@@ -190,6 +205,44 @@ route('PUT', '/api/packages/:id', ADMIN, ({ params, body }) => {
 route('DELETE', '/api/packages/:id', ADMIN, ({ params }) => {
   q('DELETE FROM packages WHERE id = ?').run(Number(params.id));
   return { ok: true };
+});
+
+// Bulk package actions: delete all or selected packages, hide, show, publish/unpublish in customer shop, or enable eSIM.
+route('POST', '/api/packages/bulk', ADMIN, ({ body }) => {
+  const action = String(body.action || '');
+  const all = !!body.all;
+  const ids = Array.isArray(body.ids) ? body.ids.map(Number).filter((n) => Number.isInteger(n) && n > 0) : [];
+  if (!all && !ids.length) fail(400, 'حدد رزمة واحدة على الأقل');
+
+  let where = all ? '1=1' : `id IN (${ids.map(() => '?').join(',')})`;
+  const args = all ? [] : [...ids];
+  if (all && body.companyId) { where += ' AND company_id = ?'; args.push(Number(body.companyId)); }
+  if (all && body.kind && ['invoice', 'card'].includes(body.kind)) { where += ' AND kind = ?'; args.push(body.kind); }
+
+  let changed = 0;
+  if (action === 'delete') {
+    changed = q(`DELETE FROM packages WHERE ${where}`).run(...args).changes;
+  } else if (action === 'hide') {
+    changed = q(`UPDATE packages SET active = 0, gone_at = NULL WHERE ${where}`).run(...args).changes;
+  } else if (action === 'show') {
+    changed = q(`UPDATE packages SET active = 1, gone_at = NULL WHERE ${where}`).run(...args).changes;
+  } else if (action === 'shop-show') {
+    changed = q(`UPDATE packages SET active = 1, gone_at = NULL,
+                   shop_price = CASE WHEN shop_price IS NOT NULL AND shop_price > 0 THEN shop_price
+                                     WHEN price > 0 THEN price
+                                     WHEN cost > 0 THEN ROUND(cost * 1.15, 2)
+                                     ELSE 50 END
+                 WHERE ${where}`).run(...args).changes;
+  } else if (action === 'shop-hide') {
+    changed = q(`UPDATE packages SET shop_price = NULL WHERE ${where}`).run(...args).changes;
+  } else if (action === 'esim-enable') {
+    changed = q(`UPDATE packages SET esim_enabled = 1 WHERE ${where}`).run(...args).changes;
+  } else if (action === 'esim-disable') {
+    changed = q(`UPDATE packages SET esim_enabled = 0 WHERE ${where}`).run(...args).changes;
+  } else {
+    fail(400, 'عملية غير معروفة');
+  }
+  return { ok: true, changed, affected: changed };
 });
 
 // ----- offers -----

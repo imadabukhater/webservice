@@ -72,6 +72,9 @@ function openSettings() {
     subtitle: `رابط المتجر: ${location.origin}/shop`,
     body: `
       <label class="switch-row"><span class="grow"><b>المتجر مفتوح للزبائن</b><small>الباقات التي لها «سعر الزبون» في الشركات والرزم تظهر فيه</small></span><input class="switch" type="checkbox" name="shopEnabled" ${s.shopEnabled ? 'checked' : ''}></label>
+      <label class="switch-row"><span class="grow"><b>تفعيل مباشر وإظهار كود QR للـ eSIM فوراً</b><small>إتاحة زر التفعيل المباشر وإظهار كود QR للزبون مباشرة بعد الطلب</small></span><input class="switch" type="checkbox" name="shopInstant" ${s.shopInstant !== false ? 'checked' : ''}></label>
+      <div class="row2"><div class="field"><label for="st-title">عنوان المتجر الترحيبي <span class="opt">(اختياري)</span></label><input class="input" id="st-title" name="shopTitle" value="${esc(s.shopTitle || '')}" placeholder="فعّل خطك أو شريحتك الإلكترونية eSIM فوراً"></div>
+        <div class="field"><label for="st-sub">وصف المتجر الفرعي <span class="opt">(اختياري)</span></label><input class="input" id="st-sub" name="shopSubtitle" value="${esc(s.shopSubtitle || '')}" placeholder="أفضل الباقات المحلية والـ eSIM بأسعار شفافة وتفعيل فوري"></div></div>
       <div class="row2"><div class="field"><label for="st-jp">رقم محفظة جوال باي</label><input class="input ltr" id="st-jp" name="jawwalpayNumber" value="${esc(s.jawwalpayNumber)}" inputmode="tel"></div>
         <div class="field"><label for="st-jpn">اسم صاحب المحفظة</label><input class="input" id="st-jpn" name="jawwalpayName" value="${esc(s.jawwalpayName)}"></div></div>
       <div class="divider"></div>
@@ -96,7 +99,11 @@ function openSettings() {
     },
     async onSubmit(form) {
       V.settings = await api.put('/api/settings', {
-        shopEnabled: form.elements.shopEnabled.checked, jawwalpayNumber: field(form, 'jawwalpayNumber'), jawwalpayName: field(form, 'jawwalpayName'),
+        shopEnabled: form.elements.shopEnabled.checked,
+        shopInstant: form.elements.shopInstant.checked,
+        shopTitle: field(form, 'shopTitle'),
+        shopSubtitle: field(form, 'shopSubtitle'),
+        jawwalpayNumber: field(form, 'jawwalpayNumber'), jawwalpayName: field(form, 'jawwalpayName'),
         gmailUser: field(form, 'gmailUser'), gmailPass: field(form, 'gmailPass'), mailFrom: field(form, 'mailFrom'),
       });
       changed();
@@ -118,7 +125,10 @@ async function openOrder(id) {
         ${kv('رقم التواصل', o.contactPhone && o.contactPhone !== o.number ? phone(o.contactPhone) : '')}${kv('أُنشئ', fmtDateTime(o.createdAt))}${kv('أرسل التحويل', o.proofAt ? fmtDateTime(o.proofAt) : '')}
         ${kv('الرقم المرجعي', o.payReference ? `<span class="ltr">${esc(o.payReference)}</span>` : '')}${kv('رقم المحوِّل', o.payPhone ? phone(o.payPhone) : '')}${kv('اسم المحوِّل', esc(o.payName))}
         ${kv('التحقق', esc(o.verifiedBy))}${kv('البريد', o.email ? `<span class="ltr">${esc(o.email)}</span>` : '')}
-        ${o.esim ? kv('رمز QR', o.qrMailedAt ? `أُرسل بالبريد ${fmtDateTime(o.qrMailedAt)}` : o.email ? 'يُرسل بالبريد بعد التفعيل' : 'يظهر للزبون في صفحة الطلب') : ''}</div>
+        ${o.esim ? kv('رسوم QR', fmtMoney(o.esimFee || 0)) : ''}
+        ${o.esim ? kv('رمز QR', o.qrMailedAt ? `أُرسل بالبريد ${fmtDateTime(o.qrMailedAt)}` : o.email ? 'يُرسل بالبريد بعد التفعيل' : 'يظهر للزبون في صفحة الطلب') : ''}
+        ${o.esimCode ? kv('كود التفعيل اليدوي', `<code class="ltr small">${esc(o.esimCode)}</code>`) : ''}</div>
+      ${o.esimQr ? `<div style="text-align:center;margin:10px 0"><img src="${esc(o.esimQr)}" alt="رمز QR لـ eSIM" style="max-width:220px;border-radius:16px;border:1px solid var(--line);padding:8px;background:#fff"></div>` : ''}
       ${o.receipt ? `<img class="thumb" style="max-height:50vh" src="${esc(o.receipt)}" alt="صورة إشعار التحويل">` : ''}
       ${o.mail ? `<h3>الإشعار المعتمد</h3><pre class="small" style="white-space:pre-wrap">${esc(o.mail.body)}</pre>` : ''}
       ${decidable ? `<h3>تأكيد الدفع</h3>

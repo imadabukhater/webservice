@@ -129,8 +129,19 @@ const SERVED_MS = 2 * 60 * 60_000;
 const served = new Map();
 const packageInfo = (packageId) => JSON.parse(q("SELECT value FROM settings WHERE key = 'ly_packages'").get()?.value || '{}')[packageId] || null;
 
-async function freeNumbers(ref) {
+async function freeNumbers(ref, esim = false) {
   if (!getSettings().lyConfigured) fail(503, 'الأرقام غير متاحة الآن. تواصل مع المدير.');
+  if (esim) {
+    let phones;
+    try {
+      phones = await ly.esimNumbers(lyCredentials(), ref.packageId);
+    } catch (e) {
+      if (e instanceof ly.LayanError) { console.error('layan esim numbers', e.message); fail(502, 'تعذّر جلب الأرقام الآن. حاول بعد قليل.'); }
+      throw e;
+    }
+    rememberEsim(ref.packageId, phones);
+    return phones.map((phone) => ({ id: phone, phone }));
+  }
   const info = packageInfo(ref.packageId);
   if (!info) fail(503, 'الأرقام غير متاحة الآن. تواصل مع المدير.');
   let list;

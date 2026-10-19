@@ -117,6 +117,9 @@ route('PUT', '/api/settings', ADMIN, ({ body }) => {
     setSetting(key, m);
   }
   if (body.shopEnabled !== undefined) setSetting('shop_enabled', body.shopEnabled ? '1' : '0');
+  if (body.shopInstant !== undefined) setSetting('shop_instant', body.shopInstant ? '1' : '0');
+  if (body.shopTitle !== undefined) setSetting('shop_title', str(body.shopTitle, 120));
+  if (body.shopSubtitle !== undefined) setSetting('shop_subtitle', str(body.shopSubtitle, 240));
   if (body.jawwalpayNumber !== undefined) {
     const n = String(body.jawwalpayNumber).replace(/[^\d+]/g, '');
     if (n && !/^\+?\d{9,13}$/.test(n)) fail(400, 'رقم محفظة جوال باي غير صحيح');

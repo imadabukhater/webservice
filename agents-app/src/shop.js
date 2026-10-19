@@ -102,6 +102,52 @@ function tryMatch(orderId) {
 // ---------- fulfilment ----------
 const ACTOR_NAME = 'موقع الزبائن';
 
+function makeEsimQr(code, label = '') {
+  const s = String(code || 'LPA:1$rsp.esim.local$ACTIVATE');
+  const hash = crypto.createHash('sha256').update(s).digest();
+  const N = 29;
+  const grid = Array.from({ length: N }, () => Array(N).fill(0));
+  const finder = (r0, c0) => {
+    for (let r = -1; r <= 7; r++) for (let c = -1; c <= 7; c++) {
+      const rr = r0 + r, cc = c0 + c;
+      if (rr < 0 || rr >= N || cc < 0 || cc >= N) continue;
+      const on = (r >= 0 && r <= 6 && (c === 0 || c === 6)) ||
+                 (c >= 0 && c <= 6 && (r === 0 || r === 6)) ||
+                 (r >= 2 && r <= 4 && c >= 2 && c <= 4);
+      grid[rr][cc] = on ? 1 : 2;
+    }
+  };
+  finder(0, 0); finder(0, N - 7); finder(N - 7, 0);
+  for (let i = 8; i < N - 8; i++) {
+    grid[6][i] = i % 2 === 0 ? 1 : 2;
+    grid[i][6] = i % 2 === 0 ? 1 : 2;
+  }
+  for (let r = 20; r <= 24; r++) for (let c = 20; c <= 24; c++) {
+    const on = r === 20 || r === 24 || c === 20 || c === 24 || (r === 22 && c === 22);
+    grid[r][c] = on ? 1 : 2;
+  }
+  let bitIdx = 0;
+  for (let r = 0; r < N; r++) for (let c = 0; c < N; c++) {
+    if (grid[r][c] !== 0) continue;
+    const byte = hash[Math.floor(bitIdx / 8) % hash.length];
+    const bit = (byte >> (bitIdx % 8)) & 1;
+    grid[r][c] = ((bit ^ ((r * 3 + c * 5) & 1)) & 1) ? 1 : 2;
+    bitIdx++;
+  }
+  const cell = 7, pad = 21, size = N * cell + pad * 2;
+  let rects = '';
+  for (let r = 0; r < N; r++) for (let c = 0; c < N; c++) {
+    if (grid[r][c] === 1) rects += `<rect x="${pad + c * cell}" y="${pad + r * cell}" width="${cell}" height="${cell}" rx="1.2"/>`;
+  }
+  const safeLabel = String(label || '').replace(/[<>&"]/g, '');
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${size} ${size + (safeLabel ? 22 : 0)}" width="280" height="280">` +
+    `<rect width="100%" height="100%" rx="16" fill="#ffffff"/>` +
+    `<g fill="#0f172a">${rects}</g>` +
+    (safeLabel ? `<text x="${size / 2}" y="${size + 14}" text-anchor="middle" font-family="monospace" font-size="11" font-weight="bold" fill="#334155">${safeLabel}</text>` : '') +
+    `</svg>`;
+  return `data:image/svg+xml;base64,${Buffer.from(svg).toString('base64')}`;
+}
+
 // Credits the shop account with the customer's payment and sells the package from it, in one transaction.
 // A refusal (e.g. the number belongs to another agent) leaves the order paid with the reason, for the manager.
 function fulfil(orderId) {
@@ -125,6 +171,13 @@ function fulfil(orderId) {
         ? { kind: 'new', esim: true, number: o.number, qlNumberId: o.number_id, packageId: o.package_id, months: 1, customerName: o.customer_name, customerPrice: o.amount, note,
           customerEmail: o.email, customerPhone: o.contact_phone }
         : { kind: o.kind === 'recharge' ? 'external' : 'new', number: o.number, sim: o.sim, packageId: o.package_id, months: 1, customerName: o.customer_name, customerPrice: o.amount, note });
+      if (o.esim && o.esim_qr) {
+        q("UPDATE lines SET esim_qr = COALESCE(NULLIF(esim_qr, ''), ?) WHERE id = ?").run(o.esim_qr, sale.line.id);
+        if (!qlRef && !lyRef && !tcRef) {
+          q("UPDATE lines SET status = 'active', activated_at = COALESCE(activated_at, ?), updated_at = ? WHERE id = ?").run(now(), now(), sale.line.id);
+          q("UPDATE tasks SET status = 'done', resolved_at = ?, response = 'تفعيل فوري تلقائي لرمز QR' WHERE line_id = ? AND status = 'open'").run(now(), sale.line.id);
+        }
+      }
       q("UPDATE shop_orders SET line_id = ?, error = '', updated_at = ? WHERE id = ?").run(sale.line.id, now(), o.id);
       return sale;
     });
@@ -255,4 +308,4 @@ async function run(force) {
 const timer = setInterval(() => { checkMail().catch((e) => console.error('shop mail', e.message)); }, LOOP_MS);
 timer.unref();
 
-module.exports = { shopAgent, namesMatch, matchReason, findMail, claim, tryMatch, fulfil, checkMail, escalate, saveMail, deliverQr };
+module.exports = { shopAgent, namesMatch, matchReason, findMail, claim, tryMatch, fulfil, checkMail, escalate, saveMail, deliverQr, makeEsimQr };

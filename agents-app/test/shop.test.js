@@ -298,3 +298,49 @@ test('connected sites: catalog, orders and balance with an API key; invoices', a
   assert.equal(paid.status, 'paid');
   assert.equal(paid.amount, 160);
 });
+
+test('custom company eSIM QR fee, direct eSIM instant QR activation, and bulk package operations', async () => {
+  const admin = (await ok(call(null, 'POST', '/api/login', { username: 'admin', password: 'admin-pass' }))).token;
+  await ok(call(admin, 'PUT', '/api/settings', { shopEnabled: true, shopInstant: true, esimFee: 10 }));
+
+  const co = await ok(call(admin, 'POST', '/api/companies', { name: 'ليان eSIM', color: '#0ea5e9', esimFee: 25 }));
+  const p1 = await ok(call(admin, 'POST', '/api/packages', {
+    companyId: co.id, name: 'باقة ليان 100GB', dataGb: 100, price: 45, shopPrice: 60, oldPrice: 75, popular: true, esimEnabled: true,
+  }));
+  const p2 = await ok(call(admin, 'POST', '/api/packages', {
+    companyId: co.id, name: 'باقة ليان 200GB', dataGb: 200, price: 65, shopPrice: 80,
+  }));
+
+  const shop = await ok(call(null, 'GET', '/api/shop'));
+  assert.equal(shop.companies.find((c) => c.id === co.id).esimFee, 25);
+  const sp1 = shop.packages.find((p) => p.id === p1.id);
+  assert.equal(sp1.esimFee, 25);
+  assert.equal(sp1.oldPrice, 75);
+  assert.equal(sp1.popular, true);
+  assert.equal(sp1.esim, true);
+
+  // Order with eSIM adds company's custom esimFee (60 + 25 = 85) and instant endpoint returns QR immediately
+  const ord = await ok(call(null, 'POST', '/api/shop/orders', {
+    packageId: p1.id, kind: 'new', esim: true, number: '0591234567', customerName: 'أحمد', contactPhone: '0591234567',
+  }));
+  assert.equal(ord.amount, 85);
+  assert.equal(ord.esimFee, 25);
+
+  const inst = await ok(call(null, 'POST', `/api/shop/orders/${ord.code}/instant`, {}));
+  assert.match(inst.esimQr, /^data:image\/svg\+xml;base64,/);
+  assert.match(inst.esimCode, /^LPA:1\$/);
+
+  // Bulk hide, show, esim-enable, and delete
+  await ok(call(admin, 'POST', '/api/packages/bulk', { action: 'hide', ids: [p1.id, p2.id] }));
+  let cat = await ok(call(admin, 'GET', '/api/catalog'));
+  assert.equal(cat.packages.find((p) => p.id === p1.id).active, false);
+
+  await ok(call(admin, 'POST', '/api/packages/bulk', { action: 'show', ids: [p1.id, p2.id] }));
+  await ok(call(admin, 'POST', '/api/packages/bulk', { action: 'esim-enable', ids: [p2.id] }));
+  cat = await ok(call(admin, 'GET', '/api/catalog'));
+  assert.equal(cat.packages.find((p) => p.id === p2.id).esimEnabled, true);
+
+  const delRes = await ok(call(admin, 'POST', '/api/packages/bulk', { action: 'delete', ids: [p1.id, p2.id] }));
+  assert.equal(delRes.affected, 2);
+});
+

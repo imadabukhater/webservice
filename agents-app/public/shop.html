@@ -1,22 +1,52 @@
 <!doctype html>
 <html lang="ar" dir="rtl">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="theme-color" content="#f1f4f9">
-<meta name="color-scheme" content="light dark">
-<meta name="description" content="اشحن رقمك أو فعّل خطاً جديداً وادفع عبر جوال باي">
-<title>متجر الباقات</title>
-<link rel="icon" href="/icon.svg" type="image/svg+xml">
-<link rel="apple-touch-icon" href="/icon-192.png">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500&family=IBM+Plex+Sans+Arabic:wght@400;500;600&family=Readex+Pro:wght@400;500;600;700&display=swap">
-<link rel="stylesheet" href="/css/app.css">
-<script type="module" src="/js/shop.js"></script>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0b1528">
+  <meta name="color-scheme" content="light dark">
+  <title>المتجر الإلكتروني — باقات الخليوي و eSIM الفوري</title>
+  <link rel="icon" href="/icons/icon.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/app.css">
 </head>
 <body class="shop">
-  <div id="shop"><div style="min-height:100dvh;display:grid;place-items:center;color:#66758c;font-family:system-ui,sans-serif">جارٍ التحميل…</div></div>
-  <noscript>هذه الصفحة تحتاج إلى تفعيل JavaScript.</noscript>
+  <header class="shop-top">
+    <a class="shop-brand" href="/shop" data-action="home">
+      <span class="brand-mark"><svg viewBox="0 0 36 36" fill="none" aria-hidden="true">
+        <rect width="36" height="36" rx="11" fill="currentColor"/>
+        <path d="M10 23.5c3.2-6.5 6.3-11 9.5-11 2.2 0 3 2.1 2.5 5.2-.4 2.5-.2 3.8.8 3.8 1.2 0 2.6-1.8 4.2-5.5" stroke="#fff" stroke-width="2.6" stroke-linecap="round"/>
+        <circle cx="26.5" cy="12" r="2.2" fill="#3ee0cf"/></svg></span>
+      <span class="shop-brand-wrap">
+        <span id="shop-name">متجر الباقات</span>
+        <small class="shop-live-badge"><span class="shop-live-dot"></span><span id="shop-live-txt">تفعيل فوري 24/7</span></small>
+      </span>
+    </a>
+    <nav class="shop-nav" aria-label="التنقّل في المتجر">
+      <button class="btn btn-sm btn-ghost" data-action="home" id="nav-catalog">الباقات</button>
+      <button class="btn btn-sm btn-ghost" data-action="go-esim" id="nav-esim">⚡ تفعيل eSIM</button>
+      <button class="btn btn-sm btn-ghost" data-action="compat-modal" id="nav-compat">فحص الجهاز</button>
+      <button class="btn btn-sm btn-ghost" data-action="lookup" id="nav-lookup">تتبّع طلبي</button>
+      <button class="btn btn-sm btn-ghost" data-action="legal-modal" id="nav-legal">الضمان والشروط</button>
+    </nav>
+    <div class="shop-utils">
+      <div class="lang-switch" role="group" aria-label="Language">
+        <button type="button" class="lang-btn" data-action="lang" data-lang="ar" aria-pressed="true">ع</button>
+        <button type="button" class="lang-btn" data-action="lang" data-lang="en" aria-pressed="false">EN</button>
+        <button type="button" class="lang-btn" data-action="lang" data-lang="he" aria-pressed="false">עב</button>
+      </div>
+      <button type="button" class="icon-btn sm" data-action="theme" id="shop-theme-btn" title="تغيير المظهر" aria-label="تغيير المظهر">◐</button>
+    </div>
+  </header>
+
+  <main class="shop-main" id="shop-view" tabindex="-1"></main>
+
+  <footer class="shop-footer" id="shop-footer"></footer>
+
+  <div id="shop-modal-root"></div>
+  <div id="toasts" class="toasts" aria-live="polite"></div>
+  <script src="/js/shop.js" defer></script>
 </body>
 </html>

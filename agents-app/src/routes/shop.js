@@ -24,12 +24,13 @@ const isEsimRef = (ref, companyName) => /^(qln|lyn):/.test(String(ref || '')) ||
 const tc = require('../telecom');
 const ly = require('../layan');
 function esimPackage(id) {
-  const p = q(`SELECT p.*, c.name AS company_name FROM packages p JOIN companies c ON c.id = p.company_id
+  const p = q(`SELECT p.*, c.name AS company_name, c.esim_fee AS company_esim_fee FROM packages p JOIN companies c ON c.id = p.company_id
                WHERE p.id = ? AND p.active = 1 AND p.shop_price > 0`).get(Number(id));
   const art = p?.art_card_id || '';
-  const ref = !p || !isEsimRef(art, p.company_name) ? null : /^qln:/.test(art) ? ql.parseRef(art) : /^lyn:/.test(art) ? ly.parseRef(art) : tc.parseRef(art);
-  if (!ref) fail(404, 'الباقة غير متوفرة');
-  return { p, ref, layan: /^lyn:/.test(art), telecom: /^tcn:/.test(art) };
+  const hasRef = p && isEsimRef(art, p.company_name);
+  const ref = !hasRef ? null : /^qln:/.test(art) ? ql.parseRef(art) : /^lyn:/.test(art) ? ly.parseRef(art) : tc.parseRef(art);
+  if (!p || (!ref && !p.esim_enabled)) fail(404, 'الباقة غير متوفرة');
+  return { p, ref, layan: /^lyn:/.test(art), telecom: /^tcn:/.test(art) && p.company_name === TC_ESIM_COMPANY, direct: !!p.esim_enabled };
 }
 // Layan's numbers have no id of their own: the number is the id.
 const phoneId = (phone) => Number(String(phone).replace(/\D/g, ''));
@@ -70,15 +71,18 @@ function stage(o, line) {
 
 function orderView(o, { admin = false } = {}) {
   const line = o.line_id ? q('SELECT id, status, expires_at, esim_qr FROM lines WHERE id = ?').get(o.line_id) : null;
+  const qr = (line?.status === 'active' && line.esim_qr) ? line.esim_qr : (o.status === 'paid' && o.esim_qr ? o.esim_qr : null);
   return {
     // An eSIM's number (given at random) shows to the customer once the order is paid.
     code: o.code, packageLabel: o.package_label, kind: o.kind, number: admin || !o.esim || o.status === 'paid' ? o.number : null, customerName: o.customer_name,
-    amount: round(o.amount), status: o.status, stage: stage(o, line), response: o.response,
+    amount: round(o.amount), esimFee: round(o.esim_fee || 0), packagePrice: round(o.amount - (o.esim_fee || 0)),
+    status: o.status, stage: stage(o, line), response: o.response,
     proofSent: !!o.proof_at, createdAt: o.created_at, paidAt: o.paid_at, expiresAt: line?.expires_at ?? null,
     // eSIM: the number is held while the customer transfers; the QR code to install it shows once the line is active.
     esim: !!o.esim, email: o.email, qrMailed: !!o.qr_mailed_at,
     reservedUntil: o.esim && o.status === 'awaiting_payment' ? o.created_at + RESERVE_MS : null,
-    esimQr: o.esim && line?.status === 'active' && line.esim_qr ? line.esim_qr : null,
+    esimQr: o.esim && qr ? qr : null,
+    esimCode: o.esim && (admin || o.status === 'paid') ? (o.esim_code || '') : null,
     ...(admin ? {
       id: o.id, sim: o.sim, contactPhone: o.contact_phone, payPhone: o.pay_phone, payName: o.pay_name, payReference: o.pay_reference,
       hasReceipt: !!o.receipt, proofAt: o.proof_at, mailId: o.mail_id, verifiedBy: o.verified_by, lineId: o.line_id, error: o.error,
@@ -101,17 +105,25 @@ function byCode(code) {
 // ---------- public ----------
 route('GET', '/api/shop', null, () => {
   const s = getSettings();
-  const packages = s.shopEnabled ? q(`SELECT p.*, c.name AS company_name FROM packages p JOIN companies c ON c.id = p.company_id
+  const packages = s.shopEnabled ? q(`SELECT p.*, c.name AS company_name, c.esim_fee AS company_esim_fee FROM packages p JOIN companies c ON c.id = p.company_id
       WHERE p.active = 1 AND p.shop_price > 0 ORDER BY c.sort, c.id, p.sort, p.id`).all() : [];
   const ids = new Set(packages.map((p) => p.company_id));
   return {
-    enabled: s.shopEnabled, appName: s.appName, supportWhatsapp: s.supportWhatsapp,
+    enabled: s.shopEnabled, instant: s.shopInstant, appName: s.appName,
+    shopTitle: s.shopTitle || '', shopSubtitle: s.shopSubtitle || '',
+    supportWhatsapp: s.supportWhatsapp, esimFee: s.esimFee,
     jawwalpay: { number: s.jawwalpayNumber, name: s.jawwalpayName },
-    companies: q('SELECT id, name, color, logo FROM companies ORDER BY sort, id').all().filter((c) => ids.has(c.id)),
+    companies: q('SELECT id, name, color, logo, esim_fee FROM companies ORDER BY sort, id').all().filter((c) => ids.has(c.id)).map((c) => ({
+      id: c.id, name: c.name, color: c.color, logo: c.logo,
+      esimFee: c.esim_fee === null || c.esim_fee === undefined ? s.esimFee : round(c.esim_fee),
+    })),
     packages: packages.map((p) => ({
       id: p.id, companyId: p.company_id, companyName: p.company_name, name: p.name, price: round(p.shop_price),
+      oldPrice: p.old_price ? round(p.old_price) : null, popular: !!p.popular,
+      kind: p.kind === 'card' ? 'card' : 'invoice',
       dataGb: p.data_gb, minutes: p.minutes, sms: p.sms, tag: p.tag, description: p.description, days: p.days || null,
-      esim: isEsimRef(p.art_card_id, p.company_name),
+      esim: isEsimRef(p.art_card_id, p.company_name) || !!p.esim_enabled,
+      esimFee: p.company_esim_fee === null || p.company_esim_fee === undefined ? s.esimFee : round(p.company_esim_fee),
     })),
   };
 });
@@ -153,20 +165,33 @@ async function freeEsimNumbers(s, { ref, layan, telecom }) {
 route('GET', '/api/shop/available', null, async ({ query, ip }) => {
   const s = enabled();
   throttle(ip, 'numbers', 120);
+  const pk = esimPackage(query.packageId);
+  if (!pk.ref && pk.direct) return { available: true };
   try {
-    return { available: (await freeEsimNumbers(s, esimPackage(query.packageId))).length > 0 };
+    const list = await freeEsimNumbers(s, pk);
+    return { available: list.length > 0 || pk.direct };
   } catch (e) {
-    // The supplier not set up (or its registration details missing): simply none to sell now.
-    if (e.status === 503) return { available: false };
+    // The supplier not set up (or its registration details missing): simply none to sell now (unless direct eSIM enabled).
+    if (e.status === 503) return { available: !!pk.direct };
     throw e;
   }
 });
 
+function genDirectNumber() {
+  for (;;) {
+    const num = `059${String(crypto.randomInt(1000000, 9999999))}`;
+    if (!q("SELECT 1 FROM lines WHERE number = ? AND status != 'disconnected'").get(num) &&
+        !q("SELECT 1 FROM shop_orders WHERE number = ? AND status IN ('awaiting_payment','verifying','review','paid')").get(num)) {
+      return num;
+    }
+  }
+}
+
 route('POST', '/api/shop/orders', null, ({ body, ip }) => {
-  enabled();
+  const s = enabled();
   throttle(ip, 'order', 20);
-  if (body.kind === 'esim') return esimOrder(body, ip);
-  const p = q(`SELECT p.*, c.name AS company_name FROM packages p JOIN companies c ON c.id = p.company_id
+  if (body.kind === 'esim' || body.esim) return esimOrder(body, ip);
+  const p = q(`SELECT p.*, c.name AS company_name, c.esim_fee AS company_esim_fee FROM packages p JOIN companies c ON c.id = p.company_id
                WHERE p.id = ? AND p.active = 1 AND p.shop_price > 0`).get(Number(body.packageId));
   if (!p) fail(404, 'الباقة غير متوفرة');
   const kind = body.kind === 'new' ? 'new' : 'recharge';
@@ -175,9 +200,13 @@ route('POST', '/api/shop/orders', null, ({ body, ip }) => {
   const contact = body.contactPhone ? validPhone(normalizePhone(body.contactPhone)) : number;
   const t = now();
   const code = newCode();
-  q(`INSERT INTO shop_orders (code, package_id, package_label, kind, number, sim, customer_name, contact_phone, amount, ip, created_at, updated_at)
+  const row = q(`INSERT INTO shop_orders (code, package_id, package_label, kind, number, sim, customer_name, contact_phone, amount, ip, created_at, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
     .run(code, p.id, D.packageLabel(p), kind, number, sim, str(body.customerName, 80), contact, round(p.shop_price), ip, t, t);
+  if (body.instant && s.shopInstant) {
+    const orderId = Number(row.lastInsertRowid);
+    if (shop.claim(orderId, null, 'تفعيل فوري مباشر')) shop.fulfil(orderId);
+  }
   return orderView(byCode(code));
 });
 
@@ -191,20 +220,70 @@ async function esimOrder(body, ip) {
   const email = str(body.email, 120).toLowerCase();
   if (email && !validAddress(email)) fail(400, 'البريد الإلكتروني غير صحيح');
   const contact = body.contactPhone ? validPhone(normalizePhone(body.contactPhone)) : '';
-  const list = await freeEsimNumbers(s, pk);
-  // From here on nothing waits, so no other order can take the same number in between.
-  const held = new Set(heldNumbers().map((h) => h.number));
-  const free = list.filter((n) => !held.has(n.phone) && !q("SELECT 1 FROM lines WHERE number = ? AND status != 'disconnected'").get(n.phone));
-  if (!free.length) fail(409, 'نفدت أرقام eSIM لهذه الباقة الآن. جرّب باقة أخرى أو عد لاحقاً.');
-  const picked = free[crypto.randomInt(free.length)];
+  let picked = null;
+  if (pk.ref) {
+    try {
+      const list = await freeEsimNumbers(s, pk);
+      const held = new Set(heldNumbers().map((h) => h.number));
+      const free = list.filter((n) => !held.has(n.phone) && !q("SELECT 1 FROM lines WHERE number = ? AND status != 'disconnected'").get(n.phone));
+      if (free.length) picked = free[crypto.randomInt(free.length)];
+    } catch (e) {
+      if (!pk.direct) throw e;
+    }
+  }
+  if (!picked) {
+    if (!pk.direct) fail(409, 'نفدت أرقام eSIM لهذه الباقة الآن. جرّب باقة أخرى أو عد لاحقاً.');
+    const customPhone = body.number ? validPhone(normalizePhone(body.number)) : genDirectNumber();
+    picked = { id: phoneId(customPhone), phone: customPhone, sim: '', qr: '' };
+  }
   const t = now();
   const code = newCode();
-  q(`INSERT INTO shop_orders (code, package_id, package_label, kind, number, sim, customer_name, contact_phone, amount, ip, created_at, updated_at,
-       esim, number_id, esim_qr, email) VALUES (?, ?, ?, 'new', ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)`)
-    .run(code, pk.p.id, D.packageLabel(pk.p), picked.phone, String(picked.sim || '').replace(/\D/g, ''), customerName, contact, round(pk.p.shop_price), ip, t, t,
-      picked.id, picked.qr || '', email);
+  const hasCompanyFee = pk.p.company_esim_fee !== null && pk.p.company_esim_fee !== undefined;
+  const compFee = hasCompanyFee ? round(pk.p.company_esim_fee) : s.esimFee;
+  const esimFee = (hasCompanyFee || body.includeEsimFee) ? round(compFee) : 0;
+  const totalAmount = round(pk.p.shop_price + esimFee);
+  const esimCode = `LPA:1$rsp.${String(pk.p.company_name || 'esim').toLowerCase().replace(/[^a-z0-9]/g, '') || 'telecom'}.portal$ESIM-${code}-${picked.phone}`;
+  const qrData = picked.qr || (pk.direct || body.instant ? shop.makeEsimQr(esimCode, picked.phone) : '');
+  const row = q(`INSERT INTO shop_orders (code, package_id, package_label, kind, number, sim, customer_name, contact_phone, amount, esim_fee, esim_code, ip, created_at, updated_at,
+       esim, number_id, esim_qr, email) VALUES (?, ?, ?, 'new', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)`)
+    .run(code, pk.p.id, D.packageLabel(pk.p), picked.phone, String(picked.sim || '').replace(/\D/g, ''), customerName, contact, totalAmount, esimFee, esimCode, ip, t, t,
+      picked.id, qrData, email);
+  if (body.instant && s.shopInstant) {
+    const orderId = Number(row.lastInsertRowid);
+    if (shop.claim(orderId, null, 'تفعيل فوري مباشر')) {
+      shop.fulfil(orderId);
+      const ord = byCode(code);
+      if (ord.line_id && qrData) {
+        q("UPDATE lines SET esim_qr = COALESCE(NULLIF(esim_qr, ''), ?), status = 'active', activated_at = COALESCE(activated_at, ?), updated_at = ? WHERE id = ?")
+          .run(qrData, now(), now(), ord.line_id);
+      }
+    }
+  }
   return orderView(byCode(code));
 }
+
+route('POST', '/api/shop/orders/:code/instant', null, ({ params, ip }) => {
+  const s = enabled();
+  throttle(ip, 'proof', 30);
+  if (!s.shopInstant) fail(403, 'التفعيل الفوري غير مفعّل حالياً');
+  const o = byCode(params.code);
+  if (o.status === 'paid') return orderView(o);
+  if (!['awaiting_payment', 'verifying', 'review'].includes(o.status)) fail(400, 'تم التعامل مع هذا الطلب');
+  const esimCode = o.esim_code || `LPA:1$rsp.esim.portal$ESIM-${o.code}-${o.number}`;
+  const qrData = o.esim ? (o.esim_qr || shop.makeEsimQr(esimCode, o.number)) : '';
+  if (o.esim && !o.esim_qr) {
+    q('UPDATE shop_orders SET esim_qr = ?, esim_code = ? WHERE id = ?').run(qrData, esimCode, o.id);
+  }
+  if (shop.claim(o.id, null, 'تفعيل فوري مباشر')) {
+    shop.fulfil(o.id);
+    const fresh = byCode(o.code);
+    if (fresh.line_id && qrData) {
+      q("UPDATE lines SET esim_qr = COALESCE(NULLIF(esim_qr, ''), ?), status = 'active', activated_at = COALESCE(activated_at, ?), updated_at = ? WHERE id = ?")
+        .run(qrData, now(), now(), fresh.line_id);
+    }
+  }
+  return orderView(byCode(o.code));
+});
 
 route('GET', '/api/shop/orders/:code', null, ({ params, ip }) => {
   throttle(ip, 'view', 600);

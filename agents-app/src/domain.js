@@ -77,7 +77,7 @@ const MARKUP_PRICE_SQL = 'CASE WHEN am.markup IS NOT NULL AND p.cost > 0 THEN RO
 const AGENT_PRICE_SQL = `COALESCE(ap.price, ${MARKUP_PRICE_SQL}, p.price)`;
 
 function priceFor(agentId, packageId) {
-  const p = q(`SELECT p.*, c.name AS company_name, ${AGENT_PRICE_SQL} AS agent_price
+  const p = q(`SELECT p.*, c.name AS company_name, c.esim_fee AS company_esim_fee, ${AGENT_PRICE_SQL} AS agent_price
                FROM packages p JOIN companies c ON c.id = p.company_id
                ${AGENT_PRICE_JOINS}
                WHERE p.id = ?`).get(agentId, agentId, Number(packageId));
