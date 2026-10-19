@@ -1288,6 +1288,12 @@ function viewBuy(id) {
           </button>` : ''}
       </div>
 
+      <div class="shop-steps no-print" aria-label="مراحل الطلب">
+        <span class="current"><i>1</i>بيانات المشترك</span>
+        <span><i>2</i>تأكيد الدفع (Jawwal Pay)</span>
+        <span><i>3</i>التفعيل واستلام الطلب</span>
+      </div>
+
       <!-- Selected Package Header -->
       <div class="esim-checkout-head">
         <div class="row" style="gap:12px">
@@ -1371,7 +1377,7 @@ function viewBuy(id) {
 
       <button class="btn primary lg" type="submit">
         ${icon('checkCircle')}
-        <span>تأكيد الطلب والمتابعة (${fmtMoney(total)})</span>
+        <span>المتابعة إلى خطوة تأكيد الدفع (${fmtMoney(total)})</span>
       </button>
     </form>
   `, { sub: pk.name });
@@ -1399,7 +1405,6 @@ function viewBuy(id) {
           number: fd.get('number'),
           sim: fd.get('sim') || '',
           contactPhone: fd.get('contactPhone') || '',
-          instant: Boolean(S.data?.instant),
         },
       });
       rememberOrderCode(order.code);
@@ -1437,6 +1442,12 @@ async function esimForm(pk, co, canSwitchToCard = false) {
         <button type="button" class="esim-compat-pill" data-act="compat-sheet">
           ${icon('chip')}<span>فحص توافق الجهاز مع eSIM</span>
         </button>
+      </div>
+
+      <div class="shop-steps no-print" aria-label="مراحل الطلب">
+        <span class="current"><i>1</i>بيانات المشترك</span>
+        <span><i>2</i>تأكيد الدفع (Jawwal Pay)</span>
+        <span><i>3</i>استلام كود eSIM QR</span>
       </div>
 
       <div class="esim-checkout-head">
@@ -1480,8 +1491,8 @@ async function esimForm(pk, co, canSwitchToCard = false) {
         <div class="esim-ready-notice">
           ${icon('qr')}
           <div class="grow">
-            <b>تفعيل رقمي مباشر مع كود QR فوري</b>
-            <small class="muted" style="display:block">يُخصَّص لك رقم جديد تلقائياً ويتم توليد كود الـ QR الخاص بشريحتك ليظهر مباشرة على الشاشة بعد التفعيل.</small>
+            <b>حجز فوري للرقم وتوليد كود QR بعد تأكيد الدفع</b>
+            <small class="muted" style="display:block">يُحجز لك رقم جديد لمدة 30 دقيقة، وفور تأكيد تحويل المبلغ بالخطوة التالية يظهر كود الـ QR الخاص بشريحتك مباشرة على الشاشة.</small>
           </div>
         </div>
       ` : `
@@ -1531,8 +1542,8 @@ async function esimForm(pk, co, canSwitchToCard = false) {
       </div>
 
       <button class="btn primary lg" type="submit" ${available ? '' : 'disabled'}>
-        ${icon('qr')}
-        <span>تفعيل شريحة eSIM وإصدار كود QR (${fmtMoney(total)})</span>
+        ${icon('checkCircle')}
+        <span>المتابعة إلى خطوة تأكيد الدفع (${fmtMoney(total)})</span>
       </button>
     </form>
   `, { sub: pk.name });
@@ -1557,7 +1568,6 @@ async function esimForm(pk, co, canSwitchToCard = false) {
           kind: 'esim',
           esim: true,
           includeEsimFee: qrFee > 0,
-          instant: Boolean(S.data?.instant),
           packageId: pk.id,
           customerName: fd.get('customerName'),
           email: fd.get('email') || '',
@@ -1579,12 +1589,12 @@ async function esimForm(pk, co, canSwitchToCard = false) {
 }
 
 const STAGES_AR = {
-  awaiting_payment: { label: 'بانتظار الدفع أو التفعيل الفوري', cls: 's-open', step: 1, desc: 'حوّل المبلغ عبر تطبيق جوال باي ثم أكّد التحويل أدناه، أو استخدم زر التفعيل الفوري إن كان مفعّلاً.' },
+  awaiting_payment: { label: 'الخطوة ٢: بانتظار تحويل المبلغ وتأكيد الدفع', cls: 's-open', step: 1, desc: 'حوّل المبلغ عبر تطبيق جوال باي (Jawwal Pay) ثم أدخل رقم الحركة أو بيانات التحويل في نموذج تأكيد الدفع أدناه.' },
   verifying: { label: 'جارٍ التحقق التلقائي من التحويل…', cls: 's-open', step: 2, desc: 'يبحث النظام عن إشعار جوال باي المطابق لتفعيل خطك وإصدار كود QR تلقائياً.' },
   review: { label: 'قيد المراجعة والتفعيل من فريق المتجر', cls: 's-open', step: 2, desc: 'يراجع فريق المتجر إشعار التحويل لتفعيل طلبك في أسرع وقت.' },
   processing: { label: 'تم استلام الدفع — جارٍ التفعيل وإصدار الشريحة…', cls: 's-open', step: 2, desc: 'وصلنا المبلغ ونفعّل خطك الآن لدى شركة الاتصالات. سيظهر رمز QR هنا فور جهوزه.' },
   paid_issue: { label: 'تم استلام الدفع — قيد المعالجة الفنية', cls: 's-open', step: 2, desc: 'وصلنا المبلغ ويتابع فريقنا إتمام التفعيل.' },
-  done: { label: 'مفعّل وجاهز للاستخدام', cls: 's-done', step: 3, desc: 'تم تفعيل طلبك بنجاح.' },
+  done: { label: 'مفعّل وجاهز للاستخدام', cls: 's-done', step: 3, desc: 'تم تأكيد الدفع وتفعيل طلبك بنجاح.' },
   failed: { label: 'تعذّر التنفيذ — تواصل مع الدعم', cls: 's-bad', step: 0, desc: 'تواصل مع الدعم الفني لاسترجاع المبلغ أو إعادة المحاولة.' },
   rejected: { label: 'مرفوض — تواصل مع الدعم', cls: 's-bad', step: 0, desc: '' },
   cancelled: { label: 'ملغى', cls: 's-bad', step: 0, desc: '' },
@@ -1633,7 +1643,6 @@ function renderOrder() {
   const isEsim = Boolean(o.esim);
   const hasQr = Boolean(o.esimQr && /^data:image\//.test(o.esimQr));
   const payable = PAYABLE_STATUSES.includes(o.status);
-  const canInstant = Boolean(S.data?.instant && payable && !hasQr);
   const wa = waHref(S.data?.supportWhatsapp, `مرحباً، بخصوص الطلب ${o.code}`);
 
   shell(`
@@ -1648,8 +1657,8 @@ function renderOrder() {
       </div>
 
       <div class="shop-steps no-print" aria-label="مراحل الطلب">
-        <span class="${st.step >= 1 ? 'done' : ''}"><i>1</i>إنشاء الطلب</span>
-        <span class="${st.step >= 2 ? 'done' : st.step === 1 && o.proofSent ? 'current' : ''}"><i>2</i>تأكيد الدفع والتفعيل</span>
+        <span class="${st.step >= 1 ? 'done' : ''}"><i>1</i>بيانات المشترك</span>
+        <span class="${st.step >= 3 ? 'done' : payable || st.step === 2 ? 'current' : ''}"><i>2</i>تأكيد الدفع (Jawwal Pay)</span>
         <span class="${st.step >= 3 || hasQr ? 'done' : ''}"><i>3</i>${isEsim ? 'استلام كود eSIM QR' : 'اكتمال التفعيل'}</span>
       </div>
 
@@ -1659,7 +1668,7 @@ function renderOrder() {
           <div>
             <span class="esim-carrier-label">رمز الطلب: <b class="ltr mono">${esc(o.code)}</b></span>
             <h3 style="margin:2px 0">${esc(o.packageLabel)}${isEsim ? ' · eSIM' : ''}</h3>
-            <small class="muted">${esc(o.customerName || '')} · ${o.number ? `<span class="ltr">${esc(fmtPhone(o.number))}</span>` : 'يظهر الرقم فور تأكيد التفعيل'}</small>
+            <small class="muted">${esc(o.customerName || '')} · ${o.number ? `<span class="ltr">${esc(fmtPhone(o.number))}</span>` : 'يظهر الرقم فور تأكيد الدفع والتفعيل'}</small>
           </div>
         </div>
         <b class="mono shop-amount">${fmtMoney(o.amount)}</b>
@@ -1691,29 +1700,71 @@ function renderOrder() {
         </div>` : ''}
     </div>
 
-    <!-- Direct Instant eSIM Activation Action (when shopInstant is enabled and QR not yet issued) -->
-    ${canInstant ? `
-      <div class="card shop-instant-box no-print">
-        <div class="row" style="gap:12px">
-          ${esimChipSvg('esim-chip-svg')}
-          <div>
-            <h3 style="margin:0 0 4px">التفعيل المباشر الفوري متاح الآن</h3>
-            <p class="muted" style="margin:0;font-size:.88rem">اضغط على زر التفعيل الفوري لإصدار شريحة الـ eSIM وإظهار كود الـ QR الجاهز للمسح مباشرة على هذه الشاشة.</p>
-          </div>
+    <!-- Step 2: Jawwal Pay Payment & Confirmation Box -->
+    ${payable ? `
+      <div class="card shop-pay no-print">
+        <h3>١. حوّل المبلغ عبر تطبيق جوال باي (Jawwal Pay)</h3>
+        <p class="muted" style="margin:0">
+          حوّل المبلغ المحدّد بالضبط بتحويل واحد إلى المحفظة التالية.${o.reservedUntil ? ` رقمك محجوز لك حتى <b>${fmtTime(o.reservedUntil)}</b>.` : ''}
+        </p>
+        <div class="shop-kv">
+          <span>المبلغ المطلوب تحويله</span>
+          <b class="ltr mono">${fmtMoney(o.amount)}</b>
+          <button type="button" class="btn ghost btn-sm" data-copy="${esc(String(o.amount))}">${icon('copy')}<span>نسخ</span></button>
         </div>
-        <button type="button" class="btn primary lg" id="instant-act-btn" ${S.instantBusy ? 'disabled' : ''}>
-          ${icon('qr')}
-          <span>${S.instantBusy ? 'جارٍ التفعيل وتوليد كود QR...' : 'تفعيل فوري وإظهار كود QR الآن'}</span>
-        </button>
+        ${jp.number ? `
+          <div class="shop-kv">
+            <span>إلى رقم محفظة جوال باي</span>
+            <b class="ltr mono">${esc(fmtPhone(jp.number))}</b>
+            <button type="button" class="btn ghost btn-sm" data-copy="${esc(jp.number)}">${icon('copy')}<span>نسخ</span></button>
+          </div>
+        ` : ''}
+        ${jp.name ? `
+          <div class="shop-kv">
+            <span>باسم المستلم</span>
+            <b>${esc(jp.name)}</b>
+          </div>
+        ` : ''}
+
+        <hr style="border:0;border-top:1px solid var(--line);margin:6px 0">
+
+        <h3>٢. ${o.proofSent ? 'تحديث بيانات تأكيد الدفع' : 'تأكيد الدفع لتفعيل الطلب تلقائياً'}</h3>
+        <p class="muted" style="margin:0;font-size:.85rem">
+          أدخل <b>رقم الحركة</b> من رسالة جوال باي (أسرع طريقة للمطابقة الفورية وإظهار كود الـ QR)، أو اسم المحوِّل، أو ارفع صورة الإشعار:
+        </p>
+
+        <form id="proof-f" class="form" style="margin-top:6px">
+          <div class="field">
+            <label for="f-ref">رقم الحركة في جوال باي (Reference No.)</label>
+            <input id="f-ref" name="payReference" class="input ltr" inputmode="numeric" autocomplete="off" placeholder="مثال: 2922...">
+          </div>
+          <div class="field">
+            <label for="f-pname">أو: اسم المحوِّل كما يظهر في جوال باي</label>
+            <input id="f-pname" name="payName" class="input" autocomplete="name" placeholder="الاسم الكامل">
+          </div>
+          <div class="field">
+            <label for="f-payer">رقم محفظة جوال باي المحوَّل منها <span class="muted">(اختياري)</span></label>
+            <input id="f-payer" name="payPhone" class="input ltr" inputmode="tel" placeholder="059XXXXXXX">
+          </div>
+          <div class="field">
+            <label>صورة إشعار التحويل <span class="muted">(اختياري — تساعد في تسريع المراجعة)</span></label>
+            <label class="upload-box" id="proof-box">
+              <input id="f-proof" type="file" accept="image/*" hidden>
+              ${icon('image')}
+              <span id="proof-label">${o.proofSent ? 'تم إرسال الإشعار — اضغط لاستبداله' : 'اضغط لاختيار لقطة شاشة لإشعار Jawwal Pay'}</span>
+            </label>
+          </div>
+          <button class="btn primary lg" type="submit">${icon('checkCircle')}<span>${o.proofSent ? 'تحديث بيانات تأكيد الدفع' : 'أرسلت المبلغ — تأكيد الدفع وتفعيل الطلب'}</span></button>
+        </form>
       </div>
     ` : ''}
 
-    <!-- Scannable eSIM QR Code Pass (shown immediately once esimQr is ready) -->
+    <!-- Step 3: Scannable eSIM QR Code Pass (shown once payment is confirmed and esimQr is ready) -->
     ${hasQr ? `
       <div class="card shop-qr-modern">
         <div class="shop-qr-badge">
           ${icon('checkCircle')}
-          <span>شريحة eSIM مفعّلة وجاهزة للمسح الفوري</span>
+          <span>تم تأكيد الدفع — شريحة eSIM مفعّلة وجاهزة للمسح</span>
         </div>
 
         <h3 style="margin:0">امسح كود الـ QR لتثبيت شريحة eSIM على هاتفك</h3>
@@ -1778,69 +1829,10 @@ function renderOrder() {
       </div>
     ` : ''}
 
-    <!-- Jawwal Pay Payment & Verification Box -->
-    ${payable ? `
-      <div class="card shop-pay no-print">
-        <h3>١. حوّل المبلغ عبر تطبيق جوال باي (Jawwal Pay)</h3>
-        <p class="muted" style="margin:0">
-          حوّل المبلغ المحدّد بالضبط بتحويل واحد إلى المحفظة التالية.${o.reservedUntil ? ` رقمك محجوز لك حتى <b>${fmtTime(o.reservedUntil)}</b>.` : ''}
-        </p>
-        <div class="shop-kv">
-          <span>المبلغ المطلوب</span>
-          <b class="ltr mono">${fmtMoney(o.amount)}</b>
-          <button type="button" class="btn ghost btn-sm" data-copy="${esc(String(o.amount))}">${icon('copy')}<span>نسخ</span></button>
-        </div>
-        ${jp.number ? `
-          <div class="shop-kv">
-            <span>إلى رقم المحفظة</span>
-            <b class="ltr mono">${esc(fmtPhone(jp.number))}</b>
-            <button type="button" class="btn ghost btn-sm" data-copy="${esc(jp.number)}">${icon('copy')}<span>نسخ</span></button>
-          </div>
-        ` : ''}
-        ${jp.name ? `
-          <div class="shop-kv">
-            <span>باسم المستلم</span>
-            <b>${esc(jp.name)}</b>
-          </div>
-        ` : ''}
-
-        <hr style="border:0;border-top:1px solid var(--line);margin:6px 0">
-
-        <h3>٢. ${o.proofSent ? 'تحديث بيانات التحويل' : 'أكّد التحويل للتفعيل التلقائي'}</h3>
-        <p class="muted" style="margin:0;font-size:.85rem">
-          أدخل <b>رقم الحركة</b> من رسالة جوال باي (أسرع طريقة للمطابقة الفورية)، أو اسم المحوِّل، أو ارفع صورة الإشعار:
-        </p>
-
-        <form id="proof-f" class="form" style="margin-top:6px">
-          <div class="field">
-            <label for="f-ref">رقم الحركة في جوال باي</label>
-            <input id="f-ref" name="payReference" class="input ltr" inputmode="numeric" autocomplete="off" placeholder="مثال: 2922...">
-          </div>
-          <div class="field">
-            <label for="f-pname">أو: اسم المحوِّل كما يظهر في جوال باي</label>
-            <input id="f-pname" name="payName" class="input" autocomplete="name" placeholder="الاسم الكامل">
-          </div>
-          <div class="field">
-            <label for="f-payer">رقم محفظة جوال باي المحوَّل منها <span class="muted">(اختياري)</span></label>
-            <input id="f-payer" name="payPhone" class="input ltr" inputmode="tel" placeholder="059XXXXXXX">
-          </div>
-          <div class="field">
-            <label>صورة إشعار التحويل <span class="muted">(اختياري — تساعد في تسريع المراجعة)</span></label>
-            <label class="upload-box" id="proof-box">
-              <input id="f-proof" type="file" accept="image/*" hidden>
-              ${icon('image')}
-              <span id="proof-label">${o.proofSent ? 'تم إرسال الإشعار — اضغط لاستبداله' : 'اضغط لاختيار لقطة شاشة لإشعار Jawwal Pay'}</span>
-            </label>
-          </div>
-          <button class="btn primary lg" type="submit">${icon('check')}<span>${o.proofSent ? 'تحديث بيانات التحويل' : 'أرسلت المبلغ — تأكيد وتفعيل الطلب'}</span></button>
-        </form>
-      </div>
-    ` : ''}
-
     ${o.stage === 'done' && !hasQr ? `
       <div class="card empty">
         ${icon('checkCircle')}
-        <p>تمّ تفعيل باقتك بنجاح — شكراً لثقتك بنا.</p>
+        <p>تمّ تأكيد الدفع وتفعيل باقتك بنجاح — شكراً لثقتك بنا.</p>
         <a href="#/" class="btn ghost">العودة للمتجر</a>
       </div>
     ` : ''}
@@ -1868,24 +1860,6 @@ function renderOrder() {
         renderOrder();
       } catch (err) {
         notify(err.message, true);
-      }
-    };
-  }
-
-  const instantBtn = document.getElementById('instant-act-btn');
-  if (instantBtn) {
-    instantBtn.onclick = async () => {
-      if (S.instantBusy) return;
-      S.instantBusy = true;
-      renderOrder();
-      try {
-        S.order = await jfetch(`/api/shop/orders/${encodeURIComponent(o.code)}/instant`, { method: 'POST' });
-        notify('تم تفعيل شريحة eSIM وإصدار كود الـ QR بنجاح');
-      } catch (err) {
-        notify(err.message, true);
-      } finally {
-        S.instantBusy = false;
-        renderOrder();
       }
     };
   }
