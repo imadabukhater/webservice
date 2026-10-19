@@ -194,7 +194,7 @@ function shell(body, { sub = '' } = {}) {
         </nav>
 
         <div class="shop-utils">
-          ${wa ? `<a class="btn btn-sm ghost shop-wa-btn" href="${esc(wa)}" target="_blank" rel="noopener">${icon('whatsapp')}<span>الدعم المباشر</span></a>` : ''}
+          ${wa ? `<a class="btn btn-sm ghost shop-wa-btn" href="${esc(wa)}" target="_blank" rel="noopener" aria-label="الدعم المباشر عبر واتساب">${icon('whatsapp')}<span class="shop-wa-label">الدعم المباشر</span></a>` : ''}
           <button type="button" class="icon-btn sm" data-act="theme" aria-label="${dark ? 'الوضع الفاتح' : 'الوضع الداكن'}" title="${dark ? 'الوضع الفاتح' : 'الوضع الداكن'}">
             ${icon(dark ? 'sun' : 'moon')}
           </button>
@@ -230,6 +230,33 @@ function shell(body, { sub = '' } = {}) {
         </nav>
       </div>
     </footer>
+
+    <!-- Mobile Thumb-Friendly Bottom Navigation Dock -->
+    <nav class="shop-bottom-nav no-print" aria-label="التنقّل السريع للهاتف">
+      <a href="#/" class="shop-bnav-item ${onHome && S.kindFilter !== 'esim' ? 'active' : ''}" data-act="nav-all">
+        ${icon('sim')}
+        <span>الباقات</span>
+      </a>
+      <button type="button" class="shop-bnav-item ${onHome && S.kindFilter === 'esim' ? 'active' : ''}" data-act="nav-esim">
+        ${icon('qr')}
+        <span>شرائح eSIM</span>
+      </button>
+      <a href="#/compat" class="shop-bnav-item ${hash === 'compat' ? 'active' : ''}">
+        ${icon('chip')}
+        <span>التوافق</span>
+      </a>
+      <a href="#/terms" class="shop-bnav-item ${onLegal ? 'active' : ''}">
+        ${icon('shield')}
+        <span>الضمان</span>
+      </a>
+      <a href="#/track" class="shop-bnav-item ${hash === 'track' || hash === 'orders' ? 'active' : ''}">
+        <span class="shop-bnav-ic-wrap">
+          ${icon('search')}
+          ${S.myCodes.length ? `<b class="shop-bnav-badge">${fmtNum(S.myCodes.length)}</b>` : ''}
+        </span>
+        <span>طلباتي</span>
+      </a>
+    </nav>
   `;
 
   bindGlobalTriggers(root);

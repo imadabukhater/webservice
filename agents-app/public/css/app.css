@@ -677,17 +677,17 @@ body.shop { background: var(--bg); min-height: 100dvh; display: flex; flex-direc
 .icon-btn.sm svg { width: 18px; height: 18px; }
 
 /* Header & Navigation Dock — H-SIM Visual Identity */
-.shop-top { position: sticky; top: 0; z-index: 20; background: color-mix(in srgb, var(--surface) 90%, transparent); backdrop-filter: blur(16px); border-bottom: 1px solid var(--line); padding: calc(10px + env(safe-area-inset-top, 0px)) 16px 10px; }
+.shop-top { position: sticky; top: 0; z-index: 20; background: color-mix(in srgb, var(--surface) 92%, transparent); backdrop-filter: blur(16px); border-bottom: 1px solid var(--line); padding: calc(10px + env(safe-area-inset-top, 0px)) 16px 10px; }
 .shop-top-inner { width: min(100%, 1160px); margin: 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
-.shop-brand { display: flex; align-items: center; gap: 11px; color: var(--ink); text-decoration: none; }
+.shop-brand { display: flex; align-items: center; gap: 11px; color: var(--ink); text-decoration: none; min-width: 0; }
 .shop-brand-mark { width: 42px; height: 42px; border-radius: 12px; display: grid; place-items: center; filter: drop-shadow(0 4px 10px rgba(8, 17, 36, .22)); flex: none; }
 .shop-brand-mark svg, .shop-brand-mark .hsim-logo-svg { width: 100%; height: 100%; display: block; }
 .shop-brand-mark.sm { width: 34px; height: 34px; border-radius: 9px; }
-.shop-brand-text { display: grid; gap: 2px; }
+.shop-brand-text { display: grid; gap: 2px; min-width: 0; }
 .shop-brand-title-row { display: inline-flex; align-items: center; gap: 7px; flex-wrap: wrap; }
 .shop-brand-text strong { font: 800 1.04rem var(--f-ui); color: var(--ink); letter-spacing: -.01em; }
 .shop-brand-monogram { padding: 1px 7px; border-radius: 6px; background: linear-gradient(135deg, rgba(14, 165, 233, .14), rgba(37, 99, 235, .16)); border: 1px solid color-mix(in srgb, var(--primary) 34%, transparent); color: var(--primary); font: 800 .66rem var(--f-mono); letter-spacing: .06em; }
-.shop-brand-text small { display: inline-flex; align-items: center; gap: 6px; font-size: .74rem; color: var(--muted); }
+.shop-brand-text small { display: inline-flex; align-items: center; gap: 6px; font-size: .74rem; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .shop-live-dot { width: 7px; height: 7px; border-radius: 50%; background: #10b981; box-shadow: 0 0 0 3px rgba(16, 185, 129, .2); display: inline-block; flex: none; }
 
 .shop-nav { display: flex; gap: 4px; flex-wrap: wrap; align-items: center; padding: 4px; border-radius: 14px; background: var(--surface-2); border: 1px solid var(--line); }
@@ -696,35 +696,35 @@ body.shop { background: var(--bg); min-height: 100dvh; display: flex; flex-direc
 .shop-nav-link:hover { background: var(--surface); color: var(--ink); }
 .shop-nav-link.active { background: var(--surface); color: var(--primary); border-color: color-mix(in srgb, var(--primary) 26%, var(--line)); box-shadow: var(--shadow-sm); }
 .shop-nav-link.active svg { color: var(--primary); }
-@media (max-width: 760px) {
-  .shop-nav { order: 3; width: 100%; overflow-x: auto; flex-wrap: nowrap; justify-content: flex-start; }
-}
 
-.shop-utils { display: flex; align-items: center; gap: 8px; }
+/* Mobile Bottom Navigation Dock (Hidden on Desktop, Thumb-Friendly on Phones) */
+.shop-bottom-nav { display: none; }
+
+.shop-utils { display: flex; align-items: center; gap: 8px; flex: none; }
 .shop-wa-btn { border-color: color-mix(in srgb, #10b981 35%, var(--line)) !important; color: var(--ink) !important; }
 .shop-wa-btn svg { color: #10b981; }
 .shop-wa-btn:hover { background: rgba(16, 185, 129, .1) !important; border-color: #10b981 !important; color: #059669 !important; }
 .shop-main { flex: 1; width: min(100%, 1160px); margin: 0 auto; padding: 20px 16px 56px; display: grid; gap: 20px; align-content: start; }
 
 /* Authentic H-SIM & Telecom Hero */
-.esim-hero { padding: clamp(22px, 3.6vw, 34px); border-radius: 24px; background: linear-gradient(135deg, #071022 0%, #0d1e3a 52%, #132d54 100%); color: #f8fafc; border: 1px solid rgba(56, 189, 248, .24); box-shadow: var(--shadow-lg); position: relative; overflow: hidden; }
+.esim-hero { padding: clamp(18px, 3.6vw, 34px); border-radius: 24px; background: linear-gradient(135deg, #071022 0%, #0d1e3a 52%, #132d54 100%); color: #f8fafc; border: 1px solid rgba(56, 189, 248, .24); box-shadow: var(--shadow-lg); position: relative; overflow: hidden; }
 .esim-hero::before { content: ""; position: absolute; inset: 0; background: radial-gradient(60% 80% at 15% 15%, rgba(56, 189, 248, .18), transparent 60%), radial-gradient(50% 70% at 85% 90%, rgba(251, 191, 36, .12), transparent 60%); pointer-events: none; }
 .esim-hero-grid { position: relative; display: grid; grid-template-columns: minmax(0, 1.32fr) minmax(295px, .88fr); gap: 24px; align-items: center; }
-@media (max-width: 860px) { .esim-hero-grid { grid-template-columns: 1fr; } .esim-hero-card-wrap { display: none; } }
+@media (max-width: 860px) { .esim-hero-grid { grid-template-columns: 1fr; gap: 16px; } }
 .esim-hero-copy { display: grid; gap: 14px; }
 .esim-hero-kicker { justify-self: start; display: inline-flex; align-items: center; gap: 8px; padding: 4px 12px 4px 6px; border-radius: 999px; background: rgba(15, 23, 42, .65); border: 1px solid rgba(56, 189, 248, .35); color: #bae6fd; font: 600 .78rem var(--f-ui); }
-.kicker-monogram { padding: 2px 8px; border-radius: 999px; background: linear-gradient(135deg, #fde68a, #f59e0b); color: #081124; font: 800 .68rem var(--f-mono); letter-spacing: .05em; }
-.esim-hero-copy h1 { margin: 0; font: 800 clamp(1.45rem, 3.2vw, 2.12rem)/1.32 var(--f-ui); color: #fff; letter-spacing: -.01em; }
-.esim-hero-copy p { margin: 0; color: #cbd5e1; font-size: clamp(.9rem, 1.8vw, .98rem); line-height: 1.68; max-width: 62ch; }
+.kicker-monogram { padding: 2px 8px; border-radius: 999px; background: linear-gradient(135deg, #fde68a, #f59e0b); color: #081124; font: 800 .68rem var(--f-mono); letter-spacing: .05em; flex: none; }
+.esim-hero-copy h1 { margin: 0; font: 800 clamp(1.32rem, 3.2vw, 2.12rem)/1.34 var(--f-ui); color: #fff; letter-spacing: -.01em; }
+.esim-hero-copy p { margin: 0; color: #cbd5e1; font-size: clamp(.88rem, 1.8vw, .98rem); line-height: 1.66; max-width: 62ch; }
 .esim-search-box { display: flex; align-items: center; gap: 10px; background: #ffffff; color: #0f172a; border-radius: 14px; padding: 5px 14px; max-width: 580px; border: 1px solid rgba(255, 255, 255, .2); box-shadow: 0 10px 24px rgba(0, 0, 0, .2); }
 :root[data-theme="dark"] .esim-search-box { background: #0f1a2e; color: #f1f5f9; border-color: rgba(148, 163, 184, .24); }
-.esim-search-ic { color: #0284c7; display: grid; place-items: center; }
+.esim-search-ic { color: #0284c7; display: grid; place-items: center; flex: none; }
 .esim-search-ic svg { width: 19px; height: 19px; }
-.esim-search-box input { flex: 1; border: 0; background: transparent; color: inherit; font: 500 .94rem var(--f-ui); min-height: 38px; outline: none; }
+.esim-search-box input { flex: 1; min-width: 0; border: 0; background: transparent; color: inherit; font: 500 .95rem var(--f-ui); min-height: 40px; outline: none; }
 
 /* Hero Quick Action Buttons */
 .esim-hero-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
-.esim-hero-btn { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 38px; padding: 0 14px; border-radius: 11px; font: 600 .82rem var(--f-ui); text-decoration: none; cursor: pointer; transition: all .15s ease; white-space: nowrap; }
+.esim-hero-btn { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 40px; padding: 0 14px; border-radius: 11px; font: 600 .83rem var(--f-ui); text-decoration: none; cursor: pointer; transition: all .15s ease; white-space: nowrap; }
 .esim-hero-btn svg { width: 16px; height: 16px; flex: none; }
 .esim-hero-btn.primary { background: linear-gradient(135deg, #0ea5e9, #2563eb); color: #fff; border: 1px solid rgba(125, 211, 252, .35); box-shadow: 0 6px 16px rgba(14, 165, 233, .28); }
 .esim-hero-btn.primary:hover { transform: translateY(-1px); filter: brightness(1.06); }
@@ -750,7 +750,7 @@ body.shop { background: var(--bg); min-height: 100dvh; display: flex; flex-direc
 .esim-pass-step { display: inline-flex; align-items: center; gap: 5px; font-weight: 600; white-space: nowrap; }
 .esim-pass-step i { width: 18px; height: 18px; border-radius: 50%; background: rgba(251, 191, 36, .2); color: #fbbf24; font: 700 .68rem var(--f-mono); display: grid; place-items: center; flex: none; }
 .esim-pass-arrow { color: #38bdf8; font-weight: 700; opacity: .75; }
-.esim-showcase-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: .76rem; color: #cbd5e1; }
+.esim-showcase-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: .76rem; color: #cbd5e1; flex-wrap: wrap; }
 .esim-showcase-status { display: inline-flex; align-items: center; gap: 6px; color: #34d399; font-weight: 600; }
 
 /* SIM & H-SIM Vector Chip Emblems */
@@ -760,8 +760,9 @@ body.shop { background: var(--bg); min-height: 100dvh; display: flex; flex-direc
 
 /* Unified Filter Toolbar: Service Type Tabs & Carrier Pills */
 .esim-controls { display: grid; gap: 12px; padding: 14px 16px; border-radius: 18px; background: var(--surface); border: 1px solid var(--line); box-shadow: var(--shadow-sm); }
-.esim-type-tabs { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 2px; }
-.esim-type-tab { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 40px; padding: 0 15px; border-radius: 12px; border: 1.5px solid var(--line); background: var(--surface-2); color: var(--ink-2); font: 600 .85rem var(--f-ui); cursor: pointer; white-space: nowrap; transition: all .15s; }
+.esim-type-tabs { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 2px; -webkit-overflow-scrolling: touch; scrollbar-width: none; scroll-snap-type: x proximity; }
+.esim-type-tabs::-webkit-scrollbar { display: none; }
+.esim-type-tab { scroll-snap-align: start; display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 42px; padding: 0 15px; border-radius: 12px; border: 1.5px solid var(--line); background: var(--surface-2); color: var(--ink-2); font: 600 .85rem var(--f-ui); cursor: pointer; white-space: nowrap; transition: all .15s; }
 .esim-type-tab svg { width: 17px; height: 17px; color: var(--muted); flex: none; }
 .esim-type-tab small { padding: 2px 8px; border-radius: 999px; background: var(--surface); color: var(--muted); font: 600 .73rem var(--f-mono); }
 .esim-type-tab:hover { border-color: var(--line-strong); color: var(--ink); }
@@ -769,18 +770,19 @@ body.shop { background: var(--bg); min-height: 100dvh; display: flex; flex-direc
 .esim-type-tab[aria-selected="true"] svg { color: #fff; }
 .esim-type-tab[aria-selected="true"] small { background: rgba(255, 255, 255, .22); color: #fff; }
 
-.esim-carrier-strip { display: flex; gap: 8px; overflow-x: auto; padding-top: 10px; border-top: 1px solid var(--line); }
-.esim-carrier-pill { display: inline-flex; align-items: center; gap: 9px; padding: 7px 13px; border-radius: 12px; border: 1.5px solid var(--line); background: var(--surface-2); color: var(--ink); cursor: pointer; white-space: nowrap; transition: all .15s; }
+.esim-carrier-strip { display: flex; gap: 8px; overflow-x: auto; padding-top: 10px; border-top: 1px solid var(--line); -webkit-overflow-scrolling: touch; scrollbar-width: none; scroll-snap-type: x proximity; }
+.esim-carrier-strip::-webkit-scrollbar { display: none; }
+.esim-carrier-pill { scroll-snap-align: start; display: inline-flex; align-items: center; gap: 9px; padding: 7px 13px; border-radius: 12px; border: 1.5px solid var(--line); background: var(--surface-2); color: var(--ink); cursor: pointer; white-space: nowrap; transition: all .15s; }
 .esim-carrier-pill:hover { border-color: var(--line-strong); background: var(--surface); }
 .esim-carrier-pill[aria-pressed="true"] { border-color: var(--co, var(--primary)); background: color-mix(in srgb, var(--co, var(--primary)) 10%, var(--surface)); box-shadow: 0 0 0 3px color-mix(in srgb, var(--co, var(--primary)) 16%, transparent); }
-.esim-carrier-all-ic { width: 32px; height: 32px; border-radius: 9px; background: var(--surface); color: var(--primary); display: grid; place-items: center; border: 1px solid var(--line); }
+.esim-carrier-all-ic { width: 32px; height: 32px; border-radius: 9px; background: var(--surface); color: var(--primary); display: grid; place-items: center; border: 1px solid var(--line); flex: none; }
 .esim-carrier-all-ic svg { width: 17px; height: 17px; }
 .esim-carrier-meta { display: grid; text-align: start; line-height: 1.22; }
 .esim-carrier-meta b { font-size: .84rem; }
 .esim-carrier-meta small { font-size: .72rem; color: var(--muted); }
 
 /* Proprietary H-SIM Telecom Pass Grid & Cards */
-.esim-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(295px, 1fr)); gap: 16px; }
+.esim-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 285px), 1fr)); gap: 16px; }
 .esim-card { position: relative; display: flex; flex-direction: column; gap: 12px; padding: 18px; border-radius: 20px; background: var(--surface); border: 1.5px solid var(--line); box-shadow: var(--shadow-sm); transition: transform .16s ease, box-shadow .16s ease, border-color .16s ease; overflow: hidden; }
 .esim-card::before { content: ""; position: absolute; inset-block-start: 0; inset-inline: 0; height: 4px; background: var(--co, var(--primary)); opacity: .9; }
 .esim-card:hover { transform: translateY(-2px); box-shadow: var(--shadow-md); border-color: color-mix(in srgb, var(--co, var(--primary)) 55%, var(--line)); }
@@ -807,17 +809,19 @@ body.shop { background: var(--bg); min-height: 100dvh; display: flex; flex-direc
 .esim-data-main { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .esim-data-col { display: grid; gap: 2px; }
 .esim-data-col.end { text-align: end; }
-.esim-data-col small { font-size: .72rem; color: var(--muted); font-weight: 600; }
-.esim-data-col strong { font: 800 1.24rem/1.15 var(--f-mono); color: var(--ink); letter-spacing: -.02em; }
+.esim-data-col small { display: inline-flex; align-items: center; gap: 4px; font-size: .72rem; color: var(--muted); font-weight: 600; }
+.esim-data-col small svg { width: 14px; height: 14px; color: var(--co, var(--primary)); }
+.esim-data-col.end small { justify-content: flex-end; }
+.esim-data-col strong { font: 800 clamp(1.12rem, 3.8vw, 1.24rem)/1.15 var(--f-mono); color: var(--ink); letter-spacing: -.02em; }
 .esim-data-col b { font: 700 .92rem/1.2 var(--f-ui); color: var(--ink); }
 .esim-data-sep { width: 1px; height: 28px; background: color-mix(in srgb, var(--co, var(--primary)) 25%, var(--line)); flex: none; }
 
 /* Specification Table Rows inside Plan Card */
 .esim-spec-box { border-radius: 14px; background: var(--surface-2); border: 1px solid var(--line); padding: 10px 12px; display: grid; gap: 7px; }
-.esim-spec-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: .83rem; padding-top: 6px; border-top: 1px solid color-mix(in srgb, var(--line) 65%, transparent); }
+.esim-spec-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: .83rem; padding-top: 6px; border-top: 1px solid color-mix(in srgb, var(--line) 65%, transparent); flex-wrap: wrap; }
 .esim-spec-row:first-child { padding-top: 0; border-top: 0; }
 .esim-spec-k { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-weight: 500; }
-.esim-spec-k svg { width: 15px; height: 15px; color: var(--co, var(--primary)); }
+.esim-spec-k svg { width: 15px; height: 15px; color: var(--co, var(--primary)); flex: none; }
 .esim-spec-v { color: var(--ink); font-weight: 600; text-align: end; }
 .esim-spec-row.highlight .esim-spec-v { font: 700 1.05rem var(--f-mono); color: var(--ink); }
 .esim-spec-row.esim-qr-row .esim-spec-v { color: var(--primary); font-size: .79rem; }
@@ -840,30 +844,30 @@ body.shop { background: var(--bg); min-height: 100dvh; display: flex; flex-direc
 .esim-price-val b { font: 800 1.35rem var(--f-mono); color: var(--ink); }
 
 .esim-card-btns { width: 100%; display: grid; gap: 8px; }
-.esim-card-btns.has-two { grid-template-columns: 1fr 1.25fr; }
+.esim-card-btns.has-two { grid-template-columns: 1fr 1.22fr; }
 .esim-card-btns.has-one { grid-template-columns: 1fr; }
-.esim-card-btns .btn { width: 100%; min-height: 42px; padding: 0 12px; border-radius: 12px; font-size: .86rem; justify-content: center; white-space: nowrap; }
+.esim-card-btns .btn { width: 100%; min-height: 44px; padding: 0 12px; border-radius: 12px; font-size: .86rem; justify-content: center; white-space: nowrap; }
 .esim-card-btns .btn svg { width: 16px; height: 16px; flex: none; }
 
 /* H-SIM Brand Charter Pillars Section */
-.esim-brand-pillars { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; margin-top: 4px; }
+.esim-brand-pillars { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr)); gap: 14px; margin-top: 4px; }
 .esim-pillar-card { display: flex; align-items: flex-start; gap: 13px; padding: 16px 18px; border-radius: 18px; background: var(--surface); border: 1px solid var(--line); box-shadow: var(--shadow-sm); transition: border-color .15s ease, transform .15s ease; }
 .esim-pillar-card:hover { border-color: color-mix(in srgb, var(--primary) 42%, var(--line)); transform: translateY(-1px); }
 .esim-pillar-ic { width: 42px; height: 42px; border-radius: 12px; background: linear-gradient(135deg, #081124, #142c54); color: #38bdf8; display: grid; place-items: center; flex: none; border: 1px solid rgba(56, 189, 248, .28); box-shadow: 0 4px 10px rgba(8, 17, 36, .14); }
 .esim-pillar-ic svg { width: 22px; height: 22px; }
 .esim-pillar-ic .esim-chip-svg { width: 28px; height: 22px; }
 .esim-pillar-card > div { display: grid; gap: 4px; }
-.esim-pillar-card strong { font: 700 .94rem var(--f-ui); color: var(--ink); }
+.esim-pillar-card strong, .esim-pillar-card h3 { margin: 0; font: 700 .94rem var(--f-ui); color: var(--ink); }
 .esim-pillar-card p { margin: 0; font-size: .82rem; color: var(--muted); line-height: 1.62; }
 
 /* Checkout, Payment & Order Cards (With Proper Card Padding) */
 .shop .card.empty { padding: 32px 20px; width: min(100%, 660px); justify-self: center; }
-.shop-form, .shop-pay, .shop-status, .shop-qr-modern, .shop-instant-box { padding: clamp(18px, 3vw, 26px); border-radius: 20px; display: grid; gap: 16px; width: min(100%, 680px); justify-self: center; box-shadow: var(--shadow-sm); }
+.shop-form, .shop-pay, .shop-status, .shop-qr-modern, .shop-instant-box { padding: clamp(16px, 3vw, 26px); border-radius: 20px; display: grid; gap: 16px; width: min(100%, 680px); justify-self: center; box-shadow: var(--shadow-sm); }
 .shop-card-topbar { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; padding-bottom: 12px; border-bottom: 1px solid var(--line); }
 .esim-checkout-head { padding: 14px 16px; border-radius: 16px; background: var(--surface-2); border: 1px solid var(--line); }
 .esim-ready-notice { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-radius: 14px; background: var(--primary-soft); border: 1px solid color-mix(in srgb, var(--primary) 30%, transparent); color: var(--ink); }
 .esim-ready-notice > svg { width: 24px; height: 24px; color: var(--primary); flex: none; }
-.shop-mode-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 10px; }
+.shop-mode-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 210px), 1fr)); gap: 10px; }
 .shop-mode-card { display: grid; gap: 5px; padding: 14px; border-radius: 14px; border: 1.5px solid var(--line); background: var(--surface); color: var(--ink); text-align: start; cursor: pointer; transition: all .15s; }
 .shop-mode-card svg { width: 20px; height: 20px; color: var(--primary); }
 .shop-mode-card small { color: var(--muted); font-size: .76rem; line-height: 1.45; }
@@ -871,10 +875,10 @@ body.shop { background: var(--bg); min-height: 100dvh; display: flex; flex-direc
 .shop-breakdown-box { padding: 14px 16px; border-radius: 14px; background: var(--surface-2); border: 1px solid var(--line); display: grid; gap: 8px; }
 .shop-breakdown-box h4 { margin: 0; display: flex; align-items: center; gap: 6px; font-size: .88rem; color: var(--ink); }
 .shop-breakdown-box h4 svg { width: 17px; height: 17px; color: var(--good); }
-.shop-bd-row { display: flex; justify-content: space-between; align-items: center; font-size: .88rem; color: var(--ink-2); }
-.shop-bd-total { display: flex; justify-content: space-between; align-items: center; padding-top: 8px; border-top: 1px dashed var(--line); font-size: 1.02rem; color: var(--ink); }
+.shop-bd-row { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: .88rem; color: var(--ink-2); }
+.shop-bd-total { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding-top: 8px; border-top: 1px dashed var(--line); font-size: 1.02rem; color: var(--ink); }
 .esim-consent-wrap { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding: 12px 14px; border-radius: 14px; background: var(--surface-2); border: 1px solid var(--line); font-size: .84rem; }
-.esim-consent-label { display: inline-flex; align-items: center; gap: 9px; cursor: pointer; color: var(--ink-2); flex: 1; min-width: 220px; font-weight: 500; }
+.esim-consent-label { display: inline-flex; align-items: center; gap: 9px; cursor: pointer; color: var(--ink-2); flex: 1; min-width: min(100%, 220px); font-weight: 500; }
 .esim-consent-label input { width: 18px; height: 18px; accent-color: var(--primary); flex: none; cursor: pointer; }
 .link-btn { border: 0; background: none; color: var(--primary); font: inherit; font-weight: 600; text-decoration: underline; cursor: pointer; padding: 2px 4px; }
 
@@ -882,12 +886,11 @@ body.shop { background: var(--bg); min-height: 100dvh; display: flex; flex-direc
 .shop-amount { font: 700 1.38rem var(--f-mono); color: var(--primary); }
 .shop-pay h3 { margin: 0; font: 700 1.02rem var(--f-ui); color: var(--ink); }
 .shop-pay-kvs { display: grid; gap: 8px; }
-.shop-kv { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 14px; border-radius: 12px; background: var(--surface-2); border: 1px solid var(--line); }
-.shop-kv > span { color: var(--muted); font-size: .85rem; min-width: 120px; }
+.shop-kv { display: flex; align-items: center; justify-content: space-between; gap: 8px 10px; padding: 10px 14px; border-radius: 12px; background: var(--surface-2); border: 1px solid var(--line); flex-wrap: wrap; }
+.shop-kv > span { color: var(--muted); font-size: .84rem; min-width: 110px; }
 .shop-kv > b { flex: 1; font: 700 .98rem var(--f-ui); color: var(--ink); }
 .shop-kv > b.ltr { text-align: end; }
 .shop-steps { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
-@media (max-width: 560px) { .shop-steps { grid-template-columns: 1fr; } }
 .shop-steps span { display: inline-flex; align-items: center; gap: 8px; padding: 7px 12px; border-radius: 12px; background: var(--surface-2); border: 1px solid var(--line); color: var(--muted); font: 600 .78rem var(--f-ui); }
 .shop-steps i { width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; background: var(--surface-3); font-style: normal; font-size: .74rem; flex: none; }
 .shop-steps .done { color: var(--good); border-color: color-mix(in srgb, var(--good) 35%, var(--line)); background: var(--good-soft); }
@@ -904,7 +907,7 @@ body.shop { background: var(--bg); min-height: 100dvh; display: flex; flex-direc
 .shop-lpa-box { padding: 12px; border-radius: 14px; background: var(--surface-2); border: 1px solid var(--line); display: grid; gap: 6px; }
 .shop-lpa-row { display: flex; align-items: center; justify-content: center; gap: 8px; flex-wrap: wrap; }
 .shop-lpa-row code { padding: 6px 10px; border-radius: 8px; background: var(--surface); border: 1px solid var(--line); font-size: .82rem; overflow-wrap: anywhere; }
-.shop-qr-guides { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px; text-align: start; }
+.shop-qr-guides { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 230px), 1fr)); gap: 12px; text-align: start; }
 .shop-qr-guide-col { padding: 12px 14px; border-radius: 14px; background: var(--surface-2); border: 1px solid var(--line); font-size: .84rem; }
 .shop-qr-guide-col ol { margin: 8px 0 0; padding-inline-start: 18px; display: grid; gap: 4px; color: var(--ink-2); }
 .tile.pulse { animation: shop-pulse 1.6s ease-in-out infinite; }
@@ -926,7 +929,7 @@ body.shop { background: var(--bg); min-height: 100dvh; display: flex; flex-direc
 /* Dedicated Secondary Pages (Compat, Terms, eSIM Policy, Guarantee, Track) */
 .esim-page-wrap { width: min(100%, 920px); margin: 0 auto; display: grid; gap: 18px; }
 .esim-page-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-start; gap: 14px; padding-bottom: 14px; border-bottom: 1px solid var(--line); }
-.esim-page-head h1 { margin: 6px 0 4px; font: 700 clamp(1.35rem, 2.5vw, 1.75rem) var(--f-ui); color: var(--ink); }
+.esim-page-head h1 { margin: 6px 0 4px; font: 700 clamp(1.3rem, 2.5vw, 1.75rem) var(--f-ui); color: var(--ink); }
 .esim-page-head p { margin: 0; font-size: .92rem; }
 #compat-page-body, #compat-sheet-body, .esim-legal-page-body { display: grid; gap: 16px; }
 .esim-page-cta { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 14px; padding: 18px 20px; border-radius: 16px; background: linear-gradient(135deg, var(--primary-soft), var(--surface)); border: 1px solid color-mix(in srgb, var(--primary) 28%, var(--line)); box-shadow: var(--shadow-sm); }
@@ -937,7 +940,7 @@ body.shop { background: var(--bg); min-height: 100dvh; display: flex; flex-direc
 .esim-eid-icon svg { width: 22px; height: 22px; }
 .esim-eid-check kbd, .esim-legal-list kbd { padding: 2px 7px; border-radius: 6px; background: var(--surface); border: 1px solid var(--line); font: 700 .82rem var(--f-mono); }
 
-.esim-info-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px; }
+.esim-info-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 230px), 1fr)); gap: 12px; }
 .esim-info-card { padding: 16px; border-radius: 16px; background: var(--surface); border: 1px solid var(--line); display: grid; gap: 8px; align-content: start; box-shadow: var(--shadow-sm); }
 .esim-info-card strong, .esim-info-card h4 { margin: 0; font: 700 .96rem var(--f-ui); color: var(--ink); }
 .esim-info-card p { margin: 0; font-size: .85rem; line-height: 1.65; }
@@ -945,10 +948,10 @@ body.shop { background: var(--bg); min-height: 100dvh; display: flex; flex-direc
 .esim-step-num svg { width: 17px; height: 17px; }
 
 .esim-compat-search-card { padding: 16px 18px; border-radius: 16px; background: var(--surface); border: 1px solid color-mix(in srgb, var(--primary) 30%, var(--line)); display: grid; gap: 12px; box-shadow: var(--shadow-sm); }
-.esim-sec-title { display: inline-flex; align-items: center; gap: 8px; font: 700 .96rem var(--f-ui); color: var(--ink); }
+.esim-sec-title { display: inline-flex; align-items: center; gap: 8px; font: 700 .94rem var(--f-ui); color: var(--ink); }
 .esim-sec-title svg { width: 19px; height: 19px; color: var(--primary); flex: none; }
 .esim-compat-search-row { display: flex; gap: 10px; flex-wrap: wrap; }
-.esim-compat-search-row input { flex: 1 1 240px; }
+.esim-compat-search-row input { flex: 1 1 220px; }
 .esim-compat-result { display: grid; gap: 6px; padding: 12px 14px; border-radius: 12px; font-size: .88rem; border: 1px solid var(--line); }
 .esim-compat-result svg { width: 20px; height: 20px; flex: none; }
 .esim-compat-result.is-ok { background: var(--good-soft); border-color: color-mix(in srgb, var(--good) 35%, transparent); color: var(--ink); }
@@ -958,7 +961,7 @@ body.shop { background: var(--bg); min-height: 100dvh; display: flex; flex-direc
 .esim-compat-result.is-bad { background: var(--bad-soft); border-color: color-mix(in srgb, var(--bad) 35%, transparent); color: var(--ink); }
 .esim-compat-result.is-bad svg { color: var(--bad); }
 
-.esim-brand-tabs { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 8px; }
+.esim-brand-tabs { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 160px), 1fr)); gap: 8px; }
 .esim-brand-tab { min-height: 48px; padding: 10px 14px; border-radius: 12px; background: var(--surface); border: 1.5px solid var(--line); color: var(--ink-2); font: 600 .85rem var(--f-ui); cursor: pointer; transition: all .15s; display: inline-flex; flex-direction: column; align-items: flex-start; justify-content: center; gap: 2px; text-decoration: none; }
 .esim-brand-tab small { font-size: .74rem; font-weight: 500; opacity: .8; }
 .esim-brand-tab:hover { border-color: var(--primary); color: var(--primary); }
@@ -969,7 +972,7 @@ body.shop { background: var(--bg); min-height: 100dvh; display: flex; flex-direc
 .esim-compat-note svg { width: 16px; height: 16px; color: var(--warn); flex: none; margin-top: 2px; }
 
 .esim-compat-box, .esim-legal-panel { padding: 18px 20px; border-radius: 16px; background: var(--surface); border: 1px solid var(--line); box-shadow: var(--shadow-sm); }
-.esim-compat-list { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px; }
+.esim-compat-list { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 210px), 1fr)); gap: 8px; }
 .esim-compat-list li { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-radius: 10px; background: var(--surface-2); border: 1px solid var(--line); font-size: .84rem; font-weight: 600; color: var(--ink); }
 .esim-compat-list li svg { width: 16px; height: 16px; color: var(--good); flex: none; }
 
@@ -979,18 +982,17 @@ body.shop { background: var(--bg); min-height: 100dvh; display: flex; flex-direc
 .esim-legal-hero p { margin: 0; font-size: .88rem; line-height: 1.6; }
 .esim-legal-page-body .esim-legal-panel h4, .esim-legal-panel h4 { margin: 0 0 10px; font: 700 1rem var(--f-ui); color: var(--ink); }
 .esim-legal-list { margin: 0; padding-inline-start: 20px; display: grid; gap: 8px; font-size: .9rem; color: var(--ink-2); line-height: 1.7; }
-.esim-policy-table-wrap { overflow-x: auto; border-radius: 12px; border: 1px solid var(--line); background: var(--surface); }
+.esim-policy-table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; border-radius: 12px; border: 1px solid var(--line); background: var(--surface); }
 .esim-policy-table { width: 100%; border-collapse: collapse; font-size: .86rem; text-align: start; }
 .esim-policy-table th, .esim-policy-table td { padding: 10px 12px; border-bottom: 1px solid var(--line); vertical-align: middle; }
 .esim-policy-table th { background: var(--surface-2); font: 700 .8rem var(--f-ui); color: var(--ink-2); white-space: nowrap; }
 .esim-policy-table tr:last-child td { border-bottom: 0; }
 
 /* Track Order Page */
-.esim-track-card { padding: clamp(18px, 3vw, 24px); border-radius: 18px; border-color: color-mix(in srgb, var(--primary) 30%, var(--line)); box-shadow: var(--shadow-sm); }
+.esim-track-card { padding: clamp(16px, 3vw, 24px); border-radius: 18px; border-color: color-mix(in srgb, var(--primary) 30%, var(--line)); box-shadow: var(--shadow-sm); }
 .esim-track-form { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px; width: 100%; }
-.esim-track-form .field { flex: 1 1 260px; margin: 0; }
+.esim-track-form .field { flex: 1 1 240px; margin: 0; }
 .esim-track-form .btn.lg { width: auto; min-width: 190px; }
-@media (max-width: 560px) { .esim-track-form .btn.lg { width: 100%; } }
 
 /* Footer */
 .shop-footer { border-top: 1px solid var(--line); background: var(--surface); padding: 24px 16px; margin-top: auto; }
@@ -1003,8 +1005,134 @@ body.shop { background: var(--bg); min-height: 100dvh; display: flex; flex-direc
 .shop-footer-link:hover svg { color: var(--primary); }
 .shop-footer-link.active { border-color: var(--primary); background: var(--primary-soft); color: var(--primary); }
 .shop-footer-link.active svg { color: var(--primary); }
+
+/* ============================================================================
+   Mobile Phone Ergonomics & Responsive Refinements (<= 760px & <= 480px)
+   ============================================================================ */
+@media (max-width: 760px) {
+  /* Hide top desktop nav bar and activate thumb-friendly bottom dock */
+  .shop-top { padding: calc(8px + env(safe-area-inset-top, 0px)) 12px 8px; }
+  .shop-top .shop-nav { display: none; }
+  .shop-brand-mark { width: 38px; height: 38px; border-radius: 10px; }
+  .shop-brand-text strong { font-size: .96rem; }
+  .shop-brand-text small { font-size: .7rem; max-width: 210px; }
+  .shop-main { padding: 14px 12px 36px; gap: 14px; }
+  .shop-footer { padding: 20px 12px calc(82px + env(safe-area-inset-bottom, 0px)); }
+
+  /* Prevent iOS Safari auto-zoom when focusing inputs */
+  .esim-search-box input,
+  .shop .input,
+  .shop select,
+  .shop textarea { font-size: 16px !important; }
+
+  /* Fixed Bottom Navigation Dock for Mobile */
+  .shop-bottom-nav {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 2px;
+    position: fixed;
+    inset-inline: 0;
+    bottom: 0;
+    z-index: 30;
+    background: color-mix(in srgb, var(--surface) 94%, transparent);
+    backdrop-filter: blur(18px);
+    border-top: 1px solid var(--line);
+    padding: 5px 6px calc(5px + env(safe-area-inset-bottom, 0px));
+    box-shadow: 0 -6px 22px rgba(8, 17, 36, .1);
+  }
+  .shop-bnav-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
+    min-height: 48px;
+    padding: 4px 2px;
+    border-radius: 11px;
+    border: 0;
+    background: transparent;
+    color: var(--muted);
+    font: 600 .69rem/1.15 var(--f-ui);
+    text-decoration: none;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: color .15s ease, background .15s ease;
+  }
+  .shop-bnav-item svg { width: 19px; height: 19px; flex: none; }
+  .shop-bnav-item.active {
+    color: var(--primary);
+    background: color-mix(in srgb, var(--primary) 11%, transparent);
+    font-weight: 700;
+  }
+  .shop-bnav-ic-wrap { position: relative; display: inline-grid; place-items: center; }
+  .shop-bnav-badge {
+    position: absolute;
+    top: -5px;
+    inset-inline-end: -9px;
+    min-width: 15px;
+    height: 15px;
+    padding: 0 4px;
+    border-radius: 999px;
+    background: var(--primary);
+    color: #fff;
+    font: 700 .62rem var(--f-mono);
+    display: grid;
+    place-items: center;
+  }
+}
+
+@media (max-width: 560px) {
+  /* Compact Hero & H-SIM Showcase Pass on Mobile */
+  .esim-hero { padding: 16px 14px; border-radius: 18px; }
+  .esim-hero-kicker { font-size: .72rem; padding: 4px 10px 4px 6px; max-width: 100%; }
+  .esim-hero-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; width: 100%; }
+  .esim-hero-actions .esim-hero-btn.primary { grid-column: 1 / -1; min-height: 44px; font-size: .88rem; }
+  .esim-hero-actions .esim-hero-btn.ghost { min-height: 40px; font-size: .77rem; padding: 0 8px; }
+  .esim-trust-row { gap: 6px 12px; font-size: .75rem; }
+
+  .esim-showcase-card { padding: 14px; border-radius: 16px; gap: 10px; }
+  .esim-showcase-top strong { font-size: .95rem; }
+  .esim-showcase-emblems .esim-chip-svg.lg { width: 38px; height: 30px; }
+  .esim-showcase-emblems .hsim-logo-svg { width: 32px; height: 32px; }
+  .esim-showcase-specs { padding: 9px 10px; gap: 6px; }
+  .esim-showcase-specs b { font-size: .74rem; }
+  .esim-pass-journey { flex-wrap: wrap; justify-content: center; gap: 6px 8px; padding: 8px 10px; font-size: .72rem; }
+
+  /* Filter Toolbar & Carrier Strip */
+  .esim-controls { padding: 12px; border-radius: 16px; gap: 10px; }
+  .esim-type-tab { min-height: 40px; padding: 0 12px; font-size: .8rem; }
+  .esim-carrier-pill { padding: 6px 11px; }
+
+  /* Package Cards on Phone Screens */
+  .esim-card { padding: 15px; border-radius: 18px; gap: 10px; }
+  .esim-card-foot::before { inset-inline-start: -23px; }
+  .esim-card-foot::after { inset-inline-end: -23px; }
+  .esim-card-btns .btn { min-height: 44px; font-size: .83rem; padding: 0 10px; }
+
+  /* Horizontal Compact 3-Step Progress Bar on Mobile Checkout/Order */
+  .shop-steps { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+  .shop-steps span { flex-direction: column; text-align: center; justify-content: center; padding: 7px 4px; font-size: .7rem; gap: 4px; line-height: 1.25; }
+  .shop-steps i { width: 20px; height: 20px; font-size: .7rem; }
+
+  /* Checkout, Consent & Secondary Page CTAs */
+  .esim-consent-wrap .btn { width: 100%; justify-content: center; min-height: 40px; }
+  .esim-track-form .btn.lg { width: 100%; }
+  .esim-page-cta { padding: 15px; }
+  .esim-page-cta .btn, .esim-page-cta .row { width: 100%; }
+  .esim-page-cta .row .btn { flex: 1; justify-content: center; }
+  .esim-compat-box, .esim-legal-panel { padding: 14px 15px; }
+  .esim-legal-hero, .esim-eid-check { padding: 14px 15px; gap: 11px; }
+}
+
+@media (max-width: 390px) {
+  .shop-brand-text small { display: none; }
+  .shop-wa-btn .shop-wa-label { font-size: .75rem; }
+  .esim-card-btns.has-two { grid-template-columns: 1fr; }
+  .esim-card-btns.has-two .btn.primary { order: -1; }
+}
+
 @media print {
-  .shop-top, .shop-footer, .no-print, .shop-pay { display: none !important; }
+  .shop-top, .shop-footer, .shop-bottom-nav, .no-print, .shop-pay { display: none !important; }
   body.shop { background: #fff; }
 }
 
