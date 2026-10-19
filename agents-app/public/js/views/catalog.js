@@ -6,7 +6,8 @@ import { openOfferForm } from './offers.js';
 // A tab is one supplier's one system. Each has its own packages, its own profit percentage, its own sync and its own
 // list of price changes awaiting the manager. Packages the manager typed by hand belong to no supplier and are shown
 // with art-topup's two tabs, the ones that existed before any supplier.
-const V = { tab: 'invoice', q: '', msg: {} };
+// co: the company shown (0 = all); sort: how packages are ordered in a company; open: companies unfolded.
+const V = { tab: 'invoice', q: '', msg: {}, co: 0, sort: 'size', open: new Set() };
 const TABS = {
   invoice: { label: 'الفواتير', icon: 'sim', color: '', supplier: 'art', kind: 'invoice', note: 'رزم تفعيل خط جديد بشريحة. تظهر للوكيل في «اشتراك فاتورة جديدة».' },
   card: { label: 'كروت الشحن', icon: 'card', color: 'green', supplier: 'art', kind: 'card', note: 'كروت وحزم ورصيد لرقم موجود. تظهر للوكيل في «زبون دفع مسبق» و«تمديد».' },
@@ -466,11 +467,48 @@ function packageCardAdmin(p) {
   </article>`;
 }
 
+// One package as a compact row: what it is, what it costs and earns, and its actions.
+function packageRowAdmin(p) {
+  const profit = p.price - p.cost;
+  const pills = [
+    p.active ? '' : p.gone ? `<span class="pill s-expiring">لم تعد عند ${supplierName(p)}</span>` : '<span class="pill">مخفية</span>',
+    p.shopPrice ? `<span class="pill s-active">المتجر ${money(p.shopPrice)}</span>` : '',
+    p.artPending ? '<span class="pill s-expiring">سعر جديد</span>' : '',
+  ].join('');
+  return `<article class="item pk-row ${p.active ? '' : 'inactive'}">
+    <div class="item-top"><div class="grow"><b class="item-title">${esc(p.name)}</b> ${pills}
+      <div class="item-sub">${p.dataGb ? `<span><b>${fmtNum(p.dataGb)}</b> GB</span>` : ''}<span>${p.days ? `${p.days} يوماً` : 'شهرية'}</span>
+        <span>التكلفة ${money(p.cost)}</span><span>للوكيل <b>${money(p.price)}</b></span><span class="${profit < 0 ? 'minus' : 'plus'}">ربح ${money(profit)}</span>
+        ${p.artCode ? `<span class="mono ltr">${esc(p.artCode)}</span>` : ''}${p.edited ? '<span>معدّلة</span>' : ''}</div></div>
+      <div class="item-actions">
+        <button class="icon-btn pk-act" data-action="toggle-package" data-id="${p.id}" title="${p.active ? 'إخفاء عن الوكلاء' : 'إظهار للوكلاء'}" aria-label="${p.active ? 'إخفاء' : 'إظهار'}">${icon(p.active ? 'eyeOff' : 'eye')}</button>
+        <button class="icon-btn pk-act" data-action="edit-package" data-id="${p.id}" title="تعديل" aria-label="تعديل">${icon('edit')}</button>
+        <button class="icon-btn plain pk-act" data-action="delete-package" data-id="${p.id}" title="حذف" aria-label="حذف">${icon('trash')}</button></div></div>
+  </article>`;
+}
+// The order inside a company: what the supplier dropped last, extensions before new lines, then the chosen order.
+const SORTS = { size: 'الحجم', price: 'السعر', days: 'المدة', name: 'الاسم' };
+function sortPackages(list) {
+  const key = {
+    size: (a, b) => (a.dataGb ?? -1) - (b.dataGb ?? -1) || a.cost - b.cost,
+    price: (a, b) => a.cost - b.cost || (a.dataGb ?? 0) - (b.dataGb ?? 0),
+    days: (a, b) => (a.days || 30) - (b.days || 30) || a.cost - b.cost,
+    name: (a, b) => a.name.localeCompare(b.name, 'ar'),
+  }[V.sort] || (() => 0);
+  return [...list].sort((a, b) => (a.gone - b.gone) || (a.kind === b.kind ? 0 : a.kind === 'card' ? -1 : 1) || key(a, b));
+}
+
 export default {
   admin: true,
   title: () => ({ title: 'الشركات والرزم', subtitle: 'الفواتير وكروت الشحن: الأسعار والأحجام وما يظهر للوكلاء' }),
   async load() { [S.settings, , V.similar] = await Promise.all([api.get('/api/settings'), loadCatalog(true), api.get('/api/catalog/similar')]); },
   mount(root, ctx) {
+    root.querySelector('#pkg-sort')?.addEventListener('change', (e) => { V.sort = e.target.value; ctx.rerender(); });
+    // Which companies the manager unfolded stays as it is when the page redraws.
+    root.querySelectorAll('details.co-sec').forEach((d) => d.addEventListener('toggle', () => {
+      const id = Number(d.dataset.company);
+      if (d.open) V.open.add(id); else V.open.delete(id);
+    }));
     const box = root.querySelector('#pkg-q');
     box?.addEventListener('input', () => {
       V.q = box.value;
@@ -509,20 +547,35 @@ export default {
     const shown = mine.filter((p) => p.active).length;
     // Within a company: extensions first, then new lines.
     // Packages the supplier no longer lists go last.
-    const byKind = (a, b) => (a.gone - b.gone) || (a.kind === b.kind ? 0 : a.kind === 'card' ? -1 : 1);
     return `${tabs}${similarBanner()}${isSupplierView(vk) ? supplierBar(vk) : systemBar(v.systems[0])}<div class="page-head"><p><b>${t.label}:</b> ${t.note} ظاهرة للوكلاء ${shown} من ${mine.length}.</p>
         ${canAdd ? `<button class="btn btn-primary" data-action="add-package">${icon('plus')}رزمة جديدة</button>` : ''}</div>
       <div class="search-box">${icon('search', 'i lead')}<input class="input" id="pkg-q" type="search" placeholder="ابحث باسم الرزمة أو الشركة أو رمز المورّد…" value="${esc(V.q)}" aria-label="بحث في الرزم"></div>
-      ${companies.map((c) => {
-        const list = mine.filter((p) => p.companyId === c.id).sort(byKind);
+      ${(() => {
+        // The companies that have packages here, as chips; one chosen shows only it.
+        const cos = companies.filter((c) => packages.some((p) => p.companyId === c.id && inView(p, v)));
+        if (V.co && !cos.some((c) => c.id === V.co)) V.co = 0;
+        return `<div class="cat-tools">${cos.length > 1 ? `<div class="chips">${[{ id: 0, name: 'كل الشركات' }, ...cos].map((c) => `<button class="chip" data-action="pick-company" data-id="${c.id}" aria-pressed="${V.co === c.id}">${esc(c.name)}${c.id ? ` <span class="n">${mine.filter((p) => p.companyId === c.id).length}</span>` : ''}</button>`).join('')}</div>` : ''}
+          <label class="cat-sort">ترتيب الرزم <select class="input" id="pkg-sort">${Object.entries(SORTS).map(([k, l]) => `<option value="${k}" ${V.sort === k ? 'selected' : ''}>${l}</option>`).join('')}</select></label></div>`;
+      })()}
+      ${companies.filter((c) => !V.co || c.id === V.co).map((c) => {
+        const list = sortPackages(mine.filter((p) => p.companyId === c.id));
         if (!list.length && (term || !packages.some((p) => p.companyId === c.id && inView(p, v)))) return '';
-        return `<section class="list"><div class="section-title"><h2 style="display:flex;align-items:center;gap:10px">${companyLogo(c, 'xs')}${esc(c.name)}</h2>
-          ${canAdd ? `<button class="btn btn-sm btn-soft" data-action="add-package" data-company="${c.id}">${icon('plus')}رزمة</button>` : ''}</div>
-          <div class="pkg-grid">${list.map(packageCardAdmin).join('')}</div></section>`;
+        const visible = list.filter((p) => p.active).length;
+        const cheapest = list.filter((p) => p.active && p.cost > 0).reduce((m, p) => Math.min(m, p.cost), Infinity);
+        // Unfolded: a company searched for or chosen, one the manager opened, or the only one.
+        const open = term || V.co || V.open.has(c.id) || companies.filter((x) => mine.some((p) => p.companyId === x.id)).length === 1;
+        const groups = [['card', 'التمديد'], ['invoice', 'خط جديد']].map(([k, l]) => [l, list.filter((p) => p.kind === k)]).filter(([, l]) => l.length);
+        return `<details class="co-sec card" data-company="${c.id}" ${open ? 'open' : ''}>
+          <summary><span class="co-head">${companyLogo(c, 'xs')}<b>${esc(c.name)}</b></span>
+            <span class="co-meta">${visible} ظاهرة من ${list.length}${Number.isFinite(cheapest) ? ` · من ${money(cheapest)}` : ''}</span>
+            ${canAdd ? `<button class="btn btn-sm btn-soft" data-action="add-package" data-company="${c.id}">${icon('plus')}رزمة</button>` : ''}</summary>
+          ${groups.map(([label, l]) => `${groups.length > 1 || isSupplierView(vk) ? `<h3 class="co-kind">${label} <span class="muted">${l.length}</span></h3>` : ''}<div class="list">${l.map(packageRowAdmin).join('')}</div>`).join('')}
+        </details>`;
       }).join('') || empty(t.icon, term ? 'لا نتائج' : `لا توجد رزم في ${t.label}`, term ? '' : canAdd ? `أضفها يدوياً، أو اضغط «مزامنة ${t.label}» أعلى الصفحة.` : `اضغط «مزامنة ${t.label}» أعلى الصفحة.`)}`;
   },
   actions: {
-    tab(btn, e, ctx) { V.tab = btn.dataset.tab; ctx.rerender(); },
+    tab(btn, e, ctx) { V.tab = btn.dataset.tab; V.co = 0; ctx.rerender(); },
+    'pick-company'(btn, e, ctx) { V.co = Number(btn.dataset.id); ctx.rerender(); },
     'add-company': () => openCompanyForm(null),
     'edit-company': (btn) => openCompanyForm(S.catalog.companies.find((c) => c.id === Number(btn.dataset.id))),
     similar: (btn, e, ctx) => openSimilar(ctx),

@@ -712,3 +712,27 @@ body.shop { background: var(--bg); }
 .shop-qr { display: grid; gap: 12px; width: min(100%, 620px); justify-self: center; text-align: center; }
 .shop-qr img { width: min(260px, 100%); height: auto; aspect-ratio: 1; justify-self: center; padding: 10px; border-radius: 16px; background: #fff; border: 1px solid var(--line); }
 .shop-qr ol { text-align: start; margin: 0; padding-inline-start: 20px; display: grid; gap: 6px; color: var(--ink-2); font-size: .92rem; }
+
+/* Manager's packages: a section per company, a compact row per package */
+.cat-tools { display: grid; gap: 10px; }
+.cat-sort { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: .88rem; }
+.cat-sort select { width: auto; min-height: 38px; padding-block: 4px; }
+.co-sec { padding: 0; overflow: hidden; }
+.co-sec > summary { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 14px 16px; cursor: pointer; list-style: none; }
+.co-sec > summary::-webkit-details-marker { display: none; }
+.co-sec > summary::after { content: "▾"; margin-inline-start: auto; color: var(--muted); transition: transform .15s; }
+.co-sec:not([open]) > summary::after { transform: rotate(90deg); }
+.co-sec[open] > summary { border-bottom: 1px solid var(--line); }
+.co-head { display: flex; align-items: center; gap: 10px; font-size: 1.02rem; }
+.co-meta { color: var(--muted); font-size: .84rem; }
+.co-sec > .list { padding: 12px; gap: 8px; }
+.co-kind { padding: 12px 16px 0; font-size: .9rem; color: var(--ink-2); }
+.pk-row { padding: 10px 12px; box-shadow: none; }
+.pk-row .item-top { align-items: flex-start; flex-wrap: wrap; }
+.pk-row .item-title { font-size: .95rem; }
+.pk-row .pill { margin-inline-start: 4px; vertical-align: middle; }
+.pk-row.inactive { opacity: .62; }
+.pk-row .plus { color: var(--good); }
+.pk-row .minus { color: var(--bad, #d33); }
+.pk-row .icon-btn.pk-act { width: 38px; height: 38px; border-radius: 12px; box-shadow: none; }
+.pk-row .icon-btn.pk-act svg { width: 18px; height: 18px; }
