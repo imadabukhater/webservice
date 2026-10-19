@@ -1,11 +1,11 @@
 // Customer Storefront (/shop): Authentic eSIM & Telecom Plan Storefront.
 // Uses ES module imports from ./core.js and sheet() modals — zero emojis, crisp vector SVGs.
 import {
-  esc, icon, fmtMoney, fmtNum, fmtDateTime, fmtDate, specs, companyLogo,
+  esc, icon, fmtMoney, fmtNum, fmtDateTime, fmtDate, fmtTime, specs, companyLogo,
   fileToDataUrl, copyText, toast, supportHref, fmtPhone, sheet, closeSheet,
 } from './core.js';
 
-const MY_ORDERS_KEY = 'shop_orders_v1';
+const MY_ORDERS_KEY = 'agents.shop.orders';
 function savedOrderCodes() {
   try { return JSON.parse(localStorage.getItem(MY_ORDERS_KEY) || '[]').filter((x) => typeof x === 'string'); }
   catch { return []; }
@@ -33,10 +33,11 @@ const S = {
 const root = document.getElementById('shop');
 
 function getTheme() {
-  return localStorage.getItem('theme') || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+  return localStorage.getItem('agents.theme') || localStorage.getItem('theme') || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
 }
 function applyTheme(t) {
   document.documentElement.dataset.theme = t;
+  localStorage.setItem('agents.theme', t);
   localStorage.setItem('theme', t);
   const meta = document.querySelector('meta[name="theme-color"]');
   if (meta) meta.content = t === 'dark' ? '#09111f' : '#0f172a';
@@ -83,8 +84,17 @@ function isEsimPkg(pk) {
   return Boolean(pk && (pk.esim || pk.kind === 'esim'));
 }
 
+function pkgGb(pk) {
+  return Number(pk?.dataGb ?? pk?.gb ?? 0) || 0;
+}
+
+function isFeaturedPkg(pk) {
+  return Boolean(pk?.popular || pk?.featured);
+}
+
 function shell(body, { sub = '' } = {}) {
-  const name = S.data?.shopName || 'متجر الشرائح والباقات';
+  const name = S.data?.shopTitle || (S.data?.appName ? `متجر ${S.data.appName}` : 'متجر الشرائح والباقات');
+  const subtitle = sub || S.data?.shopSubtitle || 'متجر الشرائح الإلكترونية eSIM والباقات الفورية';
   const wa = supportHref(S.data?.supportWhatsapp, `مرحباً، أحتاج مساعدة في ${name}`);
   const dark = document.documentElement.dataset.theme === 'dark';
   const hash = location.hash.replace(/^#\/?/, '');
@@ -97,7 +107,7 @@ function shell(body, { sub = '' } = {}) {
           <span class="shop-brand-mark">${icon('sim')}</span>
           <span class="shop-brand-text">
             <strong>${esc(name)}</strong>
-            <small><span class="shop-live-dot"></span>${esc(sub || 'متجر الشرائح الإلكترونية eSIM والباقات الفورية')}</small>
+            <small><span class="shop-live-dot"></span>${esc(subtitle)}</small>
           </span>
         </a>
 
@@ -201,12 +211,12 @@ function bindGlobalTriggers(scope) {
 function openTrackSheet() {
   sheet({
     title: 'تتبّع حالة طلبك',
-    subtitle: 'أدخل رقم الطلب للاطلاع على حالة التفعيل أو عرض كود eSIM QR الخاص بك',
+    subtitle: 'أدخل رمز الطلب للاطلاع على حالة التفعيل أو عرض كود eSIM QR الخاص بك',
     body: `
       <form id="track-f" class="form">
         <div class="field">
-          <label for="f-code">رقم الطلب</label>
-          <input id="f-code" name="code" class="ltr" required placeholder="ORD-XXXXXX-XXXX" autocomplete="off">
+          <label for="f-code">رمز الطلب</label>
+          <input id="f-code" name="code" class="ltr" required placeholder="مثال: AB12CD34" autocomplete="off">
         </div>
       </form>`,
     footer: `
@@ -345,7 +355,7 @@ function openLegalSheet(initialTab = 'terms') {
             <li><b>شفافية الأسعار:</b> جميع الأسعار المعروضة بالشيكل (₪) نهائية وشاملة، وتظهر لك تفاصيل سعر الباقة ورسوم كود eSIM QR (إن وجدت) بوضوح قبل إتمام الطلب.</li>
             <li><b>صحة رقم الهاتف:</b> في طلبات شحن الرصيد وتجديد الباقات، يتحمّل المشترك مسؤولية إدخال رقم الهاتف الصحيح. بمجرد تنفيذ الشحن على الرقم المدخل لدى شركة الاتصالات، لا يمكن سحبه أو نقله لرقم آخر.</li>
             <li><b>التفعيل الفوري والتلقائي:</b> يتم تنفيذ الطلبات تلقائياً فور تأكيد الدفع، أو مباشرةً عبر زر التفعيل الفوري في باقات eSIM المربوطة بالنظام المباشر.</li>
-            <li><b>إيصال الطلب:</b> يحصل كل طلب على كود تتبّع فريد (مثل <code class="ltr">ORD-XXXXXX</code>) يمكّنك من متابعة حالة التفعيل وتحميل كود QR في أي وقت.</li>
+            <li><b>إيصال الطلب:</b> يحصل كل طلب على رمز تتبّع فريد يمكّنك من متابعة حالة التفعيل وتحميل كود QR في أي وقت.</li>
           </ul>
         ` : tab === 'esim' ? `
           <h4>سياسة شرائح eSIM الرقمية وكود الـ QR</h4>
@@ -359,8 +369,8 @@ function openLegalSheet(initialTab = 'terms') {
           <h4>ضمان المتجر وحماية المشتري</h4>
           <ul class="esim-legal-list">
             <li><b>ضمان التفعيل 100%:</b> إذا تعذّر تفعيل الباقة أو إصدار شريحة eSIM من المصدر لأي سبب تقني، يلتزم المتجر باستبدالها فوراً أو إرجاع كامل المبلغ المدفوع دون أي اقتطاع.</li>
-            <li><b>حفظ كود QR في صفحة طلبك:</b> في حال أغلقت الصفحة بعد التفعيل، يظل كود الـ QR ومعلومات الشريحة (الرقم و ICCID) محفوظين في صفحة تتبّع الطلب الخاصة بك.</li>
-            <li><b>دعم فني مباشر:</b> فريق الدعم متواجد لمساعدتك خطوة بخطوة في تثبيت شريحة eSIM أو متابعة أي طلب عبر واتساب مع ذكر رقم الطلب.</li>
+            <li><b>حفظ كود QR في صفحة طلبك:</b> في حال أغلقت الصفحة بعد التفعيل، يظل كود الـ QR ومعلومات الشريحة محفوظين في صفحة تتبّع الطلب الخاصة بك.</li>
+            <li><b>دعم فني مباشر:</b> فريق الدعم متواجد لمساعدتك خطوة بخطوة في تثبيت شريحة eSIM أو متابعة أي طلب عبر واتساب مع ذكر رمز الطلب.</li>
           </ul>
         `}
       </div>
@@ -376,18 +386,29 @@ function openLegalSheet(initialTab = 'terms') {
 }
 
 async function ensureCatalog() {
-  if (!S.data) S.data = await jfetch('/api/shop/catalog');
+  if (!S.data) S.data = await jfetch('/api/shop');
+  if (S.data?.appName) document.title = `متجر ${S.data.appName}`;
 }
 
 function viewCatalog() {
-  const { companies, packages } = S.data;
+  if (!S.data.enabled) {
+    shell(`
+      <div class="card empty">
+        ${icon('clock')}
+        <p>المتجر مغلق مؤقتاً للصيانة والتحديث — يرجى المحاولة لاحقاً.</p>
+      </div>
+    `);
+    return;
+  }
+
+  const companies = S.data.companies || [];
+  const packages = S.data.packages || [];
   const coMap = new Map(companies.map((c) => [c.id, c]));
 
   // Counts per service type
   const totalCount = packages.length;
   const esimCount = packages.filter((p) => isEsimPkg(p)).length;
   const cardCount = packages.filter((p) => p.kind === 'card').length;
-  const lineCount = packages.filter((p) => p.kind === 'line').length;
 
   // Filtered packages
   const q = S.q.trim().toLowerCase();
@@ -395,22 +416,21 @@ function viewCatalog() {
     if (S.companyId !== 'all' && String(p.companyId) !== String(S.companyId)) return false;
     if (S.kindFilter === 'esim' && !isEsimPkg(p)) return false;
     if (S.kindFilter === 'card' && p.kind !== 'card') return false;
-    if (S.kindFilter === 'line' && p.kind !== 'line') return false;
     if (q) {
-      const coName = coMap.get(p.companyId)?.name || '';
-      const hay = `${p.name} ${p.description || ''} ${coName} ${p.gb || ''} ${p.days || ''}`.toLowerCase();
+      const coName = coMap.get(p.companyId)?.name || p.companyName || '';
+      const hay = `${p.name} ${p.description || ''} ${p.tag || ''} ${coName} ${pkgGb(p) || ''} ${p.days || ''}`.toLowerCase();
       if (!hay.includes(q)) return false;
     }
     return true;
   });
 
-  // Sort: featured first, then eSIM when in esim filter, then price ascending
+  // Sort: featured/popular first, then price ascending
   shown.sort((a, b) => {
-    if (Boolean(b.featured) !== Boolean(a.featured)) return (b.featured ? 1 : 0) - (a.featured ? 1 : 0);
+    if (isFeaturedPkg(b) !== isFeaturedPkg(a)) return (isFeaturedPkg(b) ? 1 : 0) - (isFeaturedPkg(a) ? 1 : 0);
     return Number(a.price || 0) - Number(b.price || 0);
   });
 
-  const maxGb = Math.max(100, ...packages.map((p) => Number(p.gb) || 0));
+  const maxGb = Math.max(100, ...packages.map((p) => pkgGb(p)));
 
   shell(`
     <!-- Authentic eSIM & Telecom Hero -->
@@ -421,9 +441,9 @@ function viewCatalog() {
             ${icon('qr')}
             <span>الجيل الرقمي من شرائح الاتصال · eSIM & Telecom Store</span>
           </div>
-          <h1>باقات الخليوي وشرائح eSIM الفورية بكود QR مباشر</h1>
+          <h1>${esc(S.data.shopTitle || 'باقات الخليوي وشرائح eSIM الفورية بكود QR مباشر')}</h1>
           <p>
-            اختر شبكتك وباقتك المفضّلة، فعّل شريحة <b>eSIM</b> واستلم كود الـ QR الجاهز للمسح فوراً على شاشتك، أو اشحن رقمك الحالي خلال ثوانٍ بأسعار واضحة وشاملة.
+            ${esc(S.data.shopSubtitle || 'اختر شبكتك وباقتك المفضّلة، فعّل شريحة eSIM واستلم كود الـ QR الجاهز للمسح فوراً على شاشتك، أو اشحن رقمك الحالي خلال ثوانٍ بأسعار واضحة وشاملة.')}
           </p>
 
           <div class="esim-search-box" role="search">
@@ -484,12 +504,6 @@ function viewCatalog() {
             ${icon('refresh')}
             <span>شحن وتجديد رقم حالي</span>
             <small>${fmtNum(cardCount)}</small>
-          </button>` : ''}
-        ${lineCount ? `
-          <button type="button" role="tab" class="esim-type-tab" aria-selected="${S.kindFilter === 'line'}" data-kind="line">
-            ${icon('phone')}
-            <span>خطوط جديدة</span>
-            <small>${fmtNum(lineCount)}</small>
           </button>` : ''}
       </div>
 
@@ -562,34 +576,31 @@ function viewCatalog() {
 function renderPlanCard(pk, co, maxGb) {
   const coColor = co?.color || '#2563eb';
   const hasEsim = isEsimPkg(pk);
-  const isDirectEsim = pk.kind === 'esim';
+  const featured = isFeaturedPkg(pk);
   const hasDiscount = Number(pk.oldPrice) > Number(pk.price);
   const savePct = hasDiscount ? Math.round(((pk.oldPrice - pk.price) / pk.oldPrice) * 100) : 0;
-  const gbVal = Number(pk.gb) || 0;
+  const gbVal = pkgGb(pk);
   const gbPct = gbVal > 0 ? Math.min(100, Math.max(14, Math.round((gbVal / maxGb) * 100))) : 100;
   const daysVal = Number(pk.days) || 0;
   const perDay = daysVal >= 7 && pk.price > 0 ? (pk.price / daysVal).toFixed(1) : null;
 
-  const callsLabel = pk.unlimitedCalls
-    ? 'مكالمات ورسائل لا محدودة'
-    : pk.minutes
-      ? `${fmtNum(pk.minutes)} دقيقة مكالمات${pk.sms ? ` · ${fmtNum(pk.sms)} رسالة` : ''}`
-      : 'إنترنت وبيانات خلوية';
+  const callsLabel = pk.minutes
+    ? `${fmtNum(pk.minutes)} دقيقة مكالمات${pk.sms ? ` · ${fmtNum(pk.sms)} رسالة` : ''}`
+    : pk.tag || 'إنترنت ومكالمات حسب الباقة';
 
-  const qrFeeText = isDirectEsim
-    ? 'كود QR مشمول بالسعر'
-    : pk.esim
-      ? (Number(pk.esimFee) > 0 ? `+ ${fmtMoney(pk.esimFee)} لكود eSIM QR` : 'كود eSIM QR مجاناً')
-      : null;
+  const qrFee = Number(pk.esimFee ?? co?.esimFee ?? S.data?.esimFee ?? 0);
+  const qrFeeText = hasEsim
+    ? (qrFee > 0 ? `+ ${fmtMoney(qrFee)} لكود eSIM QR` : 'كود eSIM QR مشمول مجاناً')
+    : null;
 
   return `
-    <article class="esim-card ${pk.featured ? 'is-featured' : ''} ${hasEsim ? 'has-esim' : ''}" style="--co:${esc(coColor)}">
+    <article class="esim-card ${featured ? 'is-featured' : ''} ${hasEsim ? 'has-esim' : ''}" style="--co:${esc(coColor)}">
       <!-- Top Carrier & SIM Chip Header -->
       <div class="esim-card-head">
         <div class="esim-card-carrier">
-          ${companyLogo(co, 'sm')}
+          ${companyLogo(co || { name: pk.companyName }, 'sm')}
           <div class="esim-card-titles">
-            <span class="esim-carrier-label">${esc(co?.name || '')}</span>
+            <span class="esim-carrier-label">${esc(co?.name || pk.companyName || '')}</span>
             <h3 class="esim-plan-title">${esc(pk.name)}</h3>
           </div>
         </div>
@@ -599,15 +610,16 @@ function renderPlanCard(pk, co, maxGb) {
             <span class="esim-chip-tag">eSIM QR</span>
           ` : `
             ${simCardSvg('esim-sim-svg')}
-            <span class="esim-sim-tag">${pk.kind === 'line' ? 'خط جديد' : 'شحن رقم'}</span>
+            <span class="esim-sim-tag">${pk.kind === 'card' ? 'شحن رقم' : 'باقة خط'}</span>
           `}
         </div>
       </div>
 
-      ${pk.featured || hasDiscount ? `
+      ${featured || hasDiscount || pk.tag ? `
         <div class="esim-card-flags">
-          ${pk.featured ? `<span class="esim-flag featured">${icon('checkCircle')}<span>الأكثر طلباً</span></span>` : ''}
+          ${featured ? `<span class="esim-flag featured">${icon('checkCircle')}<span>الأكثر طلباً</span></span>` : ''}
           ${hasDiscount ? `<span class="esim-flag discount">وفّر ${savePct}%</span>` : ''}
+          ${pk.tag && !featured ? `<span class="esim-flag featured">${esc(pk.tag)}</span>` : ''}
         </div>
       ` : ''}
 
@@ -625,7 +637,7 @@ function renderPlanCard(pk, co, maxGb) {
         </div>
 
         <div class="esim-spec-row">
-          <span class="esim-spec-k">${icon('phone')}<span>المكالمات</span></span>
+          <span class="esim-spec-k">${icon('phone')}<span>المزايا والمكالمات</span></span>
           <strong class="esim-spec-v">${esc(callsLabel)}</strong>
         </div>
 
@@ -653,11 +665,13 @@ function renderPlanCard(pk, co, maxGb) {
         </div>
 
         <div class="esim-card-btns">
-          ${pk.kind === 'card' && pk.esim ? `
+          ${pk.kind === 'card' && hasEsim ? `
             <a href="#/buy/${pk.id}" class="btn ghost btn-sm">شحن رقم</a>
             <a href="#/buy/${pk.id}?esim=1" class="btn primary btn-sm">${icon('qr')}<span>تفعيل eSIM</span></a>
+          ` : hasEsim ? `
+            <a href="#/buy/${pk.id}?esim=1" class="btn primary">${icon('qr')}<span>تفعيل شريحة eSIM الآن</span></a>
           ` : `
-            <a href="#/buy/${pk.id}" class="btn primary">${icon(hasEsim ? 'qr' : 'arrowRight')}<span>${isDirectEsim ? 'تفعيل شريحة eSIM الآن' : 'اختيار الباقة'}</span></a>
+            <a href="#/buy/${pk.id}" class="btn primary">${icon('arrowRight')}<span>اختيار الباقة</span></a>
           `}
         </div>
       </div>
@@ -665,27 +679,28 @@ function renderPlanCard(pk, co, maxGb) {
   `;
 }
 
-function viewBuy(id, forceEsim = false) {
-  const pk = S.data.packages.find((p) => String(p.id) === String(id));
+function viewBuy(id) {
+  const pk = (S.data?.packages || []).find((p) => String(p.id) === String(id));
   if (!pk) { location.hash = '#/'; return; }
-  const co = S.data.companies.find((c) => c.id === pk.companyId);
-  if (pk.kind === 'esim') {
-    S.wantEsim = true;
-    return esimForm(pk, co);
-  }
+  const co = (S.data?.companies || []).find((c) => c.id === pk.companyId) || { name: pk.companyName };
   const isCard = pk.kind === 'card';
-  const canEsim = isCard && pk.esim;
-  const wantEsim = canEsim && S.wantEsim;
-  const qrFee = Number(pk.esimFee || 0);
+  const canEsim = Boolean(pk.esim);
+  const wantEsim = canEsim && (S.wantEsim || !isCard);
+  const qrFee = Number(pk.esimFee ?? co?.esimFee ?? S.data?.esimFee ?? 0);
   const total = Number(pk.price || 0) + (wantEsim ? qrFee : 0);
+
+  if (wantEsim) {
+    return esimForm(pk, co, isCard);
+  }
 
   shell(`
     <form id="buy-f" class="card shop-form" style="--co:${esc(co?.color || '#2563eb')}">
       <div class="row between">
         <a href="#/" class="btn ghost btn-sm">→ العودة للباقات</a>
-        <button type="button" class="esim-compat-pill" data-act="compat">
-          ${icon('chip')}<span>فحص توافق الجهاز مع eSIM</span>
-        </button>
+        ${canEsim ? `
+          <button type="button" class="esim-compat-pill" data-act="compat">
+            ${icon('chip')}<span>فحص توافق الجهاز مع eSIM</span>
+          </button>` : ''}
       </div>
 
       <!-- Selected Package Header -->
@@ -697,16 +712,15 @@ function viewBuy(id, forceEsim = false) {
             <h2 style="margin:2px 0 4px">${esc(pk.name)}</h2>
             <div class="chips">${specs(pk)}</div>
           </div>
-          ${wantEsim ? esimChipSvg('esim-chip-svg') : ''}
         </div>
         ${pk.description ? `<p class="muted" style="margin:8px 0 0;font-size:.88rem">${esc(pk.description)}</p>` : ''}
       </div>
 
-      ${canEsim ? `
+      ${canEsim && isCard ? `
         <div class="field">
           <label>اختر طريقة التفعيل المطلوبة</label>
           <div class="shop-mode-cards" role="radiogroup" aria-label="طريقة التفعيل">
-            <button type="button" class="shop-mode-card" data-esim="0" aria-pressed="${!wantEsim}">
+            <button type="button" class="shop-mode-card" data-esim="0" aria-pressed="true">
               <div class="row between">
                 ${icon('refresh')}
                 <span class="mono">${fmtMoney(pk.price)}</span>
@@ -714,7 +728,7 @@ function viewBuy(id, forceEsim = false) {
               <b>شحن وتجديد رقمي الحالي</b>
               <small>شحن الباقة مباشرة على شريحتك الحالية دون تغييرها</small>
             </button>
-            <button type="button" class="shop-mode-card" data-esim="1" aria-pressed="${wantEsim}">
+            <button type="button" class="shop-mode-card" data-esim="1" aria-pressed="false">
               <div class="row between">
                 ${icon('qr')}
                 <span class="mono">${fmtMoney(pk.price + qrFee)}</span>
@@ -732,20 +746,20 @@ function viewBuy(id, forceEsim = false) {
       </div>
 
       <div class="field">
-        <label for="f-phone">${isCard ? (wantEsim ? 'رقم الهاتف المراد تحويله إلى eSIM وشحنه' : 'رقم الهاتف المراد شحنه بالباقة') : 'رقم للتواصل عبر واتساب أو اتصال'}</label>
-        <input id="f-phone" name="phone" class="ltr" inputmode="tel" autocomplete="tel" required placeholder="059XXXXXXX">
+        <label for="f-phone">${isCard ? 'رقم الهاتف المراد شحنه بالباقة' : 'رقم الهاتف'}</label>
+        <input id="f-phone" name="number" class="ltr" inputmode="tel" autocomplete="tel" required placeholder="059XXXXXXX">
       </div>
 
-      ${wantEsim ? `
+      ${!isCard ? `
         <div class="field">
-          <label for="f-email">البريد الإلكتروني <span class="muted">(اختياري — لإرسال نسخة من كود QR لبريدك)</span></label>
-          <input id="f-email" name="email" type="email" class="ltr" autocomplete="email" placeholder="you@example.com">
+          <label for="f-sim">رقم الشريحة ICCID (19 رقماً)</label>
+          <input id="f-sim" name="sim" class="ltr" inputmode="numeric" required placeholder="89970...">
         </div>
       ` : ''}
 
       <div class="field">
-        <label for="f-notes">ملاحظات إضافية <span class="muted">(اختياري)</span></label>
-        <input id="f-notes" name="notes" placeholder="أي تفصيل إضافي تودّ إبلاغنا به">
+        <label for="f-contact">رقم للتواصل عبر واتساب <span class="muted">(اختياري)</span></label>
+        <input id="f-contact" name="contactPhone" class="ltr" inputmode="tel" autocomplete="tel" placeholder="059XXXXXXX">
       </div>
 
       <!-- Transparent Price Breakdown -->
@@ -755,29 +769,23 @@ function viewBuy(id, forceEsim = false) {
           <span>سعر الباقة (${esc(pk.name)})</span>
           <b class="mono">${fmtMoney(pk.price)}</b>
         </div>
-        ${wantEsim ? `
-          <div class="shop-bd-row">
-            <span>رسوم إصدار كود eSIM QR (${esc(co?.name || '')})</span>
-            <b class="mono">${qrFee > 0 ? fmtMoney(qrFee) : 'مجاناً'}</b>
-          </div>
-        ` : ''}
         <div class="shop-bd-total">
           <span>المبلغ الإجمالي النهائي</span>
           <b class="mono">${fmtMoney(total)}</b>
         </div>
       </div>
 
-      <!-- Legal Consent (Button separated from label so clicking never toggles checkbox) -->
+      <!-- Legal Consent -->
       <div class="esim-consent-wrap">
         <label class="esim-consent-label">
           <input type="checkbox" name="consent" required>
-          <span>أقرّ بصحة الرقم المدخل وبموافقتي على شروط التفعيل${wantEsim ? ' وتوافق جهازي مع تقنية eSIM' : ''}.</span>
+          <span>أقرّ بصحة الرقم المدخل وبموافقتي على شروط التفعيل.</span>
         </label>
         <button type="button" class="link-btn" data-act="legal">عرض الشروط والضمان</button>
       </div>
 
       <button class="btn primary lg" type="submit">
-        ${icon(wantEsim ? 'qr' : 'checkCircle')}
+        ${icon('checkCircle')}
         <span>تأكيد الطلب والمتابعة (${fmtMoney(total)})</span>
       </button>
     </form>
@@ -801,18 +809,18 @@ function viewBuy(id, forceEsim = false) {
         method: 'POST',
         body: {
           packageId: pk.id,
+          kind: isCard ? 'recharge' : 'new',
           customerName: fd.get('customerName'),
-          phone: fd.get('phone'),
-          email: fd.get('email') || '',
-          esim: wantEsim,
-          notes: fd.get('notes'),
+          number: fd.get('number'),
+          sim: fd.get('sim') || '',
+          contactPhone: fd.get('contactPhone') || '',
+          instant: Boolean(S.data?.instant),
         },
       });
       rememberOrderCode(order.code);
       S.myCodes = savedOrderCodes();
       S.myOrders = null;
       S.order = order;
-      S.wantEsim = false;
       location.hash = `#/order/${order.code}`;
     } catch (err) {
       toast(err.message, 'err');
@@ -821,16 +829,18 @@ function viewBuy(id, forceEsim = false) {
   };
 }
 
-// Direct eSIM package checkout: reserves a free number & activates QR automatically or via instant activation button
-async function esimForm(pk, co) {
+// eSIM checkout: checks /api/shop/available, shows full price + QR fee breakdown, and creates eSIM order
+async function esimForm(pk, co, canSwitchToCard = false) {
+  const qrFee = Number(pk.esimFee ?? co?.esimFee ?? S.data?.esimFee ?? 0);
+  const total = Number(pk.price || 0) + qrFee;
+
   shell(`<div class="card empty"><p class="muted">جارٍ التحقق من توفّر شرائح eSIM للباقة...</p></div>`, { sub: pk.name });
   if (S.esimAvailable === null || S.esimAvailable.pkgId !== pk.id) {
     try {
       const r = await jfetch(`/api/shop/available?packageId=${encodeURIComponent(pk.id)}`);
       S.esimAvailable = { pkgId: pk.id, available: Boolean(r.available) };
     } catch (err) {
-      toast(err.message, 'err');
-      S.esimAvailable = { pkgId: pk.id, available: false };
+      S.esimAvailable = { pkgId: pk.id, available: false, error: err.message };
     }
   }
   const available = S.esimAvailable.available;
@@ -857,49 +867,73 @@ async function esimForm(pk, co) {
         ${pk.description ? `<p class="muted" style="margin:8px 0 0;font-size:.88rem">${esc(pk.description)}</p>` : ''}
       </div>
 
+      ${canSwitchToCard ? `
+        <div class="field">
+          <label>اختر طريقة التفعيل المطلوبة</label>
+          <div class="shop-mode-cards" role="radiogroup" aria-label="طريقة التفعيل">
+            <button type="button" class="shop-mode-card" data-esim="0" aria-pressed="false">
+              <div class="row between">
+                ${icon('refresh')}
+                <span class="mono">${fmtMoney(pk.price)}</span>
+              </div>
+              <b>شحن وتجديد رقمي الحالي</b>
+              <small>شحن الباقة مباشرة على شريحتك الحالية دون تغييرها</small>
+            </button>
+            <button type="button" class="shop-mode-card" data-esim="1" aria-pressed="true">
+              <div class="row between">
+                ${icon('qr')}
+                <span class="mono">${fmtMoney(total)}</span>
+              </div>
+              <b>شريحة eSIM إلكترونية (كود QR)</b>
+              <small>${qrFee > 0 ? `شامل رسوم كود QR (${fmtMoney(qrFee)})` : 'كود QR مجاني مع الباقة'}</small>
+            </button>
+          </div>
+        </div>
+      ` : ''}
+
       ${available ? `
         <div class="esim-ready-notice">
           ${icon('qr')}
           <div class="grow">
             <b>تفعيل رقمي مباشر مع كود QR فوري</b>
-            <small class="muted" style="display:block">سيتم تخصيص رقم جديد وتوليد كود الـ QR الخاص بشريحتك ليظهر مباشرة على الشاشة ويرسل لبريدك الإلكتروني.</small>
+            <small class="muted" style="display:block">يُخصَّص لك رقم جديد تلقائياً ويتم توليد كود الـ QR الخاص بشريحتك ليظهر مباشرة على الشاشة بعد التفعيل.</small>
           </div>
         </div>
       ` : `
         <div class="card empty">
           ${icon('alert')}
-          <p>جميع أرقام eSIM لهذه الباقة محجوزة حالياً — يرجى المحاولة بعد قليل أو التواصل مع الدعم.</p>
+          <p>${esc(S.esimAvailable.error || 'نفدت أرقام eSIM لهذه الباقة الآن — جرّب باقة أخرى أو تواصل مع الدعم.')}</p>
         </div>
       `}
 
       <div class="field">
         <label for="f-name">الاسم الكامل</label>
-        <input id="f-name" name="customerName" required autocomplete="name" placeholder="الاسم الثلاثي">
+        <input id="f-name" name="customerName" required autocomplete="name" placeholder="الاسم الثلاثي لتسجيل الخط">
       </div>
 
       <div class="field">
-        <label for="f-email">البريد الإلكتروني <span class="muted">(يُرسل إليه كود الـ QR أيضاً)</span></label>
-        <input id="f-email" name="email" type="email" class="ltr" required autocomplete="email" placeholder="you@example.com">
+        <label for="f-email">البريد الإلكتروني <span class="muted">(مستحسن — نرسل لك عليه نسخة من كود الـ QR أيضاً)</span></label>
+        <input id="f-email" name="email" type="email" class="ltr" autocomplete="email" placeholder="you@example.com">
       </div>
 
       <div class="field">
-        <label for="f-contact">رقم واتساب للتواصل <span class="muted">(اختياري)</span></label>
+        <label for="f-contact">رقم للتواصل عبر واتساب <span class="muted">(اختياري)</span></label>
         <input id="f-contact" name="contactPhone" class="ltr" inputmode="tel" autocomplete="tel" placeholder="059XXXXXXX">
       </div>
 
       <div class="shop-breakdown-box">
         <h4>${icon('shield')}<span>ملخص السعر الشامل</span></h4>
         <div class="shop-bd-row">
-          <span>باقة وشريحة eSIM (${esc(pk.name)})</span>
+          <span>سعر الباقة (${esc(pk.name)})</span>
           <b class="mono">${fmtMoney(pk.price)}</b>
         </div>
         <div class="shop-bd-row">
-          <span>إصدار كود eSIM QR وتخصيص الرقم</span>
-          <b class="mono">مشمول بالسعر</b>
+          <span>رسوم إصدار كود eSIM QR (${esc(co?.name || '')})</span>
+          <b class="mono">${qrFee > 0 ? fmtMoney(qrFee) : 'مشمول بالسعر'}</b>
         </div>
         <div class="shop-bd-total">
           <span>المبلغ الإجمالي النهائي</span>
-          <b class="mono">${fmtMoney(pk.price)}</b>
+          <b class="mono">${fmtMoney(total)}</b>
         </div>
       </div>
 
@@ -913,10 +947,17 @@ async function esimForm(pk, co) {
 
       <button class="btn primary lg" type="submit" ${available ? '' : 'disabled'}>
         ${icon('qr')}
-        <span>تفعيل شريحة eSIM وإصدار كود QR (${fmtMoney(pk.price)})</span>
+        <span>تفعيل شريحة eSIM وإصدار كود QR (${fmtMoney(total)})</span>
       </button>
     </form>
   `, { sub: pk.name });
+
+  root.querySelectorAll('[data-esim]').forEach((b) => {
+    b.onclick = () => {
+      S.wantEsim = b.dataset.esim === '1';
+      viewBuy(pk.id);
+    };
+  });
 
   document.getElementById('buy-f').onsubmit = async (e) => {
     e.preventDefault();
@@ -928,11 +969,14 @@ async function esimForm(pk, co) {
       const order = await jfetch('/api/shop/orders', {
         method: 'POST',
         body: {
+          kind: 'esim',
+          esim: true,
+          includeEsimFee: qrFee > 0,
+          instant: Boolean(S.data?.instant),
           packageId: pk.id,
           customerName: fd.get('customerName'),
-          email: fd.get('email'),
+          email: fd.get('email') || '',
           contactPhone: fd.get('contactPhone') || '',
-          esim: true,
         },
       });
       S.esimAvailable = null;
@@ -949,13 +993,19 @@ async function esimForm(pk, co) {
   };
 }
 
-const STATUS_AR = {
-  pending: { label: 'بانتظار الدفع أو التفعيل', cls: 's-open', step: 1 },
-  paid: { label: 'تم استلام الدفع — جارٍ التفعيل وإصدار الشريحة…', cls: 's-open', step: 2 },
-  review: { label: 'قيد المراجعة والتفعيل من فريق المتجر', cls: 's-open', step: 2 },
-  done: { label: 'مفعّل وجاهز للاستخدام', cls: 's-done', step: 3 },
-  rejected: { label: 'مرفوض — تواصل مع الدعم', cls: 's-bad', step: 0 },
+const STAGES_AR = {
+  awaiting_payment: { label: 'بانتظار الدفع أو التفعيل الفوري', cls: 's-open', step: 1, desc: 'حوّل المبلغ عبر تطبيق جوال باي ثم أكّد التحويل أدناه، أو استخدم زر التفعيل الفوري إن كان مفعّلاً.' },
+  verifying: { label: 'جارٍ التحقق التلقائي من التحويل…', cls: 's-open', step: 2, desc: 'يبحث النظام عن إشعار جوال باي المطابق لتفعيل خطك وإصدار كود QR تلقائياً.' },
+  review: { label: 'قيد المراجعة والتفعيل من فريق المتجر', cls: 's-open', step: 2, desc: 'يراجع فريق المتجر إشعار التحويل لتفعيل طلبك في أسرع وقت.' },
+  processing: { label: 'تم استلام الدفع — جارٍ التفعيل وإصدار الشريحة…', cls: 's-open', step: 2, desc: 'وصلنا المبلغ ونفعّل خطك الآن لدى شركة الاتصالات. سيظهر رمز QR هنا فور جهوزه.' },
+  paid_issue: { label: 'تم استلام الدفع — قيد المعالجة الفنية', cls: 's-open', step: 2, desc: 'وصلنا المبلغ ويتابع فريقنا إتمام التفعيل.' },
+  done: { label: 'مفعّل وجاهز للاستخدام', cls: 's-done', step: 3, desc: 'تم تفعيل طلبك بنجاح.' },
+  failed: { label: 'تعذّر التنفيذ — تواصل مع الدعم', cls: 's-bad', step: 0, desc: 'تواصل مع الدعم الفني لاسترجاع المبلغ أو إعادة المحاولة.' },
+  rejected: { label: 'مرفوض — تواصل مع الدعم', cls: 's-bad', step: 0, desc: '' },
+  cancelled: { label: 'ملغى', cls: 's-bad', step: 0, desc: '' },
 };
+const PAYABLE_STATUSES = ['awaiting_payment', 'verifying', 'review'];
+const FINAL_STAGES = ['done', 'cancelled', 'rejected', 'failed'];
 
 async function viewOrder(code) {
   clearInterval(S.pollTimer);
@@ -973,26 +1023,29 @@ async function viewOrder(code) {
     return;
   }
   renderOrder();
-  if (S.order.status === 'pending' || S.order.status === 'paid' || S.order.status === 'review') {
+  if (!FINAL_STAGES.includes(S.order.stage)) {
     S.pollTimer = setInterval(async () => {
+      if (document.querySelector('#proof-f :focus')) return;
       try {
         const next = await jfetch(`/api/shop/orders/${encodeURIComponent(code)}`);
-        if (next.status !== S.order.status || next.proofSent !== S.order.proofSent || next.qrReady !== S.order.qrReady) {
+        if (next.status !== S.order.status || next.stage !== S.order.stage || next.proofSent !== S.order.proofSent || next.esimQr !== S.order.esimQr) {
           S.order = next;
           renderOrder();
-          if (next.status === 'done' || next.status === 'rejected') clearInterval(S.pollTimer);
+          if (FINAL_STAGES.includes(next.stage)) clearInterval(S.pollTimer);
         }
       } catch {}
-    }, 5000);
+    }, 6000);
   }
 }
 
 function renderOrder() {
   const o = S.order;
-  const st = STATUS_AR[o.status] || STATUS_AR.pending;
-  const payPhone = S.data?.payPhone || '';
+  const st = STAGES_AR[o.stage] || STAGES_AR[o.status] || STAGES_AR.awaiting_payment;
+  const jp = S.data?.jawwalpay || {};
   const isEsim = Boolean(o.esim);
-  const working = o.status === 'paid' || (o.status === 'pending' && o.proofSent);
+  const hasQr = Boolean(o.esimQr && /^data:image\//.test(o.esimQr));
+  const payable = PAYABLE_STATUSES.includes(o.status);
+  const canInstant = Boolean(S.data?.instant && payable && !hasQr);
   const wa = supportHref(S.data?.supportWhatsapp, `مرحباً، بخصوص الطلب ${o.code}`);
 
   shell(`
@@ -1002,23 +1055,23 @@ function renderOrder() {
         <a href="#/" class="btn ghost btn-sm">← المتجر</a>
         <div class="row" style="gap:6px">
           <button type="button" class="btn ghost btn-sm" id="copy-code">${icon('copy')}<span class="ltr">${esc(o.code)}</span></button>
-          <button type="button" class="btn ghost btn-sm" id="print-order">${icon(' list' in {} ? 'list' : 'file') || ''}${icon('check')}<span>طباعة الإيصال</span></button>
+          <button type="button" class="btn ghost btn-sm" id="print-order">${icon('check')}<span>طباعة الإيصال</span></button>
         </div>
       </div>
 
       <div class="shop-steps no-print" aria-label="مراحل الطلب">
         <span class="${st.step >= 1 ? 'done' : ''}"><i>1</i>إنشاء الطلب</span>
         <span class="${st.step >= 2 ? 'done' : st.step === 1 && o.proofSent ? 'current' : ''}"><i>2</i>تأكيد الدفع والتفعيل</span>
-        <span class="${st.step >= 3 ? 'done' : ''}"><i>3</i>${isEsim ? 'استلام كود eSIM QR' : 'اكتمال التفعيل'}</span>
+        <span class="${st.step >= 3 || hasQr ? 'done' : ''}"><i>3</i>${isEsim ? 'استلام كود eSIM QR' : 'اكتمال التفعيل'}</span>
       </div>
 
       <div class="row between" style="flex-wrap:wrap;gap:10px">
         <div class="row" style="gap:10px">
-          ${companyLogo({ name: o.companyName, color: o.companyColor })}
+          <span class="shop-brand-mark">${icon(isEsim ? 'qr' : 'sim')}</span>
           <div>
-            <span class="esim-carrier-label">${esc(o.companyName || '')}</span>
-            <h3 style="margin:2px 0">${esc(o.packageName)}</h3>
-            <small class="muted">${esc(o.customerName)} · <span class="ltr">${esc(o.phone ? fmtPhone(o.phone) : o.email || '')}</span></small>
+            <span class="esim-carrier-label">رمز الطلب: <b class="ltr mono">${esc(o.code)}</b></span>
+            <h3 style="margin:2px 0">${esc(o.packageLabel)}${isEsim ? ' · eSIM' : ''}</h3>
+            <small class="muted">${esc(o.customerName || '')} · ${o.number ? `<span class="ltr">${esc(fmtPhone(o.number))}</span>` : 'يظهر الرقم فور تأكيد التفعيل'}</small>
           </div>
         </div>
         <b class="mono shop-amount">${fmtMoney(o.amount)}</b>
@@ -1028,7 +1081,7 @@ function renderOrder() {
         <div class="shop-breakdown-box">
           <div class="shop-bd-row">
             <span>سعر الباقة الأساسي</span>
-            <b class="mono">${fmtMoney(o.basePrice ?? o.amount)}</b>
+            <b class="mono">${fmtMoney(o.packagePrice ?? o.amount)}</b>
           </div>
           <div class="shop-bd-row">
             <span>رسوم كود eSIM QR</span>
@@ -1041,17 +1094,23 @@ function renderOrder() {
         <span class="pill ${st.cls}">${esc(st.label)}</span>
         <small class="muted">${fmtDateTime(o.createdAt)}</small>
       </div>
-      ${o.note ? `<p class="muted" style="margin:0">${esc(o.note)}</p>` : ''}
+      ${st.desc ? `<p class="muted" style="margin:0;font-size:.88rem">${esc(st.desc)}</p>` : ''}
+      ${o.response ? `<div class="esim-ready-notice">${icon('info')}<span>${esc(o.response)}</span></div>` : ''}
+      ${o.expiresAt ? `<div class="shop-kv"><span>صلاحية الباقة حتى</span><b>${fmtDate(o.expiresAt)}</b></div>` : ''}
+      ${o.status === 'awaiting_payment' ? `
+        <div class="row no-print" style="justify-content:flex-end">
+          <button type="button" class="btn ghost btn-sm" id="cancel-order-btn">إلغاء الطلب</button>
+        </div>` : ''}
     </div>
 
-    <!-- Direct Instant eSIM Activation Action (when available and QR not yet issued) -->
-    ${!o.qrReady && o.canInstantActivate && o.status !== 'rejected' ? `
+    <!-- Direct Instant eSIM Activation Action (when shopInstant is enabled and QR not yet issued) -->
+    ${canInstant ? `
       <div class="card shop-instant-box no-print">
         <div class="row" style="gap:12px">
           ${esimChipSvg('esim-chip-svg')}
           <div>
-            <h3 style="margin:0 0 4px">التفعيل المباشر لشريحة eSIM متاح الآن</h3>
-            <p class="muted" style="margin:0;font-size:.88rem">اضغط على زر التفعيل الفوري لإصدار شريحة الـ eSIM من النظام وإظهار كود الـ QR الجاهز للمسح مباشرة على هذه الشاشة.</p>
+            <h3 style="margin:0 0 4px">التفعيل المباشر الفوري متاح الآن</h3>
+            <p class="muted" style="margin:0;font-size:.88rem">اضغط على زر التفعيل الفوري لإصدار شريحة الـ eSIM وإظهار كود الـ QR الجاهز للمسح مباشرة على هذه الشاشة.</p>
           </div>
         </div>
         <button type="button" class="btn primary lg" id="instant-act-btn" ${S.instantBusy ? 'disabled' : ''}>
@@ -1061,8 +1120,8 @@ function renderOrder() {
       </div>
     ` : ''}
 
-    <!-- Scannable eSIM QR Code Pass (shown immediately once qrReady is true) -->
-    ${o.qrReady && o.qrImage ? `
+    <!-- Scannable eSIM QR Code Pass (shown immediately once esimQr is ready) -->
+    ${hasQr ? `
       <div class="card shop-qr-modern">
         <div class="shop-qr-badge">
           ${icon('checkCircle')}
@@ -1075,44 +1134,39 @@ function renderOrder() {
         </p>
 
         <div class="shop-qr-frame">
-          <img id="qr-img" src="${esc(o.qrImage)}" alt="كود QR لتفعيل شريحة eSIM">
+          <img id="qr-img" src="${esc(o.esimQr)}" alt="كود QR لتفعيل شريحة eSIM للرقم ${esc(o.number || '')}">
         </div>
 
         <div class="esim-qr-details">
-          ${o.phone ? `
+          ${o.number ? `
             <div class="shop-kv">
               <span>رقم الخط المخصّص</span>
-              <b class="ltr mono">${esc(fmtPhone(o.phone))}</b>
-              <button type="button" class="btn ghost btn-sm no-print" data-copy="${esc(o.phone)}">${icon('copy')}<span>نسخ</span></button>
-            </div>
-          ` : ''}
-          ${o.simNumber ? `
-            <div class="shop-kv">
-              <span>الرقم التسلسلي ICCID</span>
-              <b class="ltr mono">${esc(o.simNumber)}</b>
-              <button type="button" class="btn ghost btn-sm no-print" data-copy="${esc(o.simNumber)}">${icon('copy')}<span>نسخ</span></button>
+              <b class="ltr mono">${esc(fmtPhone(o.number))}</b>
+              <button type="button" class="btn ghost btn-sm no-print" data-copy="${esc(o.number)}">${icon('copy')}<span>نسخ</span></button>
             </div>
           ` : ''}
         </div>
 
-        ${o.qrCode ? `
+        ${o.esimCode ? `
           <div class="shop-lpa-box no-print">
             <small class="muted">كود التفعيل اليدوي (LPA / Activation Code) في حال التثبيت من نفس الجهاز:</small>
             <div class="shop-lpa-row">
-              <code class="ltr">${esc(o.qrCode)}</code>
-              <button type="button" class="btn ghost btn-sm" data-copy="${esc(o.qrCode)}">${icon('copy')}<span>نسخ الكود</span></button>
+              <code class="ltr">${esc(o.esimCode)}</code>
+              <button type="button" class="btn ghost btn-sm" data-copy="${esc(o.esimCode)}">${icon('copy')}<span>نسخ الكود</span></button>
             </div>
           </div>
         ` : ''}
 
         <div class="row no-print" style="justify-content:center;gap:10px;flex-wrap:wrap">
-          <a class="btn primary" href="${esc(o.qrImage)}" download="${esc(o.code)}-esim-qr.png">
+          <a class="btn primary" href="${esc(o.esimQr)}" download="esim-${esc(o.number || o.code)}.png">
             ${icon('qr')}<span>تحميل صورة كود QR</span>
           </a>
           <button type="button" class="btn ghost" id="print-qr-btn">
             ${icon('check')}<span>طباعة بطاقة الشريحة</span>
           </button>
         </div>
+
+        ${o.qrMailed ? `<p class="muted" style="margin:0;font-size:.84rem">${icon('checkCircle')} تم إرسال نسخة من رمز QR إلى <span class="ltr">${esc(o.email)}</span></p>` : ''}
 
         <!-- Step-by-step Installation Guide -->
         <div class="shop-qr-guides">
@@ -1136,52 +1190,66 @@ function renderOrder() {
       </div>
     ` : ''}
 
-    ${working && !o.qrReady ? `
-      <div class="card empty">
-        <div class="tile pulse">${icon('clock')}</div>
-        <p>${o.status === 'paid'
-          ? (isEsim ? 'تم تأكيد الدفع — جارٍ تفعيل الشريحة وتوليد كود eSIM QR، ستتحدّث هذه الصفحة تلقائياً خلال لحظات…' : 'تم تأكيد الدفع — جارٍ تفعيل باقتك لدى شركة الاتصالات، ستتحدّث الصفحة تلقائياً…')
-          : 'وصلنا إشعار الدفع — يتحقّق النظام تلقائياً من الحوالة ويُفعّل طلبك فور المطابقة.'}</p>
-      </div>
-    ` : ''}
-
-    ${o.status === 'pending' ? `
+    <!-- Jawwal Pay Payment & Verification Box -->
+    ${payable ? `
       <div class="card shop-pay no-print">
-        <h3>الدفع عبر محفظة جوال باي (Jawwal Pay)</h3>
-        <p class="muted" style="margin:0">حوّل المبلغ المحدّد بالضبط من تطبيق <b>Jawwal Pay</b> إلى رقم المحفظة التالي، ثم ارفع صورة الإيصال أو أدخل رقم محفظتك للتفعيل التلقائي:</p>
-        <div class="shop-kv">
-          <span>رقم المحفظة المستلمة</span>
-          <b class="ltr mono">${esc(payPhone || 'غير مضبوط بعد')}</b>
-          ${payPhone ? `<button type="button" class="btn ghost btn-sm" id="copy-pay">${icon('copy')}<span>نسخ</span></button>` : ''}
-        </div>
+        <h3>١. حوّل المبلغ عبر تطبيق جوال باي (Jawwal Pay)</h3>
+        <p class="muted" style="margin:0">
+          حوّل المبلغ المحدّد بالضبط بتحويل واحد إلى المحفظة التالية.${o.reservedUntil ? ` رقمك محجوز لك حتى <b>${fmtTime(o.reservedUntil)}</b>.` : ''}
+        </p>
         <div class="shop-kv">
           <span>المبلغ المطلوب</span>
-          <b class="mono">${fmtMoney(o.amount)}</b>
+          <b class="ltr mono">${fmtMoney(o.amount)}</b>
+          <button type="button" class="btn ghost btn-sm" data-copy="${esc(String(o.amount))}">${icon('copy')}<span>نسخ</span></button>
         </div>
-        <div class="shop-kv">
-          <span>بيان الحوالة (اختياري)</span>
-          <b class="ltr mono">${esc(o.code)}</b>
-        </div>
+        ${jp.number ? `
+          <div class="shop-kv">
+            <span>إلى رقم المحفظة</span>
+            <b class="ltr mono">${esc(fmtPhone(jp.number))}</b>
+            <button type="button" class="btn ghost btn-sm" data-copy="${esc(jp.number)}">${icon('copy')}<span>نسخ</span></button>
+          </div>
+        ` : ''}
+        ${jp.name ? `
+          <div class="shop-kv">
+            <span>باسم المستلم</span>
+            <b>${esc(jp.name)}</b>
+          </div>
+        ` : ''}
 
-        <form id="proof-f" class="form" style="margin-top:8px">
+        <hr style="border:0;border-top:1px solid var(--line);margin:6px 0">
+
+        <h3>٢. ${o.proofSent ? 'تحديث بيانات التحويل' : 'أكّد التحويل للتفعيل التلقائي'}</h3>
+        <p class="muted" style="margin:0;font-size:.85rem">
+          أدخل <b>رقم الحركة</b> من رسالة جوال باي (أسرع طريقة للمطابقة الفورية)، أو اسم المحوِّل، أو ارفع صورة الإشعار:
+        </p>
+
+        <form id="proof-f" class="form" style="margin-top:6px">
           <div class="field">
-            <label for="f-payer">رقم محفظة Jawwal Pay التي حوّلت منها</label>
-            <input id="f-payer" name="payerPhone" class="ltr" inputmode="tel" value="${esc(o.payerPhone || o.phone)}" placeholder="059XXXXXXX">
+            <label for="f-ref">رقم الحركة في جوال باي</label>
+            <input id="f-ref" name="payReference" class="ltr" inputmode="numeric" autocomplete="off" placeholder="مثال: 2922...">
           </div>
           <div class="field">
-            <label>صورة إشعار التحويل <span class="muted">(تُسرّع المطابقة التلقائية)</span></label>
+            <label for="f-pname">أو: اسم المحوِّل كما يظهر في جوال باي</label>
+            <input id="f-pname" name="payName" autocomplete="name" placeholder="الاسم الكامل">
+          </div>
+          <div class="field">
+            <label for="f-payer">رقم محفظة جوال باي المحوَّل منها <span class="muted">(اختياري)</span></label>
+            <input id="f-payer" name="payPhone" class="ltr" inputmode="tel" placeholder="059XXXXXXX">
+          </div>
+          <div class="field">
+            <label>صورة إشعار التحويل <span class="muted">(اختياري — تساعد في تسريع المراجعة)</span></label>
             <label class="upload-box" id="proof-box">
               <input id="f-proof" type="file" accept="image/*" hidden>
               ${icon('upload')}
               <span id="proof-label">${o.proofSent ? 'تم إرسال الإشعار — اضغط لاستبداله' : 'اضغط لاختيار لقطة شاشة لإشعار Jawwal Pay'}</span>
             </label>
           </div>
-          <button class="btn primary lg" type="submit">${icon('check')}<span>${o.proofSent ? 'تحديث إشعار الدفع' : 'أرسلت المبلغ — تأكيد وتفعيل الطلب'}</span></button>
+          <button class="btn primary lg" type="submit">${icon('check')}<span>${o.proofSent ? 'تحديث بيانات التحويل' : 'أرسلت المبلغ — تأكيد وتفعيل الطلب'}</span></button>
         </form>
       </div>
     ` : ''}
 
-    ${o.status === 'done' && !o.qrImage ? `
+    ${o.stage === 'done' && !hasQr ? `
       <div class="card empty">
         ${icon('checkCircle')}
         <p>تمّ تفعيل باقتك بنجاح — شكراً لثقتك بنا.</p>
@@ -1193,17 +1261,28 @@ function renderOrder() {
   `, { sub: `طلب ${o.code}` });
 
   const copyCode = document.getElementById('copy-code');
-  if (copyCode) copyCode.onclick = () => copyText(o.code, 'تم نسخ رقم الطلب');
+  if (copyCode) copyCode.onclick = () => copyText(o.code, 'تم نسخ رمز الطلب');
   const printBtn = document.getElementById('print-order');
   if (printBtn) printBtn.onclick = () => window.print();
   const printQrBtn = document.getElementById('print-qr-btn');
   if (printQrBtn) printQrBtn.onclick = () => window.print();
-  const copyPay = document.getElementById('copy-pay');
-  if (copyPay) copyPay.onclick = () => copyText(payPhone, 'تم نسخ رقم المحفظة');
 
   root.querySelectorAll('[data-copy]').forEach((b) => {
     b.onclick = () => copyText(b.dataset.copy, 'تم النسخ');
   });
+
+  const cancelBtn = document.getElementById('cancel-order-btn');
+  if (cancelBtn) {
+    cancelBtn.onclick = async () => {
+      try {
+        S.order = await jfetch(`/api/shop/orders/${encodeURIComponent(o.code)}/cancel`, { method: 'POST' });
+        toast('تم إلغاء الطلب');
+        renderOrder();
+      } catch (err) {
+        toast(err.message, 'err');
+      }
+    };
+  }
 
   const instantBtn = document.getElementById('instant-act-btn');
   if (instantBtn) {
@@ -1224,13 +1303,13 @@ function renderOrder() {
   }
 
   const fileInput = document.getElementById('f-proof');
-  let proofData = null;
+  let proofData = '';
   if (fileInput) {
     fileInput.onchange = async () => {
       const file = fileInput.files?.[0];
       if (!file) return;
       try {
-        proofData = await fileToDataUrl(file);
+        proofData = await fileToDataUrl(file, { max: 1400 });
         document.getElementById('proof-label').textContent = `تم إرفاق: ${file.name}`;
       } catch (err) { toast(err.message, 'err'); }
     };
@@ -1239,14 +1318,22 @@ function renderOrder() {
   if (pf) {
     pf.onsubmit = async (e) => {
       e.preventDefault();
+      const fd = new FormData(pf);
+      const payReference = (fd.get('payReference') || '').trim();
+      const payName = (fd.get('payName') || '').trim();
+      const payPhone = (fd.get('payPhone') || '').trim();
+      if (!payReference && !payName && !payPhone && !proofData) {
+        toast('أدخل رقم الحركة أو اسم/رقم المحوِّل أو ارفع صورة الإشعار', 'err');
+        return;
+      }
       const btn = pf.querySelector('[type="submit"]');
       btn.disabled = true;
       try {
         S.order = await jfetch(`/api/shop/orders/${encodeURIComponent(o.code)}/proof`, {
           method: 'POST',
-          body: { payerPhone: new FormData(pf).get('payerPhone'), proofImage: proofData },
+          body: { payReference, payName, payPhone, receipt: proofData },
         });
-        toast('تم استلام إشعار الدفع — جارٍ التحقّق والتفعيل التلقائي');
+        toast(S.order.status === 'paid' ? 'تم التحقق من الدفع وتفعيل الطلب' : 'تم استلام بيانات التحويل — جارٍ التحقّق');
         renderOrder();
       } catch (err) {
         toast(err.message, 'err');
@@ -1272,19 +1359,19 @@ async function viewMyOrders() {
     ${S.myOrders.length ? `
       <div class="list">
         ${S.myOrders.map((o) => {
-          const st = STATUS_AR[o.status] || STATUS_AR.pending;
+          const st = STAGES_AR[o.stage] || STAGES_AR[o.status] || STAGES_AR.awaiting_payment;
           return `
             <a href="#/order/${esc(o.code)}" class="item" style="text-decoration:none;color:inherit">
               <div class="item-top">
                 <div class="row" style="gap:10px">
-                  ${companyLogo({ name: o.companyName, color: o.companyColor }, 'sm')}
+                  <span class="shop-brand-mark sm">${icon(o.esim ? 'qr' : 'sim')}</span>
                   <div>
                     <div class="item-title">
-                      ${esc(o.packageName)}
+                      ${esc(o.packageLabel)}
                       ${o.esim ? `<span class="pill" style="margin-inline-start:6px">eSIM QR</span>` : ''}
                     </div>
                     <div class="item-sub">
-                      <span class="ltr mono">${esc(o.code)}</span> · <span class="ltr">${esc(fmtPhone(o.phone))}</span> · ${fmtDate(o.createdAt)}
+                      <span class="ltr mono">${esc(o.code)}</span>${o.number ? ` · <span class="ltr">${esc(fmtPhone(o.number))}</span>` : ''} · ${fmtDate(o.createdAt)}
                     </div>
                   </div>
                 </div>

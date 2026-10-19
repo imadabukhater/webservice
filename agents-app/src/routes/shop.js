@@ -103,15 +103,17 @@ function byCode(code) {
 }
 
 // ---------- public ----------
-route('GET', '/api/shop', null, () => {
+function shopCatalogResponse() {
   const s = getSettings();
   const packages = s.shopEnabled ? q(`SELECT p.*, c.name AS company_name, c.esim_fee AS company_esim_fee FROM packages p JOIN companies c ON c.id = p.company_id
       WHERE p.active = 1 AND p.shop_price > 0 ORDER BY c.sort, c.id, p.sort, p.id`).all() : [];
   const ids = new Set(packages.map((p) => p.company_id));
   return {
     enabled: s.shopEnabled, instant: s.shopInstant, appName: s.appName,
+    shopName: s.shopTitle || (s.appName ? `متجر ${s.appName}` : 'متجر الباقات'),
     shopTitle: s.shopTitle || '', shopSubtitle: s.shopSubtitle || '',
     supportWhatsapp: s.supportWhatsapp, esimFee: s.esimFee,
+    payPhone: s.jawwalpayNumber || '',
     jawwalpay: { number: s.jawwalpayNumber, name: s.jawwalpayName },
     companies: q('SELECT id, name, color, logo, esim_fee FROM companies ORDER BY sort, id').all().filter((c) => ids.has(c.id)).map((c) => ({
       id: c.id, name: c.name, color: c.color, logo: c.logo,
@@ -119,14 +121,16 @@ route('GET', '/api/shop', null, () => {
     })),
     packages: packages.map((p) => ({
       id: p.id, companyId: p.company_id, companyName: p.company_name, name: p.name, price: round(p.shop_price),
-      oldPrice: p.old_price ? round(p.old_price) : null, popular: !!p.popular,
+      oldPrice: p.old_price ? round(p.old_price) : null, popular: !!p.popular, featured: !!p.popular,
       kind: p.kind === 'card' ? 'card' : 'invoice',
-      dataGb: p.data_gb, minutes: p.minutes, sms: p.sms, tag: p.tag, description: p.description, days: p.days || null,
+      dataGb: p.data_gb, gb: p.data_gb, minutes: p.minutes, sms: p.sms, tag: p.tag, description: p.description, days: p.days || null,
       esim: isEsimRef(p.art_card_id, p.company_name) || !!p.esim_enabled,
       esimFee: p.company_esim_fee === null || p.company_esim_fee === undefined ? s.esimFee : round(p.company_esim_fee),
     })),
   };
-});
+}
+route('GET', '/api/shop', null, shopCatalogResponse);
+route('GET', '/api/shop/catalog', null, shopCatalogResponse);
 
 // The free eSIM numbers of a package at its supplier (remembered there, so a sale can use one), without the ones other
 // customers hold: [{ id, phone, sim, qr }]. QuickLine's come with their eSIM and QR code; Layan's get theirs when
