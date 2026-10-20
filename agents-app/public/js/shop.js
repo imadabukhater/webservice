@@ -1202,9 +1202,12 @@ function viewCatalog() {
     <section class="pele-hero-slider">
       <div class="pele-hero-overlay">
         <div class="pele-top-banner">
-          <div class="pele-banner-logo">
-            <span class="pele-banner-mark">${brandLogoSvg('hsim-logo-svg')}</span>
-            ${renderBrandWordmark(rawBrand)}
+          <div class="pele-banner-head">
+            <div class="pele-banner-logo">
+              <span class="pele-banner-mark">${brandLogoSvg('hsim-logo-svg')}</span>
+              ${renderBrandWordmark(rawBrand)}
+            </div>
+            <span class="pele-banner-tag ltr">5G · eSIM QR</span>
           </div>
           <h1>${esc(S.data.shopTitle || 'الطريقة الأسهل للاتصال في البلاد')}</h1>
           <div class="pele-flex-bnr">
@@ -1505,15 +1508,16 @@ function renderPlanCard(pk, co) {
 
   return `
     <div class="pele-pack-card ${featured ? 'is-featured' : ''}" style="--co:${esc(coColor)}">
-      <div class="pele-superlative">
-        <div>
-          <span>${fmtNum(daysVal)}</span>
-          <span>يوماً</span>
+      <div class="pele-pack-card-head">
+        <div class="pele-best-offer">
+          <span class="pele-5g-pill" dir="ltr"><i>e</i>SIM <b>5G</b></span>
         </div>
-      </div>
-
-      <div class="pele-best-offer">
-        <span class="pele-5g-pill" dir="ltr"><i>e</i>SIM <b>5G</b></span>
+        <div class="pele-superlative">
+          <div>
+            <span>${fmtNum(daysVal)}</span>
+            <span>يوماً</span>
+          </div>
+        </div>
       </div>
 
       <div class="pele-pack-top" dir="ltr">
@@ -1526,21 +1530,23 @@ function renderPlanCard(pk, co) {
         <span>${esc(co?.name || pk.companyName || '')} · ${esc(pk.name)}</span>
       </div>
 
-      <div class="pele-new-txt">استخدام حر للتطبيقات المختارة</div>
-
-      ${renderAppsStripSvg()}
-
-      <div class="pele-new-txt2">
-        ${esc(callsLabel)}<br>
-        <span>${esc(qrFeeLine)}</span>
+      <div class="pele-pack-body-box">
+        <div class="pele-new-txt">استخدام حر للتطبيقات المختارة</div>
+        ${renderAppsStripSvg()}
+        <div class="pele-new-txt2">
+          ${esc(callsLabel)}
+          <span>${esc(qrFeeLine)}</span>
+        </div>
       </div>
 
-      <a class="pele-btn-b order-b" href="#/buy/${pk.id}${hasEsim ? '?esim=1' : ''}">
-        ${hasEsim ? 'شراء شريحة eSIM' : 'شراء الآن'}
-      </a>
-      <a class="pele-btn-b order-c" href="#/buy/${pk.id}">
-        شحن رصيد لخطك
-      </a>
+      <div class="pele-pack-btns">
+        <a class="pele-btn-b order-b" href="#/buy/${pk.id}${hasEsim ? '?esim=1' : ''}">
+          ${hasEsim ? 'شراء شريحة eSIM' : 'شراء الآن'}
+        </a>
+        <a class="pele-btn-b order-c" href="#/buy/${pk.id}">
+          شحن رصيد لخطك
+        </a>
+      </div>
       <button type="button" class="pele-lnk-inc" data-pack-info="${esc(String(pk.id))}">
         تفاصيل إضافية
       </button>

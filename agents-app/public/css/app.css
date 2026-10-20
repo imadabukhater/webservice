@@ -672,30 +672,31 @@ table.data tfoot th { background: var(--surface-2); font: 600 .86rem var(--f-ui)
 .pr-show small { color: var(--muted); font-size: .7rem; }
 .cp-row { padding: 10px 0; border-bottom: 1px solid var(--line); gap: 8px; flex-wrap: wrap; }
 /* ---------- customer shop (/shop) — Authentic eSIM & Telecom Storefront ---------- */
-body.shop { background: var(--bg); min-height: 100dvh; display: flex; flex-direction: column; }
-#shop { min-height: 100dvh; display: flex; flex-direction: column; }
+html:has(body.shop) { max-width: 100%; overflow-x: hidden; }
+body.shop { background: var(--bg); min-height: 100dvh; display: flex; flex-direction: column; width: 100%; max-width: 100%; overflow-x: hidden; }
+#shop { min-height: 100dvh; display: flex; flex-direction: column; width: 100%; max-width: 100%; overflow-x: hidden; }
 .icon-btn.sm { width: 38px; height: 38px; border-radius: 11px; }
 .icon-btn.sm svg { width: 18px; height: 18px; }
 
 /* Header & Navigation Dock — HOT eSIM Visual Identity */
-.shop-top { position: sticky; top: 0; z-index: 20; background: color-mix(in srgb, var(--surface) 92%, transparent); backdrop-filter: blur(16px); border-bottom: 1px solid var(--line); padding: calc(10px + env(safe-area-inset-top, 0px)) 16px 10px; }
-.shop-top-inner { width: min(100%, 1160px); margin: 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
-.shop-brand { display: flex; align-items: center; gap: 12px; color: var(--ink); text-decoration: none; min-width: 0; }
-.shop-brand-mark { width: 44px; height: 44px; border-radius: 12px; display: grid; place-items: center; filter: drop-shadow(0 4px 10px rgba(8, 17, 36, .22)); flex: none; }
+.shop-top { position: sticky; top: 0; z-index: 20; background: color-mix(in srgb, var(--surface) 92%, transparent); backdrop-filter: blur(16px); border-bottom: 1px solid var(--line); padding: calc(10px + env(safe-area-inset-top, 0px)) 16px 10px; width: 100%; max-width: 100%; box-sizing: border-box; }
+.shop-top-inner { width: min(100%, 1160px); margin: 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: nowrap; min-width: 0; }
+.shop-brand { display: flex; align-items: center; gap: 10px; color: var(--ink); text-decoration: none; min-width: 0; flex: 1 1 auto; }
+.shop-brand-mark { width: 42px; height: 42px; border-radius: 12px; display: grid; place-items: center; filter: drop-shadow(0 4px 10px rgba(8, 17, 36, .22)); flex: none; }
 .shop-brand-mark svg, .shop-brand-mark .hsim-logo-svg { width: 100%; height: 100%; display: block; }
 .shop-brand-mark.sm { width: 36px; height: 36px; border-radius: 9px; }
-.shop-brand-text { display: grid; gap: 3px; min-width: 0; }
-.shop-brand-title-row { display: inline-flex; align-items: center; gap: 7px; flex-wrap: wrap; }
-.brand-lockup { display: inline-flex; align-items: center; gap: 5px; direction: ltr; line-height: 1; }
-.brand-word-hot { font: 700 1.24rem/1 var(--f-brand); letter-spacing: .07em; color: var(--ink); text-transform: uppercase; }
-.brand-word-esim { display: inline-flex; align-items: baseline; padding: 3px 8px 3px 7px; border-radius: 7px; background: linear-gradient(135deg, #071124 0%, #102548 100%); border: 1px solid rgba(56, 189, 248, .48); font: 700 1.02rem/1 var(--f-brand); letter-spacing: .04em; color: #38bdf8; box-shadow: 0 3px 10px rgba(14, 165, 233, .18); }
+.shop-brand-text { display: grid; gap: 2px; min-width: 0; }
+.shop-brand-title-row { display: inline-flex; align-items: center; gap: 6px; flex-wrap: nowrap; min-width: 0; }
+.brand-lockup { display: inline-flex; align-items: center; gap: 5px; direction: ltr; line-height: 1; flex-shrink: 0; }
+.brand-word-hot { font: 700 1.2rem/1 var(--f-brand); letter-spacing: .07em; color: var(--ink); text-transform: uppercase; }
+.brand-word-esim { display: inline-flex; align-items: baseline; padding: 3px 8px 3px 7px; border-radius: 7px; background: linear-gradient(135deg, #071124 0%, #102548 100%); border: 1px solid rgba(56, 189, 248, .48); font: 700 .98rem/1 var(--f-brand); letter-spacing: .04em; color: #38bdf8; box-shadow: 0 3px 10px rgba(14, 165, 233, .18); }
 .brand-word-esim i { font-style: normal; color: #fbbf24; font-weight: 700; margin-right: 1px; }
-.brand-word-custom { font: 800 1.12rem/1.15 var(--f-ui); color: var(--ink); letter-spacing: -.01em; }
+.brand-word-custom { font: 800 1.08rem/1.15 var(--f-ui); color: var(--ink); letter-spacing: -.01em; }
 .shop-brand-monogram { padding: 2px 7px; border-radius: 6px; background: linear-gradient(135deg, #071124, #102548); border: 1px solid rgba(56, 189, 248, .42); color: #38bdf8; font: 700 .68rem var(--f-brand); letter-spacing: .05em; }
-.shop-brand-text small { display: inline-flex; align-items: center; gap: 6px; font: 500 .75rem var(--f-body); color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.shop-brand-text small { display: inline-flex; align-items: center; gap: 6px; font: 500 .74rem var(--f-body); color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .shop-live-dot { width: 7px; height: 7px; border-radius: 50%; background: #10b981; box-shadow: 0 0 0 3px rgba(16, 185, 129, .2); display: inline-block; flex: none; }
 
-.shop-nav { display: flex; gap: 4px; flex-wrap: wrap; align-items: center; padding: 4px; border-radius: 14px; background: var(--surface-2); border: 1px solid var(--line); }
+.shop-nav { display: flex; gap: 4px; flex-wrap: nowrap; align-items: center; padding: 4px; border-radius: 14px; background: var(--surface-2); border: 1px solid var(--line); flex-shrink: 0; }
 .shop-nav-link { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 36px; padding: 0 12px; border-radius: 10px; border: 1px solid transparent; background: transparent; color: var(--ink-2); font: 600 .82rem var(--f-ui); text-decoration: none; cursor: pointer; white-space: nowrap; transition: all .15s ease; }
 .shop-nav-link svg { width: 16px; height: 16px; color: var(--muted); flex: none; transition: color .15s ease; }
 .shop-nav-link:hover { background: var(--surface); color: var(--ink); }
@@ -706,10 +707,11 @@ body.shop { background: var(--bg); min-height: 100dvh; display: flex; flex-direc
 .shop-bottom-nav { display: none; }
 
 .shop-utils { display: flex; align-items: center; gap: 8px; flex: none; }
-.shop-wa-btn { border-color: color-mix(in srgb, #10b981 35%, var(--line)) !important; color: var(--ink) !important; }
-.shop-wa-btn svg { color: #10b981; }
+.shop-wa-btn { border-color: color-mix(in srgb, #10b981 35%, var(--line)) !important; color: var(--ink) !important; white-space: nowrap; }
+.shop-wa-btn svg { color: #10b981; flex: none; }
 .shop-wa-btn:hover { background: rgba(16, 185, 129, .1) !important; border-color: #10b981 !important; color: #059669 !important; }
-.shop-main { flex: 1; width: min(100%, 1160px); margin: 0 auto; padding: 18px 16px 52px; display: grid; gap: 18px; align-content: start; }
+.shop-main { flex: 1; width: min(100%, 1160px); max-width: 100%; margin: 0 auto; padding: 18px 16px 52px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 18px; align-content: start; box-sizing: border-box; }
+.shop-main > * { min-width: 0; max-width: 100%; box-sizing: border-box; }
 
 /* Authentic HOT eSIM & Telecom Hero */
 .esim-hero { padding: clamp(18px, 3vw, 28px); border-radius: 22px; background: linear-gradient(135deg, #071022 0%, #0d1e3a 52%, #132d54 100%); color: #f8fafc; border: 1px solid rgba(56, 189, 248, .24); box-shadow: var(--shadow-lg); position: relative; overflow: hidden; }
@@ -1018,8 +1020,12 @@ body.shop { background: var(--bg); min-height: 100dvh; display: flex; flex-direc
 /* 1. Hero Banner (.pele-hero-slider / .pele-top-banner / .pele-flex-bnr) */
 .pele-hero-slider {
   position: relative;
-  border-radius: 26px;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  border-radius: 24px;
   overflow: hidden;
+  border: 1px solid rgba(56, 189, 248, .26);
   background:
     radial-gradient(circle at 18% 22%, rgba(56, 189, 248, .22), transparent 45%),
     radial-gradient(circle at 85% 80%, rgba(31, 111, 242, .32), transparent 50%),
@@ -1032,71 +1038,90 @@ body.shop { background: var(--bg); min-height: 100dvh; display: flex; flex-direc
   align-items: center;
   justify-content: space-between;
   gap: 28px;
-  padding: clamp(26px, 4.5vw, 48px) clamp(20px, 4vw, 44px) clamp(38px, 5vw, 56px);
+  padding: clamp(24px, 4vw, 44px) clamp(20px, 3.8vw, 42px) clamp(32px, 4.5vw, 50px);
+  width: 100%;
+  box-sizing: border-box;
 }
 .pele-top-banner {
   flex: 1 1 540px;
   min-width: 0;
+  width: 100%;
+}
+.pele-banner-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
 }
 .pele-banner-logo {
   display: inline-flex;
   align-items: center;
-  gap: 10px;
-  padding: 6px 14px 6px 10px;
+  gap: 9px;
+  padding: 5px 13px 5px 9px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, .09);
-  border: 1px solid rgba(255, 255, 255, .16);
+  background: rgba(255, 255, 255, .1);
+  border: 1px solid rgba(255, 255, 255, .18);
   backdrop-filter: blur(8px);
 }
+.pele-banner-logo .brand-word-hot { color: #fff; }
 .pele-banner-mark {
-  width: 30px;
-  height: 30px;
+  width: 28px;
+  height: 28px;
   display: inline-grid;
   place-items: center;
+  flex: none;
 }
-.pele-banner-mark .hsim-logo-svg { width: 28px; height: 28px; }
-.pele-banner-logo .hsim-wordmark-main { color: #fff; font-size: 1.02rem; }
+.pele-banner-mark .hsim-logo-svg { width: 26px; height: 26px; }
+.pele-banner-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 5px 12px;
+  border-radius: 999px;
+  background: rgba(56, 189, 248, .18);
+  border: 1px solid rgba(56, 189, 248, .38);
+  color: #7dd3fc;
+  font: 800 .76rem/1 var(--f-brand);
+  letter-spacing: .04em;
+}
 .pele-top-banner h1 {
-  margin: 16px 0 24px;
-  font: 800 clamp(1.55rem, 3.3vw, 2.45rem)/1.22 var(--f-ui);
+  margin: 14px 0 20px;
+  font: 800 clamp(1.42rem, 3.1vw, 2.35rem)/1.28 var(--f-ui);
   color: #fff;
   letter-spacing: -.01em;
 }
 .pele-flex-bnr {
-  display: flex;
-  align-items: stretch;
-  flex-wrap: wrap;
-  gap: 0;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  width: 100%;
 }
 .pele-bnr-col {
   display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 10px;
-  padding-inline-end: 24px;
-  margin-inline-end: 24px;
-  border-inline-end: 1px solid rgba(255, 255, 255, .24);
-  max-width: 195px;
-}
-.pele-bnr-col:last-child {
-  border-inline-end: 0;
-  padding-inline-end: 0;
-  margin-inline-end: 0;
+  align-items: center;
+  gap: 11px;
+  padding: 12px 14px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, .08);
+  border: 1px solid rgba(255, 255, 255, .14);
+  min-width: 0;
 }
 .pele-bnr-ic {
-  width: 42px;
-  height: 42px;
-  border-radius: 12px;
-  background: rgba(56, 189, 248, .16);
-  border: 1px solid rgba(56, 189, 248, .35);
+  width: 40px;
+  height: 40px;
+  border-radius: 11px;
+  background: rgba(56, 189, 248, .18);
+  border: 1px solid rgba(56, 189, 248, .36);
   color: #38bdf8;
   display: grid;
   place-items: center;
+  flex: none;
 }
-.pele-bnr-ic svg { width: 22px; height: 22px; }
+.pele-bnr-ic svg { width: 20px; height: 20px; }
 .pele-bnr-col b {
-  font: 700 .95rem/1.38 var(--f-ui);
+  font: 700 .9rem/1.35 var(--f-ui);
   color: #fff;
+  min-width: 0;
 }
 
 /* Visual eSIM Card Art in Banner */
@@ -1107,14 +1132,14 @@ body.shop { background: var(--bg); min-height: 100dvh; display: flex; flex-direc
   justify-content: center;
 }
 .pele-sim-card-art {
-  width: 260px;
+  width: 255px;
   padding: 20px;
   border-radius: 22px;
   background: linear-gradient(145deg, rgba(255, 255, 255, .15), rgba(255, 255, 255, .05));
   border: 1.5px solid rgba(56, 189, 248, .42);
   box-shadow: 0 20px 40px rgba(0, 0, 0, .28), inset 0 1px 0 rgba(255, 255, 255, .25);
   backdrop-filter: blur(12px);
-  transform: rotate(-4deg);
+  transform: rotate(-3deg);
   display: grid;
   gap: 18px;
 }
@@ -1150,31 +1175,33 @@ body.shop { background: var(--bg); min-height: 100dvh; display: flex; flex-direc
   margin-top: 3px;
 }
 
-/* 2. Sticky Sub-Navigation Bar (.pele-adv-wrap / .pele-adv-feature) */
+/* 2. Sub-Navigation Bar (.pele-adv-wrap / .pele-adv-feature) */
 .pele-adv-wrap {
   position: sticky;
-  top: 62px;
+  top: 64px;
   z-index: 19;
-  margin: -26px auto 6px;
-  width: min(100% - 24px, 1060px);
+  margin: -22px auto 2px;
+  width: min(100% - 24px, 1040px);
+  max-width: 100%;
+  box-sizing: border-box;
 }
 .pele-adv-feature {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   align-items: stretch;
-  justify-content: space-between;
   background: var(--surface);
-  border: 1px solid var(--line);
+  border: 1.5px solid var(--line);
   border-radius: 16px;
-  min-height: 58px;
+  min-height: 54px;
   overflow: hidden;
   box-shadow: 0 10px 26px -8px rgba(8, 17, 36, .14);
 }
 .pele-adv-link {
-  flex: 1;
   display: flex;
   align-items: center;
   justify-content: center;
   border-inline-end: 1px solid var(--line);
+  min-width: 0;
 }
 .pele-adv-link a {
   display: flex;
@@ -1182,9 +1209,9 @@ body.shop { background: var(--bg); min-height: 100dvh; display: flex; flex-direc
   justify-content: center;
   width: 100%;
   height: 100%;
-  padding: 0 14px;
+  padding: 0 10px;
   color: var(--ink);
-  font: 700 .94rem var(--f-ui);
+  font: 700 .9rem var(--f-ui);
   text-decoration: none;
   transition: background .15s ease, color .15s ease;
   text-align: center;
@@ -1198,45 +1225,74 @@ body.shop { background: var(--bg); min-height: 100dvh; display: flex; flex-direc
   align-items: center;
   justify-content: center;
   background: linear-gradient(135deg, #0b1c3d 0%, var(--primary) 100%);
-  padding: 0 24px;
-  flex-shrink: 0;
+  padding: 0 12px;
+  min-width: 0;
 }
 .pele-btn-special-adv a {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
   color: #fff;
-  font: 700 .94rem var(--f-ui);
+  font: 700 .9rem var(--f-ui);
   text-decoration: none;
-  white-space: nowrap;
+  text-align: center;
 }
 .pele-btn-special-adv:hover {
   filter: brightness(1.08);
 }
 
-/* 3. Content Sections & Filter Bar */
+/* 3. Content Sections & Organized Filter Card */
 .pele-content-section {
-  scroll-margin-top: 130px;
+  scroll-margin-top: 120px;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
 }
 .pele-filter-bar {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: center;
+  display: grid;
   gap: 12px;
-  margin-bottom: 8px;
+  padding: 14px 16px;
+  border-radius: 20px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow-sm);
+  margin-bottom: 16px;
+  width: 100%;
+  box-sizing: border-box;
+}
+.pele-filter-bar .esim-type-tabs {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(105px, 1fr));
+  gap: 8px;
+  width: 100%;
+  overflow: visible;
+  padding: 0;
+}
+.pele-filter-bar .esim-type-tab {
+  width: 100%;
+  min-height: 40px;
+  padding: 0 10px;
+  font-size: .84rem;
 }
 .pele-co-pills {
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
   gap: 6px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+  width: 100%;
 }
 .pele-co-pill {
-  min-height: 36px;
-  padding: 0 14px;
+  min-height: 34px;
+  padding: 0 13px;
   border-radius: 999px;
   border: 1px solid var(--line);
-  background: var(--surface);
+  background: var(--surface-2);
   color: var(--ink-2);
-  font: 700 .82rem var(--f-ui);
+  font: 700 .8rem var(--f-ui);
   cursor: pointer;
   transition: all .15s ease;
 }
@@ -1245,24 +1301,26 @@ body.shop { background: var(--bg); min-height: 100dvh; display: flex; flex-direc
   background: var(--primary);
   border-color: var(--primary);
   color: #fff;
+  box-shadow: 0 4px 10px color-mix(in srgb, var(--primary) 28%, transparent);
 }
 
 /* 4. Pelephone-Style Package Cards (.pele-packs / .pele-pack-card) */
 .pele-packs {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: 28px;
-  padding: 24px 4px 12px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 305px), 1fr));
+  gap: 20px;
+  padding: 4px 0 8px;
+  width: 100%;
 }
 .pele-pack-card {
-  width: 325px;
+  width: 100%;
   max-width: 100%;
+  box-sizing: border-box;
   background: var(--surface);
-  border-radius: 26px;
+  border-radius: 24px;
   border: 1.5px solid var(--line);
-  box-shadow: 0 8px 26px rgba(8, 17, 36, .09);
-  padding: 22px 20px 20px;
+  box-shadow: 0 8px 24px rgba(8, 17, 36, .07);
+  padding: 18px 18px 16px;
   position: relative;
   text-align: center;
   display: flex;
@@ -1271,58 +1329,36 @@ body.shop { background: var(--bg); min-height: 100dvh; display: flex; flex-direc
   transition: transform .2s ease, box-shadow .2s ease, border-color .2s ease;
 }
 .pele-pack-card:hover {
-  transform: translateY(-4px);
-  box-shadow: 0 16px 34px -10px rgba(8, 17, 36, .16);
+  transform: translateY(-3px);
+  box-shadow: 0 14px 30px -10px rgba(8, 17, 36, .15);
 }
 .pele-pack-card.is-featured {
   border-color: var(--primary);
-  box-shadow: 0 14px 34px -8px color-mix(in srgb, var(--primary) 26%, rgba(8, 17, 36, .14));
+  box-shadow: 0 12px 30px -8px color-mix(in srgb, var(--primary) 24%, rgba(8, 17, 36, .12));
 }
 
-/* Floating Circular Corner Duration Badge (.pele-superlative) */
-.pele-superlative {
-  position: absolute;
-  top: -16px;
-  inset-inline-end: -10px;
-  width: 66px;
-  height: 66px;
-  border-radius: 50%;
-  background: linear-gradient(135deg, var(--primary) 0%, #0d2f6e 100%);
-  color: #fff;
+/* Card Top Header Row: 5G Pill on one side + Circular Duration Badge on the other */
+.pele-pack-card-head {
   display: flex;
   align-items: center;
-  justify-content: center;
-  border: 3px solid var(--surface);
-  box-shadow: 0 8px 18px rgba(31, 111, 242, .34);
-  z-index: 2;
-}
-.pele-superlative > div {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  line-height: 1.05;
-}
-.pele-superlative span:first-child {
-  font: 800 1.22rem/1 var(--f-mono);
-}
-.pele-superlative span:last-child {
-  font: 700 .7rem/1.1 var(--f-ui);
-}
-
-/* Top-Left eSIM 5G Offer Badge (.pele-best-offer) */
-.pele-best-offer {
-  align-self: flex-start;
+  justify-content: space-between;
+  width: 100%;
+  gap: 10px;
   margin-bottom: 4px;
+}
+.pele-best-offer {
+  display: inline-flex;
+  align-items: center;
 }
 .pele-5g-pill {
   display: inline-flex;
   align-items: center;
   gap: 3px;
-  padding: 3px 10px;
+  padding: 4px 10px;
   border-radius: 999px;
   background: var(--primary-soft);
   color: var(--primary);
-  font: 800 .8rem/1.2 var(--f-brand);
+  font: 800 .78rem/1.1 var(--f-brand);
 }
 .pele-5g-pill i {
   font-style: italic;
@@ -1331,10 +1367,37 @@ body.shop { background: var(--bg); min-height: 100dvh; display: flex; flex-direc
 .pele-5g-pill b {
   background: var(--primary);
   color: #fff;
-  padding: 1px 5px;
+  padding: 2px 5px;
   border-radius: 5px;
-  font-size: .68rem;
+  font-size: .66rem;
   margin-left: 3px;
+}
+
+/* Circular Duration Badge (.pele-superlative) — Neatly aligned inside card header */
+.pele-superlative {
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--primary) 0%, #0d2f6e 100%);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 2.5px solid var(--surface);
+  box-shadow: 0 6px 14px rgba(31, 111, 242, .28);
+  flex: none;
+}
+.pele-superlative > div {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  line-height: 1.02;
+}
+.pele-superlative span:first-child {
+  font: 800 1.04rem/1 var(--f-mono);
+}
+.pele-superlative span:last-child {
+  font: 700 .64rem/1.05 var(--f-ui);
 }
 
 /* Split Capacity | Price Header (.pele-pack-top) */
@@ -1343,17 +1406,17 @@ body.shop { background: var(--bg); min-height: 100dvh; display: flex; flex-direc
   align-items: center;
   justify-content: center;
   width: 100%;
-  margin: 8px 0 10px;
+  margin: 4px 0 10px;
   direction: ltr;
 }
 .pele-pack-name {
-  font: 800 2.45rem/1 var(--f-mono);
+  font: 800 clamp(1.85rem, 4.5vw, 2.3rem)/1 var(--f-mono);
   color: var(--ink);
   letter-spacing: -.03em;
   padding-right: 14px;
 }
 .pele-pack-price {
-  font: 800 2.2rem/1 var(--f-mono);
+  font: 800 clamp(1.75rem, 4.2vw, 2.1rem)/1 var(--f-mono);
   color: var(--primary);
   border-left: 3px solid var(--primary);
   padding-left: 14px;
@@ -1361,7 +1424,7 @@ body.shop { background: var(--bg); min-height: 100dvh; display: flex; flex-direc
   align-items: baseline;
 }
 .pele-pack-price span {
-  font-size: 1.2rem;
+  font-size: 1.1rem;
   font-weight: 700;
   margin-left: 2px;
 }
@@ -1372,11 +1435,12 @@ body.shop { background: var(--bg); min-height: 100dvh; display: flex; flex-direc
   align-items: center;
   justify-content: center;
   gap: 7px;
-  padding: 4px 12px;
+  padding: 5px 12px;
   border-radius: 999px;
   background: var(--surface-2);
+  border: 1px solid var(--line);
   color: var(--ink-2);
-  font: 700 .82rem var(--f-ui);
+  font: 700 .8rem var(--f-ui);
   margin-bottom: 10px;
   max-width: 100%;
 }
@@ -1386,76 +1450,97 @@ body.shop { background: var(--bg); min-height: 100dvh; display: flex; flex-direc
   white-space: nowrap;
 }
 
-/* Included Apps Strip (.pele-new-txt & .pele-all-apps) */
+/* Structured Features & Apps Box inside Card */
+.pele-pack-body-box {
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 12px 12px 10px;
+  margin: 0 0 12px;
+  display: grid;
+  gap: 8px;
+}
 .pele-new-txt {
-  font: 700 .9rem/1.35 var(--f-ui);
+  font: 700 .84rem/1.3 var(--f-ui);
   color: var(--ink);
-  margin: 2px 0 8px;
+  margin: 0;
 }
 .pele-all-apps {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
-  margin: 2px 0 14px;
+  gap: 7px;
+  margin: 0;
+  padding-bottom: 8px;
+  border-bottom: 1px dashed var(--line);
   width: 100%;
 }
 .pele-app-badge {
-  width: 34px;
-  height: 34px;
-  border-radius: 10px;
-  background: var(--surface-2);
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
+  background: var(--surface);
   border: 1px solid var(--line);
   color: var(--primary);
   display: grid;
   place-items: center;
+  flex: none;
 }
 .pele-app-badge svg {
-  width: 18px;
-  height: 18px;
+  width: 16px;
+  height: 16px;
 }
-
-/* Calls/SMS + eSIM Fee Text (.pele-new-txt2) */
 .pele-new-txt2 {
-  font: 700 .94rem/1.45 var(--f-body);
+  font: 700 .88rem/1.4 var(--f-body);
   color: var(--ink);
-  margin-bottom: 16px;
-  min-height: 44px;
+  margin: 0;
 }
 .pele-new-txt2 span {
   display: block;
-  font: 600 .8rem/1.4 var(--f-body);
+  font: 600 .76rem/1.35 var(--f-body);
   color: var(--muted);
-  margin-top: 3px;
+  margin-top: 2px;
 }
 
-/* Stacked Pill CTA Buttons (.pele-btn-b.order-b & .order-c) */
+/* Action Buttons inside Card (.pele-pack-btns) */
+.pele-pack-btns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  width: 100%;
+  margin-top: auto;
+  margin-bottom: 6px;
+}
 .pele-btn-b {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 220px;
-  max-width: 100%;
+  width: 100%;
   height: 42px;
-  border-radius: 999px;
-  font: 700 .92rem var(--f-ui);
+  padding: 0 8px;
+  border-radius: 12px;
+  font: 700 .84rem/1.2 var(--f-ui);
   text-decoration: none;
   transition: all .18s ease;
-  margin: 0 auto 10px;
+  margin: 0;
+  box-sizing: border-box;
+  white-space: nowrap;
 }
 .pele-btn-b.order-b {
   background: linear-gradient(135deg, var(--primary) 0%, #1557c0 100%);
   color: #fff;
-  box-shadow: 0 8px 18px -6px color-mix(in srgb, var(--primary) 65%, transparent);
+  box-shadow: 0 6px 14px -5px color-mix(in srgb, var(--primary) 65%, transparent);
 }
 .pele-btn-b.order-b:hover {
   transform: translateY(-1px);
   filter: brightness(1.06);
 }
 .pele-btn-b.order-c {
-  background: transparent;
+  background: var(--surface);
   color: var(--primary);
-  border: 2px solid var(--primary);
+  border: 1.5px solid var(--primary);
 }
 .pele-btn-b.order-c:hover {
   background: var(--primary-soft);
@@ -1466,7 +1551,7 @@ body.shop { background: var(--bg); min-height: 100dvh; display: flex; flex-direc
   padding: 4px 8px;
   margin-top: 2px;
   color: var(--ink-2);
-  font: 700 .84rem var(--f-ui);
+  font: 700 .8rem var(--f-ui);
   text-decoration: underline;
   cursor: pointer;
 }
@@ -1478,41 +1563,45 @@ body.shop { background: var(--bg); min-height: 100dvh; display: flex; flex-direc
 .pele-imp-info {
   background: linear-gradient(135deg, #08152f 0%, #0f2856 55%, #194691 100%);
   border-radius: 24px;
-  padding: 36px 24px;
+  padding: 28px 20px;
   color: #fff;
   text-align: center;
   box-shadow: 0 14px 32px rgba(7, 19, 41, .18);
+  width: 100%;
+  box-sizing: border-box;
 }
 .pele-main-sec h2 {
-  margin: 0 0 28px;
-  font: 800 clamp(1.3rem, 2.5vw, 1.85rem)/1.3 var(--f-ui);
+  margin: 0 0 20px;
+  font: 800 clamp(1.2rem, 2.5vw, 1.75rem)/1.32 var(--f-ui);
   color: #fff;
 }
 .pele-icns {
-  display: flex;
-  justify-content: space-around;
-  align-items: flex-start;
-  gap: 16px;
-  max-width: 780px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  max-width: 760px;
   margin: 0 auto;
-  flex-wrap: wrap;
+  width: 100%;
 }
 .pele-icn-item {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 12px;
-  color: rgba(255, 255, 255, .88);
+  justify-content: center;
+  gap: 10px;
+  color: rgba(255, 255, 255, .92);
   text-decoration: none;
   cursor: pointer;
-  padding: 12px 18px;
+  padding: 14px 10px;
   border-radius: 18px;
+  background: rgba(255, 255, 255, .06);
+  border: 1px solid rgba(255, 255, 255, .14);
   transition: all .2s ease;
-  min-width: 160px;
+  min-width: 0;
 }
 .pele-icn-svg {
-  width: 68px;
-  height: 68px;
+  width: 56px;
+  height: 56px;
   border-radius: 50%;
   background: rgba(255, 255, 255, .1);
   border: 2px solid rgba(56, 189, 248, .38);
@@ -1520,14 +1609,17 @@ body.shop { background: var(--bg); min-height: 100dvh; display: flex; flex-direc
   place-items: center;
   color: #38bdf8;
   transition: all .2s ease;
+  flex: none;
 }
-.pele-icn-svg svg { width: 30px; height: 30px; }
+.pele-icn-svg svg { width: 26px; height: 26px; }
 .pele-icn-item span:last-child {
-  font: 700 .96rem var(--f-ui);
+  font: 700 .88rem/1.3 var(--f-ui);
+  text-align: center;
 }
 .pele-icn-item:hover,
 .pele-icn-item.active {
-  background: rgba(255, 255, 255, .1);
+  background: rgba(255, 255, 255, .14);
+  border-color: rgba(56, 189, 248, .55);
   color: #fff;
   transform: translateY(-2px);
 }
@@ -1535,23 +1627,25 @@ body.shop { background: var(--bg); min-height: 100dvh; display: flex; flex-direc
   background: #38bdf8;
   color: #071329;
   border-color: #fff;
-  box-shadow: 0 0 22px rgba(56, 189, 248, .55);
+  box-shadow: 0 0 20px rgba(56, 189, 248, .55);
 }
 .pele-main-sec-info {
   background: var(--surface);
   border: 1.5px solid color-mix(in srgb, var(--primary) 30%, var(--line));
   border-radius: 22px;
-  margin-top: 14px;
-  padding: 28px 26px;
+  margin-top: 12px;
+  padding: 24px 20px;
   position: relative;
   box-shadow: var(--shadow);
+  width: 100%;
+  box-sizing: border-box;
 }
 .pele-close-main-info {
   position: absolute;
-  top: 16px;
-  inset-inline-end: 16px;
-  width: 36px;
-  height: 36px;
+  top: 14px;
+  inset-inline-end: 14px;
+  width: 34px;
+  height: 34px;
   border-radius: 50%;
   border: 1px solid var(--line);
   background: var(--surface-2);
@@ -1564,16 +1658,17 @@ body.shop { background: var(--bg); min-height: 100dvh; display: flex; flex-direc
   border-color: var(--primary);
   color: var(--primary);
 }
-.pele-close-main-info svg { width: 18px; height: 18px; }
+.pele-close-main-info svg { width: 17px; height: 17px; }
 .pele-txt3 {
-  font: 800 1.12rem var(--f-ui);
+  font: 800 1.05rem var(--f-ui);
   color: var(--primary);
-  margin-bottom: 8px;
+  margin-bottom: 6px;
+  padding-inline-end: 36px;
 }
 .pele-dtls p {
   margin: 0 0 10px;
-  font-size: .95rem;
-  line-height: 1.75;
+  font-size: .9rem;
+  line-height: 1.72;
   color: var(--ink-2);
 }
 .pele-dtls a {
@@ -1583,19 +1678,21 @@ body.shop { background: var(--bg); min-height: 100dvh; display: flex; flex-direc
 }
 .pele-info-highlight {
   display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 14px 16px;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px;
   border-radius: 14px;
   background: var(--primary-soft);
   color: var(--ink);
-  margin-top: 12px;
+  margin-top: 10px;
+  font-size: .86rem;
 }
 .pele-info-highlight svg {
-  width: 24px;
-  height: 24px;
+  width: 22px;
+  height: 22px;
   color: var(--primary);
   flex: none;
+  margin-top: 2px;
 }
 
 /* 6. Device Compatibility Accordion (.pele-check-esim / .pele-div-check) */
@@ -1603,37 +1700,39 @@ body.shop { background: var(--bg); min-height: 100dvh; display: flex; flex-direc
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: 24px;
-  padding: 36px 24px;
+  padding: 28px 20px;
   text-align: center;
   box-shadow: var(--shadow-sm);
-  scroll-margin-top: 130px;
+  scroll-margin-top: 120px;
+  width: 100%;
+  box-sizing: border-box;
 }
 .pele-check-esim .h2-1 {
-  font: 800 clamp(1.25rem, 2.4vw, 1.75rem)/1.3 var(--f-ui);
+  font: 800 clamp(1.18rem, 2.4vw, 1.65rem)/1.35 var(--f-ui);
   color: var(--ink);
-  margin: 0 0 18px;
+  margin: 0 0 14px;
 }
 .pele-compat-quick {
   max-width: 560px;
-  margin: 0 auto 20px;
+  margin: 0 auto 16px;
 }
 .pele-div-check {
   max-width: 820px;
   margin: 0 auto;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
 }
 .pele-brand-bar {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  min-height: 54px;
-  padding: 0 22px;
-  border-radius: 14px;
+  min-height: 48px;
+  padding: 0 18px;
+  border-radius: 13px;
   background: linear-gradient(135deg, #0b1c3d 0%, #153878 100%);
   color: #fff;
-  font: 700 1.02rem var(--f-brand);
+  font: 700 .95rem var(--f-brand);
   text-decoration: none;
   transition: all .18s ease;
 }
@@ -1646,34 +1745,35 @@ body.shop { background: var(--bg); min-height: 100dvh; display: flex; flex-direc
   place-items: center;
   transition: transform .2s ease;
 }
-.pele-brand-arrow svg { width: 20px; height: 20px; }
+.pele-brand-arrow svg { width: 18px; height: 18px; }
 .pele-brand-bar.on .pele-brand-arrow {
   transform: rotate(-90deg);
 }
 .pele-flex-degem {
   display: none;
-  flex-wrap: wrap;
-  gap: 8px;
-  padding: 16px;
-  border-radius: 14px;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 210px), 1fr));
+  gap: 7px;
+  padding: 12px;
+  border-radius: 13px;
   background: var(--surface-2);
   border: 1px solid var(--line);
   text-align: left;
 }
 .pele-flex-degem.on {
-  display: flex;
+  display: grid;
 }
 .pele-flex-degem span {
-  padding: 7px 12px;
+  padding: 7px 10px;
   border-radius: 9px;
   background: var(--surface);
   border: 1px solid var(--line);
-  font: 600 .84rem var(--f-brand);
+  font: 600 .8rem/1.3 var(--f-brand);
   color: var(--ink);
 }
 .pele-not-found {
-  margin-top: 20px;
-  font-size: .95rem;
+  margin-top: 16px;
+  font-size: .88rem;
+  line-height: 1.6;
   color: var(--ink-2);
 }
 .pele-not-found a {
@@ -1684,81 +1784,97 @@ body.shop { background: var(--bg); min-height: 100dvh; display: flex; flex-direc
 
 /* 7. 24/7 Service Strip (.pele-serv / .pele-serv-flex) */
 .pele-serv {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 24px;
   text-align: center;
-  padding: 20px 16px;
+  padding: 28px 20px;
+  box-shadow: var(--shadow-sm);
+  width: 100%;
+  box-sizing: border-box;
 }
 .pele-serv h2 {
-  font: 800 clamp(1.3rem, 2.4vw, 1.8rem)/1.3 var(--f-ui);
+  font: 800 clamp(1.18rem, 2.4vw, 1.65rem)/1.35 var(--f-ui);
   color: var(--ink);
-  margin: 0 0 28px;
+  margin: 0 0 20px;
 }
 .pele-serv-flex {
-  display: flex;
-  justify-content: space-around;
-  align-items: flex-start;
-  gap: 24px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
   max-width: 860px;
   margin: 0 auto;
-  flex-wrap: wrap;
+  width: 100%;
 }
 .pele-serv-flex a {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 12px;
+  justify-content: flex-start;
+  gap: 10px;
+  padding: 16px 10px;
+  border-radius: 18px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
   text-decoration: none;
   color: var(--ink);
-  font: 700 .96rem/1.45 var(--f-ui);
-  min-width: 200px;
-  transition: transform .18s ease, color .18s ease;
+  font: 700 .88rem/1.4 var(--f-ui);
+  min-width: 0;
+  transition: transform .18s ease, border-color .18s ease, color .18s ease;
 }
 .pele-serv-flex a:hover {
-  transform: translateY(-3px);
+  transform: translateY(-2px);
+  border-color: var(--primary);
   color: var(--primary);
 }
 .pele-serv-badge {
-  width: 76px;
-  height: 76px;
+  width: 58px;
+  height: 58px;
   border-radius: 50%;
   background: linear-gradient(135deg, var(--primary-soft), color-mix(in srgb, var(--primary) 18%, var(--surface)));
   border: 2px solid color-mix(in srgb, var(--primary) 35%, transparent);
   color: var(--primary);
   display: grid;
   place-items: center;
-  box-shadow: 0 10px 24px -10px color-mix(in srgb, var(--primary) 50%, transparent);
+  box-shadow: 0 8px 18px -8px color-mix(in srgb, var(--primary) 50%, transparent);
+  flex: none;
 }
-.pele-serv-badge svg { width: 34px; height: 34px; }
+.pele-serv-badge svg { width: 26px; height: 26px; }
 
 /* 8. Questions & Answers Accordion (.pele-faq) */
 .pele-faq {
-  border-top: 8px solid var(--surface-3);
-  border-bottom: 8px solid var(--surface-3);
-  padding: 36px 0;
-  margin-top: 4px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 24px;
+  padding: 26px 20px;
+  box-shadow: var(--shadow-sm);
+  width: 100%;
+  box-sizing: border-box;
 }
 .pele-faq h2 {
-  font: 800 clamp(1.35rem, 2.4vw, 1.85rem)/1.3 var(--f-ui);
+  font: 800 clamp(1.22rem, 2.4vw, 1.65rem)/1.3 var(--f-ui);
   color: var(--ink);
-  margin: 0 auto 18px;
+  margin: 0 auto 12px;
   max-width: 900px;
-  padding: 0 16px;
 }
 .pele-faq-inner {
   max-width: 900px;
   margin: 0 auto;
-  padding: 0 16px;
 }
 .pele-faq-question {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 18px 8px;
+  padding: 15px 6px;
   border-bottom: 1px solid var(--line);
-  font: 700 1.02rem/1.4 var(--f-ui);
+  font: 700 .95rem/1.45 var(--f-ui);
   color: var(--ink);
   cursor: pointer;
   transition: color .15s ease;
+}
+.pele-faq-question:last-of-type {
+  border-bottom: 0;
 }
 .pele-faq-question:hover,
 .pele-faq-question.open {
@@ -1771,18 +1887,19 @@ body.shop { background: var(--bg); min-height: 100dvh; display: flex; flex-direc
   color: var(--primary);
   flex: none;
 }
-.pele-faq-arrow svg { width: 19px; height: 19px; }
+.pele-faq-arrow svg { width: 18px; height: 18px; }
 .pele-faq-question.open .pele-faq-arrow {
   transform: rotate(-90deg);
 }
 .pele-faq-answer {
   display: none;
-  padding: 14px 14px 18px;
+  padding: 12px 14px 16px;
   border-bottom: 1px solid var(--line);
   background: var(--surface-2);
-  border-radius: 0 0 12px 12px;
-  font-size: .94rem;
-  line-height: 1.75;
+  border-radius: 12px;
+  margin-bottom: 6px;
+  font-size: .88rem;
+  line-height: 1.72;
   color: var(--ink-2);
 }
 .pele-faq-answer.open {
@@ -1798,11 +1915,14 @@ body.shop { background: var(--bg); min-height: 100dvh; display: flex; flex-direc
 .pele-footer {
   background: #071329;
   color: #e2e8f0;
-  padding: 42px 20px;
+  padding: 36px 20px;
   margin-top: auto;
   border-top: 1px solid rgba(255, 255, 255, .08);
+  width: 100%;
+  box-sizing: border-box;
 }
-.pele-footer .hsim-wordmark-main { color: #fff; }
+.pele-footer .brand-word-hot,
+.pele-footer .brand-word-custom { color: #fff; }
 .pele-footer .muted { color: #94a3b8 !important; }
 .pele-footer-wrap {
   max-width: 1140px;
@@ -1810,13 +1930,13 @@ body.shop { background: var(--bg); min-height: 100dvh; display: flex; flex-direc
   display: flex;
   flex-wrap: wrap;
   justify-content: space-between;
-  gap: 32px;
+  gap: 28px;
 }
 .pele-right-foot {
   display: flex;
   flex-direction: column;
-  gap: 18px;
-  min-width: 240px;
+  gap: 14px;
+  min-width: 0;
 }
 .pele-foot-net {
   display: flex;
@@ -1824,8 +1944,8 @@ body.shop { background: var(--bg); min-height: 100dvh; display: flex; flex-direc
   gap: 10px;
 }
 .pele-net-ic {
-  width: 40px;
-  height: 40px;
+  width: 38px;
+  height: 38px;
   border-radius: 50%;
   background: rgba(255, 255, 255, .08);
   border: 1px solid rgba(255, 255, 255, .14);
@@ -1844,29 +1964,28 @@ body.shop { background: var(--bg); min-height: 100dvh; display: flex; flex-direc
 }
 .pele-net-ic svg { width: 18px; height: 18px; }
 .pele-left-foot {
-  flex: 1;
-  min-width: 280px;
+  flex: 1 1 320px;
+  min-width: 0;
 }
 .pele-lnks {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 48px;
-  justify-content: flex-start;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 24px;
 }
 .pele-lnks > div {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  min-width: 180px;
+  min-width: 0;
 }
 .pele-lnks .ttl {
-  font: 700 .96rem var(--f-ui);
+  font: 700 .92rem var(--f-ui);
   color: #fff;
-  margin: 0 0 6px;
+  margin: 0 0 4px;
 }
 .pele-lnks a {
   color: #cbd5e1;
-  font-size: .88rem;
+  font-size: .84rem;
   text-decoration: none;
   transition: color .15s;
 }
@@ -2039,104 +2158,229 @@ body.shop {
 @media (max-width: 760px) {
   /* Hide top desktop nav bar and activate thumb-friendly bottom dock */
   .shop-top { padding: calc(8px + env(safe-area-inset-top, 0px)) 12px 8px; }
+  .shop-top-inner { gap: 8px; flex-wrap: nowrap; }
   .shop-top .shop-nav { display: none; }
-  .shop-brand-mark { width: 38px; height: 38px; border-radius: 10px; }
-  .shop-brand-text strong { font-size: .96rem; }
-  .shop-brand-text small { font-size: .7rem; max-width: 210px; }
+  .shop-brand { gap: 8px; }
+  .shop-brand-mark { width: 36px; height: 36px; border-radius: 10px; }
+  .brand-word-hot { font-size: 1.05rem; }
+  .brand-word-esim { font-size: .86rem; padding: 2px 6px; }
+  .brand-word-custom { font-size: .96rem; }
+  .shop-brand-text small { font-size: .68rem; max-width: 175px; }
+  .shop-utils { gap: 6px; }
+  .shop-wa-btn { min-height: 34px; padding: 0 10px; font-size: .78rem; }
   .shop-main { padding: 12px 12px 36px; gap: 14px; }
   .shop-footer,
-  .pele-footer { padding: 28px 14px calc(86px + env(safe-area-inset-bottom, 0px)); }
+  .pele-footer { padding: 26px 14px calc(86px + env(safe-area-inset-bottom, 0px)); }
 
-  /* Pelephone-Style Hero & Quick-Jump Bar on Tablet/Mobile */
+  /* 1. Hero Banner on Tablet/Mobile — 100% Fit & Symmetrical 3-Tile Feature Grid */
   .pele-hero-slider {
     border-radius: 20px;
   }
   .pele-hero-overlay {
     flex-direction: column;
-    align-items: flex-start;
-    padding: 22px 16px 26px;
-    gap: 18px;
+    align-items: stretch;
+    padding: 18px 14px 20px;
+    gap: 14px;
   }
   .pele-top-banner { flex: none; width: 100%; }
   .pele-hero-illustration { display: none; }
+  .pele-banner-logo { padding: 4px 11px 4px 8px; gap: 7px; }
+  .pele-banner-mark { width: 24px; height: 24px; }
+  .pele-banner-mark .hsim-logo-svg { width: 22px; height: 22px; }
+  .pele-banner-tag { font-size: .7rem; padding: 4px 10px; }
+  .pele-top-banner h1 {
+    font-size: clamp(1.22rem, 4.8vw, 1.55rem);
+    line-height: 1.32;
+    margin: 12px 0 14px;
+  }
   .pele-flex-bnr {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 10px;
+    gap: 8px;
     width: 100%;
   }
   .pele-bnr-col {
-    padding-inline-end: 10px;
-    margin-inline-end: 0;
-    max-width: none;
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-start;
+    text-align: center;
+    padding: 10px 6px;
+    gap: 7px;
+    border-radius: 14px;
+    min-width: 0;
   }
-  .pele-bnr-col b { font-size: .82rem; }
+  .pele-bnr-ic {
+    width: 34px;
+    height: 34px;
+    border-radius: 10px;
+  }
+  .pele-bnr-ic svg { width: 18px; height: 18px; }
+  .pele-bnr-col b {
+    font-size: .75rem;
+    line-height: 1.3;
+  }
+
+  /* 2. Sub-Navigation Bar on Mobile — Clean 2x2 Grid (No Overflow, No Overlap) */
   .pele-adv-wrap {
     position: relative;
     top: auto;
     width: 100%;
-    margin-top: -14px;
+    margin: 0;
     z-index: 5;
   }
   .pele-adv-feature {
-    min-height: 46px;
-    border-radius: 14px;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    min-height: auto;
+    border-radius: 16px;
+  }
+  .pele-adv-link {
+    min-height: 44px;
+    border-bottom: 1px solid var(--line);
+  }
+  .pele-adv-link:nth-child(2) {
+    border-inline-end: 0;
+  }
+  .pele-adv-link:nth-child(3) {
+    border-bottom: 0;
   }
   .pele-adv-link a {
     padding: 0 8px;
-    font-size: .78rem;
+    font-size: .83rem;
+    white-space: nowrap;
   }
   .pele-btn-special-adv {
-    padding: 0 12px;
+    min-height: 44px;
+    padding: 0 8px;
   }
   .pele-btn-special-adv a {
-    font-size: .78rem;
+    font-size: .83rem;
+    white-space: nowrap;
   }
+
+  /* 3. Filter Card on Mobile */
+  .pele-filter-bar {
+    padding: 12px;
+    border-radius: 18px;
+    gap: 10px;
+    margin-bottom: 12px;
+  }
+  .pele-filter-bar .esim-type-tabs {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 6px;
+  }
+  .pele-filter-bar .esim-type-tab {
+    min-height: 38px;
+    padding: 0 6px;
+    font-size: .78rem;
+    gap: 5px;
+  }
+  .pele-filter-bar .esim-type-tab small {
+    padding: 1px 6px;
+    font-size: .68rem;
+  }
+  .pele-co-pills {
+    gap: 5px;
+    padding-top: 8px;
+  }
+  .pele-co-pill {
+    min-height: 32px;
+    padding: 0 11px;
+    font-size: .76rem;
+  }
+
+  /* 4. Package Cards on Mobile — Full Width & Uniform Alignment */
   .pele-packs {
-    gap: 22px;
-    padding-top: 16px;
+    grid-template-columns: 1fr;
+    gap: 14px;
+    padding: 0;
   }
   .pele-pack-card {
-    width: min(100%, 350px);
-    padding: 20px 16px 18px;
-  }
-  .pele-superlative {
-    inset-inline-end: 10px;
-    top: -12px;
-    width: 58px;
-    height: 58px;
-  }
-  .pele-btn-b {
-    width: min(100%, 250px);
-    height: 46px;
-  }
-  .pele-imp-info,
-  .pele-check-esim {
-    padding: 24px 14px;
+    width: 100%;
+    max-width: 100%;
+    padding: 16px 15px 14px;
     border-radius: 20px;
   }
+  .pele-superlative {
+    width: 48px;
+    height: 48px;
+  }
+  .pele-superlative span:first-child { font-size: .96rem; }
+  .pele-superlative span:last-child { font-size: .6rem; }
+  .pele-pack-name { font-size: 1.9rem; padding-right: 12px; }
+  .pele-pack-price { font-size: 1.8rem; padding-left: 12px; }
+  .pele-btn-b {
+    height: 42px;
+    font-size: .83rem;
+  }
+
+  /* 5. Lower Sections on Mobile — Symmetrical Grids & Cohesive Cards */
+  .pele-imp-info,
+  .pele-check-esim,
+  .pele-serv,
+  .pele-faq {
+    padding: 20px 14px;
+    border-radius: 20px;
+  }
+  .pele-main-sec h2,
+  .pele-check-esim .h2-1,
+  .pele-serv h2,
+  .pele-faq h2 {
+    font-size: 1.15rem;
+    margin-bottom: 14px;
+  }
+  .pele-icns {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+  }
   .pele-icn-item {
-    min-width: 96px;
-    flex: 1 1 90px;
-    padding: 8px 6px;
+    padding: 10px 6px;
+    gap: 8px;
+    border-radius: 14px;
+    min-width: 0;
   }
   .pele-icn-svg {
-    width: 54px;
-    height: 54px;
+    width: 46px;
+    height: 46px;
   }
-  .pele-icn-svg svg { width: 24px; height: 24px; }
-  .pele-icn-item span:last-child { font-size: .8rem; }
-  .pele-serv-flex { gap: 16px; }
+  .pele-icn-svg svg { width: 22px; height: 22px; }
+  .pele-icn-item span:last-child {
+    font-size: .75rem;
+    line-height: 1.25;
+  }
+  .pele-main-sec-info {
+    padding: 18px 14px;
+    border-radius: 18px;
+  }
+  .pele-serv-flex {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+  }
   .pele-serv-flex a {
-    min-width: 135px;
-    flex: 1 1 125px;
-    font-size: .84rem;
+    padding: 12px 6px;
+    gap: 8px;
+    border-radius: 14px;
+    font-size: .75rem;
+    line-height: 1.32;
+    min-width: 0;
   }
   .pele-serv-badge {
-    width: 60px;
-    height: 60px;
+    width: 46px;
+    height: 46px;
   }
-  .pele-serv-badge svg { width: 26px; height: 26px; }
+  .pele-serv-badge svg { width: 22px; height: 22px; }
+  .pele-faq-question {
+    padding: 13px 4px;
+    font-size: .9rem;
+  }
+  .pele-footer-wrap {
+    flex-direction: column;
+    gap: 20px;
+  }
+  .pele-lnks {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 16px;
+  }
 
   /* Prevent iOS Safari auto-zoom when focusing inputs */
   .esim-search-box input,
@@ -2242,34 +2486,6 @@ body.shop {
   .esim-compat-box, .esim-legal-panel { padding: 14px 15px; }
   .esim-legal-hero, .esim-eid-check { padding: 14px 15px; gap: 11px; }
 
-  /* Pelephone Layout & Payment Security on Narrow Phone Viewports (<= 560px) */
-  .pele-hero-overlay { padding: 18px 14px 22px; gap: 14px; }
-  .pele-top-banner h1 { font-size: 1.55rem; margin-bottom: 12px; }
-  .pele-flex-bnr {
-    grid-template-columns: 1fr;
-    gap: 8px;
-  }
-  .pele-bnr-col {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    border-inline-end: 0;
-    border-inline-start: 3px solid #38bdf8;
-    padding: 6px 10px;
-    background: rgba(255, 255, 255, .06);
-    border-radius: 10px;
-  }
-  .pele-bnr-col .ic { margin-bottom: 0; flex: none; }
-  .pele-bnr-col b { font-size: .84rem; }
-  .pele-adv-feature {
-    flex-wrap: nowrap;
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
-    scrollbar-width: none;
-  }
-  .pele-adv-feature::-webkit-scrollbar { display: none; }
-  .pele-adv-link a { white-space: nowrap; padding: 0 7px; font-size: .74rem; }
-  .pele-btn-special-adv a { white-space: nowrap; font-size: .75rem; }
   .shop-copy-card { padding: 10px 12px; }
   .shop-qr-actions .btn { width: 100%; justify-content: center; min-height: 44px; }
 }
@@ -2279,6 +2495,8 @@ body.shop {
   .shop-wa-btn .shop-wa-label { font-size: .75rem; }
   .esim-card-btns.has-two { grid-template-columns: 1fr; }
   .esim-card-btns.has-two .btn.primary { order: -1; }
+  .pele-filter-bar .esim-type-tab small { display: none; }
+  .pele-pack-btns { grid-template-columns: 1fr; }
 }
 
 @media print {
