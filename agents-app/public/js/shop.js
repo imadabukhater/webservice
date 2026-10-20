@@ -1784,11 +1784,6 @@ function viewBuy(id) {
       ` : ''}
 
       <div class="field">
-        <label for="f-name">الاسم</label>
-        <input id="f-name" name="customerName" class="input" required autocomplete="name" placeholder="الاسم الكامل">
-      </div>
-
-      <div class="field">
         <label for="f-phone">${isCard ? 'رقم الهاتف المراد شحنه' : 'رقم الهاتف'}</label>
         <input id="f-phone" name="number" class="input ltr" inputmode="tel" autocomplete="tel" required placeholder="05XXXXXXXX">
       </div>
@@ -1799,11 +1794,6 @@ function viewBuy(id) {
           <input id="f-sim" name="sim" class="input ltr" inputmode="numeric" required placeholder="89970...">
         </div>
       ` : ''}
-
-      <div class="field">
-        <label for="f-contact">رقم واتساب للتواصل <span class="muted">(اختياري)</span></label>
-        <input id="f-contact" name="contactPhone" class="input ltr" inputmode="tel" autocomplete="tel" placeholder="059XXXXXXX">
-      </div>
 
       <div class="shop-breakdown-box">
         <div class="shop-bd-row">
@@ -1852,10 +1842,9 @@ function viewBuy(id) {
         body: {
           packageId: pk.id,
           kind: isCard ? 'recharge' : 'new',
-          customerName: fd.get('customerName'),
+          customerName: fd.get('customerName') || '',
           number: fd.get('number'),
           sim: fd.get('sim') || '',
-          contactPhone: fd.get('contactPhone') || '',
         },
       });
       rememberOrderCode(order.code);
@@ -1944,18 +1933,8 @@ async function esimForm(pk, co, canSwitchToCard = false) {
       `}
 
       <div class="field">
-        <label for="f-name">الاسم</label>
-        <input id="f-name" name="customerName" class="input" required autocomplete="name" placeholder="الاسم الكامل">
-      </div>
-
-      <div class="field">
         <label for="f-email">البريد الإلكتروني <span class="muted">(اختياري — لإرسال نسخة من الـ QR)</span></label>
         <input id="f-email" name="email" type="email" class="input ltr" autocomplete="email" placeholder="you@example.com">
-      </div>
-
-      <div class="field">
-        <label for="f-contact">رقم واتساب للتواصل <span class="muted">(اختياري)</span></label>
-        <input id="f-contact" name="contactPhone" class="input ltr" inputmode="tel" autocomplete="tel" placeholder="059XXXXXXX">
       </div>
 
       <div class="shop-breakdown-box">
@@ -2011,9 +1990,8 @@ async function esimForm(pk, co, canSwitchToCard = false) {
           esim: true,
           includeEsimFee: qrFee > 0,
           packageId: pk.id,
-          customerName: fd.get('customerName'),
+          customerName: fd.get('customerName') || 'زبون المتجر',
           email: fd.get('email') || '',
-          contactPhone: fd.get('contactPhone') || '',
         },
       });
       S.esimAvailable = null;
@@ -2122,7 +2100,7 @@ function renderOrder() {
           <div class="grow">
             <span class="esim-carrier-label">طلب #<b class="ltr mono">${esc(o.code)}</b></span>
             <h3 style="margin:2px 0;word-break:break-word">${esc(o.packageLabel)}${isEsim ? ' · eSIM' : ''}</h3>
-            <small class="muted">${esc(o.customerName || '')} · ${o.number ? `<span class="ltr">${esc(fmtPhone(o.number))}</span>` : 'يظهر الرقم فور توثيق الدفع'}</small>
+            <small class="muted">${o.customerName && o.customerName !== 'زبون المتجر' ? `${esc(o.customerName)} · ` : ''}${o.number ? `<span class="ltr">${esc(fmtPhone(o.number))}</span>` : 'يظهر الرقم فور توثيق الدفع'}</small>
           </div>
         </div>
         <b class="mono shop-amount">${fmtMoney(o.amount)}</b>

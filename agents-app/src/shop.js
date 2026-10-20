@@ -205,7 +205,7 @@ function qrMail(o, s) {
   return `<!doctype html><html dir="rtl" lang="ar"><body style="margin:0;padding:24px;background:#f4f5f8;font-family:Tahoma,Arial,sans-serif;color:#111">
   <div style="max-width:480px;margin:0 auto;background:#fff;border-radius:14px;padding:24px">
     <h2 style="margin:0 0 10px">شريحتك الإلكترونية (eSIM) جاهزة</h2>
-    <p style="margin:0 0 6px">${o.customer_name ? `مرحباً ${html(o.customer_name)}، ` : ''}تم تفعيل خطك:</p>
+    <p style="margin:0 0 6px">${o.customer_name && o.customer_name !== 'زبون المتجر' ? `مرحباً ${html(o.customer_name)}، ` : ''}تم تفعيل خطك:</p>
     <p style="margin:0 0 16px;font-size:20px;direction:ltr;text-align:right"><b>${html(o.number)}</b></p>
     <p style="margin:0 0 16px">${html(o.package_label)}</p>
     <p style="text-align:center;margin:0 0 16px"><img src="cid:esim-qr" alt="رمز QR لتثبيت eSIM" width="240" height="240" style="border:1px solid #ddd;border-radius:8px"></p>
