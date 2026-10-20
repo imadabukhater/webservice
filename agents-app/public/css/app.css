@@ -1877,6 +1877,163 @@ body.shop { background: var(--bg); min-height: 100dvh; display: flex; flex-direc
 }
 
 /* ============================================================================
+   Payment Security Shield, Copy Cards & Mobile eSIM Install Helpers
+   ============================================================================ */
+body.shop {
+  overflow-x: clip;
+}
+.shop-sec-shield {
+  padding: 13px 15px;
+  border-radius: 15px;
+  background: linear-gradient(135deg, color-mix(in srgb, var(--good) 10%, var(--surface)), var(--surface-2));
+  border: 1.5px solid color-mix(in srgb, var(--good) 32%, var(--line));
+  display: grid;
+  gap: 8px;
+}
+.shop-sec-shield-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.shop-sec-shield-ic {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: var(--good-soft);
+  color: var(--good);
+  display: grid;
+  place-items: center;
+  flex: none;
+}
+.shop-sec-shield-ic svg { width: 20px; height: 20px; }
+.shop-sec-shield-head b {
+  display: block;
+  font: 700 .88rem/1.3 var(--f-ui);
+  color: var(--ink);
+}
+.shop-sec-shield-head small {
+  display: block;
+  font-size: .76rem;
+  color: var(--muted);
+  margin-top: 1px;
+}
+.shop-sec-shield-list {
+  margin: 2px 0 0;
+  padding-inline-start: 20px;
+  display: grid;
+  gap: 4px;
+  font-size: .8rem;
+  line-height: 1.55;
+  color: var(--ink-2);
+}
+.shop-sec-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--good-soft);
+  color: var(--good);
+  font: 700 .74rem var(--f-ui);
+}
+.shop-sec-tag svg { width: 14px; height: 14px; }
+.shop-reserve-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--warn-soft);
+  color: var(--warn);
+  font: 600 .76rem var(--f-ui);
+}
+.shop-reserve-pill svg { width: 14px; height: 14px; }
+.shop-rec-pill {
+  display: inline-block;
+  margin-inline-start: 6px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--primary-soft);
+  color: var(--primary);
+  font: 700 .68rem var(--f-ui);
+}
+.shop-copy-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 11px 14px;
+  border-radius: 14px;
+  background: var(--surface);
+  border: 1.5px solid var(--line);
+}
+.shop-kv-meta {
+  display: grid;
+  gap: 2px;
+}
+.shop-kv-meta span {
+  font-size: .76rem;
+  color: var(--muted);
+}
+.shop-kv-val {
+  font-size: 1.06rem;
+  color: var(--ink);
+}
+.shop-copy-btn {
+  min-height: 38px;
+  padding: 0 12px;
+  border-radius: 10px;
+  font-weight: 700;
+  transition: all .15s ease;
+}
+.shop-copy-btn.is-copied,
+#copy-code.is-copied {
+  background: var(--good) !important;
+  color: #fff !important;
+  border-color: var(--good) !important;
+}
+.shop-proof-thumb {
+  width: 52px;
+  height: 52px;
+  object-fit: cover;
+  border-radius: 10px;
+  border: 1.5px solid var(--primary);
+  flex: none;
+}
+.shop-qr-actions {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  width: 100%;
+}
+.shop-apple-esim-btn {
+  width: 100%;
+  max-width: 340px;
+  min-height: 46px;
+}
+.shop-single-phone-tip {
+  width: 100%;
+  text-align: start;
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--primary) 8%, var(--surface-2));
+  border: 1px solid color-mix(in srgb, var(--primary) 26%, var(--line));
+  font-size: .82rem;
+  line-height: 1.65;
+}
+.shop-single-phone-tip b {
+  display: block;
+  color: var(--ink);
+  margin-bottom: 3px;
+}
+.shop-single-phone-tip p {
+  margin: 0;
+  color: var(--ink-2);
+}
+
+/* ============================================================================
    Mobile Phone Ergonomics & Responsive Refinements (<= 760px & <= 480px)
    ============================================================================ */
 @media (max-width: 760px) {
@@ -1886,16 +2043,19 @@ body.shop { background: var(--bg); min-height: 100dvh; display: flex; flex-direc
   .shop-brand-mark { width: 38px; height: 38px; border-radius: 10px; }
   .shop-brand-text strong { font-size: .96rem; }
   .shop-brand-text small { font-size: .7rem; max-width: 210px; }
-  .shop-main { padding: 14px 12px 36px; gap: 14px; }
+  .shop-main { padding: 12px 12px 36px; gap: 14px; }
   .shop-footer,
   .pele-footer { padding: 28px 14px calc(86px + env(safe-area-inset-bottom, 0px)); }
 
-  /* Pelephone-Style Hero & Sticky Bar on Tablet/Mobile */
+  /* Pelephone-Style Hero & Quick-Jump Bar on Tablet/Mobile */
+  .pele-hero-slider {
+    border-radius: 20px;
+  }
   .pele-hero-overlay {
     flex-direction: column;
     align-items: flex-start;
-    padding: 24px 18px 34px;
-    gap: 20px;
+    padding: 22px 16px 26px;
+    gap: 18px;
   }
   .pele-top-banner { flex: none; width: 100%; }
   .pele-hero-illustration { display: none; }
@@ -1912,12 +2072,14 @@ body.shop { background: var(--bg); min-height: 100dvh; display: flex; flex-direc
   }
   .pele-bnr-col b { font-size: .82rem; }
   .pele-adv-wrap {
-    top: 56px;
+    position: relative;
+    top: auto;
     width: 100%;
-    margin-top: -18px;
+    margin-top: -14px;
+    z-index: 5;
   }
   .pele-adv-feature {
-    min-height: 48px;
+    min-height: 46px;
     border-radius: 14px;
   }
   .pele-adv-link a {
@@ -1931,38 +2093,50 @@ body.shop { background: var(--bg); min-height: 100dvh; display: flex; flex-direc
     font-size: .78rem;
   }
   .pele-packs {
-    gap: 24px;
-    padding-top: 18px;
+    gap: 22px;
+    padding-top: 16px;
   }
   .pele-pack-card {
-    width: min(100%, 340px);
+    width: min(100%, 350px);
+    padding: 20px 16px 18px;
+  }
+  .pele-superlative {
+    inset-inline-end: 10px;
+    top: -12px;
+    width: 58px;
+    height: 58px;
+  }
+  .pele-btn-b {
+    width: min(100%, 250px);
+    height: 46px;
   }
   .pele-imp-info,
   .pele-check-esim {
-    padding: 26px 16px;
+    padding: 24px 14px;
     border-radius: 20px;
   }
   .pele-icn-item {
-    min-width: 100px;
-    flex: 1 1 95px;
+    min-width: 96px;
+    flex: 1 1 90px;
     padding: 8px 6px;
   }
   .pele-icn-svg {
-    width: 56px;
-    height: 56px;
+    width: 54px;
+    height: 54px;
   }
   .pele-icn-svg svg { width: 24px; height: 24px; }
-  .pele-icn-item span:last-child { font-size: .82rem; }
+  .pele-icn-item span:last-child { font-size: .8rem; }
+  .pele-serv-flex { gap: 16px; }
   .pele-serv-flex a {
-    min-width: 140px;
-    flex: 1 1 130px;
-    font-size: .86rem;
+    min-width: 135px;
+    flex: 1 1 125px;
+    font-size: .84rem;
   }
   .pele-serv-badge {
-    width: 62px;
-    height: 62px;
+    width: 60px;
+    height: 60px;
   }
-  .pele-serv-badge svg { width: 28px; height: 28px; }
+  .pele-serv-badge svg { width: 26px; height: 26px; }
 
   /* Prevent iOS Safari auto-zoom when focusing inputs */
   .esim-search-box input,
@@ -2067,6 +2241,37 @@ body.shop { background: var(--bg); min-height: 100dvh; display: flex; flex-direc
   .esim-page-cta .row .btn { flex: 1; justify-content: center; }
   .esim-compat-box, .esim-legal-panel { padding: 14px 15px; }
   .esim-legal-hero, .esim-eid-check { padding: 14px 15px; gap: 11px; }
+
+  /* Pelephone Layout & Payment Security on Narrow Phone Viewports (<= 560px) */
+  .pele-hero-overlay { padding: 18px 14px 22px; gap: 14px; }
+  .pele-top-banner h1 { font-size: 1.55rem; margin-bottom: 12px; }
+  .pele-flex-bnr {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+  .pele-bnr-col {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    border-inline-end: 0;
+    border-inline-start: 3px solid #38bdf8;
+    padding: 6px 10px;
+    background: rgba(255, 255, 255, .06);
+    border-radius: 10px;
+  }
+  .pele-bnr-col .ic { margin-bottom: 0; flex: none; }
+  .pele-bnr-col b { font-size: .84rem; }
+  .pele-adv-feature {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+  .pele-adv-feature::-webkit-scrollbar { display: none; }
+  .pele-adv-link a { white-space: nowrap; padding: 0 7px; font-size: .74rem; }
+  .pele-btn-special-adv a { white-space: nowrap; font-size: .75rem; }
+  .shop-copy-card { padding: 10px 12px; }
+  .shop-qr-actions .btn { width: 100%; justify-content: center; min-height: 44px; }
 }
 
 @media (max-width: 390px) {

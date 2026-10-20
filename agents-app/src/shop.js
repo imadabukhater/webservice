@@ -59,8 +59,15 @@ function namesMatch(a, b) {
 }
 
 function matchReason(o, m) {
-  if (o.pay_reference && m.reference && normRef(o.pay_reference) === normRef(m.reference)) return 'الرقم المرجعي';
-  if (o.pay_phone && m.sender_phone && o.pay_phone === m.sender_phone) return 'رقم المحوِّل';
+  if (m.trusted !== undefined && !m.trusted) return null;
+  if (o.pay_reference && m.reference) {
+    const refA = normRef(o.pay_reference);
+    const refB = normRef(m.reference);
+    return refA.length >= 3 && refA === refB ? 'الرقم المرجعي' : null;
+  }
+  if (o.pay_phone && m.sender_phone) {
+    return o.pay_phone === m.sender_phone ? 'رقم المحوِّل' : null;
+  }
   if (o.pay_name && m.sender_name && namesMatch(o.pay_name, m.sender_name)) return 'اسم المحوِّل';
   return null;
 }

@@ -39,6 +39,23 @@ test('a malformed address is refused and the server stays up; nothing outside pu
   assert.equal(await raw('/..%2Fserver.js'), 403);
   assert.equal(await raw('/..%2Fpublic-copy%2Findex.html'), 403);
   assert.equal(await raw('/..%2Fsrc%2Fdb.js'), 403);
+  assert.equal(await raw('/.env'), 403);
+  assert.equal(await raw('/.git/config'), 403);
+  // Cross-origin POST is rejected while same-origin POST is accepted.
+  const cross = await fetch(`${base}/api/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Origin: 'https://evil.example.com' },
+    body: JSON.stringify({ username: 'admin', password: 'admin-pass' }),
+  });
+  assert.equal(cross.status, 403);
+  // Prototype pollution keys are stripped from JSON request bodies.
+  const protoRes = await fetch(`${base}/api/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: '{"username":"admin","password":"wrong","__proto__":{"polluted":true}}',
+  });
+  assert.equal(protoRes.status, 401);
+  assert.equal(({}).polluted, undefined);
 });
 
 test('an agent is sent only the settings its screens need', async () => {

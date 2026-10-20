@@ -44,6 +44,8 @@ const SECURITY_HEADERS = {
   'Permissions-Policy': 'camera=(self), microphone=(), geolocation=()',
   'Strict-Transport-Security': 'max-age=31536000; includeSubDomains',
   'Cross-Origin-Opener-Policy': 'same-origin',
+  'Cross-Origin-Resource-Policy': 'same-origin',
+  'X-Permitted-Cross-Domain-Policies': 'none',
 };
 const CSP = [
   "default-src 'self'", "script-src 'self'", "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
@@ -53,11 +55,15 @@ const CSP = [
 ].join('; ');
 
 function sendJson(res, status, data) {
-  res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', ...SECURITY_HEADERS });
+  res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'Content-Security-Policy': "default-src 'none'; frame-ancestors 'none'", ...SECURITY_HEADERS });
   res.end(JSON.stringify(data));
 }
 
 function serveStatic(req, res, pathname) {
+  if (pathname.split('/').some((seg) => seg.startsWith('.') && seg !== '.')) {
+    res.writeHead(403);
+    return res.end();
+  }
   // The customer shop is its own page: /shop and anything under it.
   const page = pathname === '/' ? 'index.html' : /^\/shop(\/|$)/.test(pathname) ? 'shop.html' : pathname;
   let file = path.normalize(path.join(PUBLIC_DIR, page));

@@ -107,10 +107,15 @@ test('email parsing: MIME, encoded headers, Arabic digits and sender authenticat
   assert.equal(mail.authenticSender({ ...jp, from: 'x <a@myjawwalpay.ps>' }, 'jawwalpay.ps'), false);
   assert.equal(mail.authenticSender({ ...jp, from: 'x <a@jawwalpay.ps.example.com>' }, 'jawwalpay.ps'), false);
   assert.equal(mail.authenticSender({ ...jp, from: 'x <a@mail.jawwalpay.ps>' }, 'jawwalpay.ps'), true);
-  const { namesMatch } = require('../src/shop');
+  const { namesMatch, matchReason } = require('../src/shop');
   assert.ok(namesMatch('محمد احمد', 'مُحمّد أحمد خليل'));
   assert.ok(!namesMatch('محمد', 'محمد أحمد'), 'one word is not enough unless it is the whole name');
   assert.ok(!namesMatch('سامي خليل', 'محمد أحمد'));
+  // Payment matching security: conflicting reference or phone must never fall back to name, and untrusted emails never match.
+  assert.equal(matchReason({ pay_reference: 'REF-111', pay_name: 'محمد أحمد' }, { reference: 'REF-999', sender_name: 'محمد أحمد', trusted: 1 }), null);
+  assert.equal(matchReason({ pay_phone: '0599111111', pay_name: 'محمد أحمد' }, { sender_phone: '0599222222', sender_name: 'محمد أحمد', trusted: 1 }), null);
+  assert.equal(matchReason({ pay_reference: 'REF-111' }, { reference: 'REF-111', trusted: 0 }), null);
+  assert.equal(matchReason({ pay_reference: '12' }, { reference: '12', trusted: 1 }), null, 'too short reference');
 });
 
 test('customer shop: order, JawwalPay proof, automatic match from Gmail, fulfilment and manual review', async () => {

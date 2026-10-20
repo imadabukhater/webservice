@@ -97,9 +97,17 @@ const mailView = (m) => ({
   senderPhone: m.sender_phone, senderName: m.sender_name, trusted: !!m.trusted, orderId: m.order_id || null, orderCode: m.order_code || null,
 });
 
-function byCode(code) {
-  const o = q('SELECT * FROM shop_orders WHERE code = ?').get(String(code).toUpperCase());
-  if (!o) fail(404, 'الطلب غير موجود');
+function byCode(code, ip) {
+  const clean = String(code || '').trim().toUpperCase();
+  if (!/^[A-Z0-9]{6,12}$/.test(clean)) {
+    if (ip) throttle(ip, 'order_miss', 40);
+    fail(404, 'الطلب غير موجود');
+  }
+  const o = q('SELECT * FROM shop_orders WHERE code = ?').get(clean);
+  if (!o) {
+    if (ip) throttle(ip, 'order_miss', 40);
+    fail(404, 'الطلب غير موجود');
+  }
   return o;
 }
 
@@ -271,7 +279,7 @@ route('POST', '/api/shop/orders/:code/instant', null, ({ params, ip }) => {
   const s = enabled();
   throttle(ip, 'proof', 30);
   if (!s.shopInstant) fail(403, 'التفعيل الفوري غير مفعّل حالياً');
-  const o = byCode(params.code);
+  const o = byCode(params.code, ip);
   if (o.status === 'paid') return orderView(o);
   if (!['awaiting_payment', 'verifying', 'review'].includes(o.status)) fail(400, 'تم التعامل مع هذا الطلب');
   const esimCode = o.esim_code || `LPA:1$rsp.esim.portal$ESIM-${o.code}-${o.number}`;
@@ -292,14 +300,14 @@ route('POST', '/api/shop/orders/:code/instant', null, ({ params, ip }) => {
 
 route('GET', '/api/shop/orders/:code', null, ({ params, ip }) => {
   throttle(ip, 'view', 600);
-  return orderView(byCode(params.code));
+  return orderView(byCode(params.code, ip));
 });
 
 // The customer's transfer details. At least one way to verify: reference, sender phone, sender name or the receipt.
 route('POST', '/api/shop/orders/:code/proof', null, async ({ params, body, ip }) => {
   enabled();
   throttle(ip, 'proof', 30);
-  const o = byCode(params.code);
+  const o = byCode(params.code, ip);
   if (!['awaiting_payment', 'verifying', 'review'].includes(o.status)) fail(400, 'تم التعامل مع هذا الطلب');
   const payPhone = body.payPhone ? validPhone(normalizePhone(body.payPhone)) : '';
   const payName = str(body.payName, 80);
@@ -318,7 +326,7 @@ route('POST', '/api/shop/orders/:code/proof', null, async ({ params, body, ip })
 
 route('POST', '/api/shop/orders/:code/cancel', null, ({ params, ip }) => {
   throttle(ip, 'cancel', 30);
-  const o = byCode(params.code);
+  const o = byCode(params.code, ip);
   if (o.status !== 'awaiting_payment') fail(400, 'لا يمكن إلغاء الطلب بعد إرسال بيانات التحويل. تواصل مع الدعم.');
   q("UPDATE shop_orders SET status = 'cancelled', updated_at = ? WHERE id = ?").run(now(), o.id);
   return orderView(byCode(o.code));

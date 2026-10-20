@@ -6,14 +6,70 @@ import {
 } from './core.js';
 
 const MY_ORDERS_KEY = 'agents.shop.orders';
+const CODE_RE = /^[A-Z0-9]{6,12}$/;
 function savedOrderCodes() {
-  try { return JSON.parse(localStorage.getItem(MY_ORDERS_KEY) || '[]').filter((x) => typeof x === 'string'); }
-  catch { return []; }
+  try {
+    return JSON.parse(localStorage.getItem(MY_ORDERS_KEY) || '[]')
+      .filter((x) => typeof x === 'string')
+      .map((x) => x.trim().toUpperCase())
+      .filter((x) => CODE_RE.test(x));
+  } catch { return []; }
 }
 function rememberOrderCode(code) {
-  if (!code) return;
-  const list = [code, ...savedOrderCodes().filter((c) => c !== code)].slice(0, 30);
+  const clean = String(code || '').trim().toUpperCase();
+  if (!CODE_RE.test(clean)) return;
+  const list = [clean, ...savedOrderCodes().filter((c) => c !== clean)].slice(0, 30);
   try { localStorage.setItem(MY_ORDERS_KEY, JSON.stringify(list)); } catch {}
+}
+
+function validQrDataUrl(src) {
+  return typeof src === 'string' && /^data:image\/(png|jpeg|webp|gif|svg\+xml);base64,[A-Za-z0-9+/=]+$/i.test(src.trim());
+}
+
+function copyWithFeedback(btn, val) {
+  copyText(val);
+  if (!btn) return;
+  const span = btn.querySelector('span');
+  const prev = span ? span.textContent : '';
+  btn.classList.add('is-copied');
+  if (span) span.textContent = '✓ تم النسخ';
+  clearTimeout(btn._copyTimer);
+  btn._copyTimer = setTimeout(() => {
+    btn.classList.remove('is-copied');
+    if (span && prev) span.textContent = prev;
+  }, 1800);
+}
+
+function renderPaymentSecurityShield({ mode = 'checkout', amount = 0 } = {}) {
+  if (mode === 'pay') {
+    return `
+      <div class="shop-sec-shield is-pay">
+        <div class="shop-sec-shield-head">
+          <span class="shop-sec-shield-ic">${icon('shield')}</span>
+          <div>
+            <b>حماية وتوثيق الدفع الآلي</b>
+            <small>مطابقة مشفّرة عبر إشعارات Jawwal Pay الرسمية الموقّعة رقمياً</small>
+          </div>
+        </div>
+        <ul class="shop-sec-shield-list">
+          <li>حوّل <b>المبلغ المطابق تماماً (${fmtMoney(amount)})</b> لضمان المطابقة الفورية التلقائية.</li>
+          <li>كل رقم حركة (<b>Reference</b>) يُربط بطلب واحد فقط ويُرفض أي تكرار تلقائياً.</li>
+          <li>يظل رقم الخط وكود <b>eSIM QR</b> محجوبين بأمان حتى اكتمال توثيق الدفع.</li>
+        </ul>
+      </div>
+    `;
+  }
+  return `
+    <div class="shop-sec-shield">
+      <div class="shop-sec-shield-head">
+        <span class="shop-sec-shield-ic">${icon('shield')}</span>
+        <div>
+          <b>دفع آمن ومضمون 100% عبر Jawwal Pay</b>
+          <small>توثيق آلي للتحويل · حماية كود الـ QR · ضمان استرجاع المبلغ</small>
+        </div>
+      </div>
+    </div>
+  `;
 }
 
 function waHref(wa, text = '') {
@@ -39,6 +95,7 @@ const S = {
   openFaqIdx: -1,
   order: null,
   pollTimer: null,
+  countdownTimer: null,
   myCodes: savedOrderCodes(),
   myOrders: null,
   wantEsim: false,
@@ -1598,9 +1655,11 @@ function viewBuy(id) {
         <button type="button" class="btn ghost btn-sm" data-act="legal-sheet" data-tab="terms">${icon('shield')}<span>الشروط والضمان</span></button>
       </div>
 
+      ${renderPaymentSecurityShield({ mode: 'checkout', amount: total })}
+
       <button class="btn primary lg" type="submit">
         ${icon('checkCircle')}
-        <span>متابعة للدفع (${fmtMoney(total)})</span>
+        <span>متابعة للدفع الآمن (${fmtMoney(total)})</span>
       </button>
     </form>
   `, { sub: pk.name });
@@ -1763,9 +1822,11 @@ async function esimForm(pk, co, canSwitchToCard = false) {
         <button type="button" class="btn ghost btn-sm" data-act="legal-sheet" data-tab="esim">${icon('shield')}<span>سياسة eSIM والضمان</span></button>
       </div>
 
+      ${renderPaymentSecurityShield({ mode: 'checkout', amount: total })}
+
       <button class="btn primary lg" type="submit" ${available ? '' : 'disabled'}>
         ${icon('checkCircle')}
-        <span>متابعة للدفع (${fmtMoney(total)})</span>
+        <span>متابعة للدفع الآمن (${fmtMoney(total)})</span>
       </button>
     </form>
   `, { sub: pk.name });
@@ -1826,6 +1887,7 @@ const FINAL_STAGES = ['done', 'cancelled', 'rejected', 'failed'];
 
 async function viewOrder(code) {
   clearInterval(S.pollTimer);
+  clearInterval(S.countdownTimer);
   try {
     S.order = await jfetch(`/api/shop/orders/${encodeURIComponent(code)}`);
     rememberOrderCode(S.order.code);
@@ -1858,14 +1920,25 @@ async function viewOrder(code) {
   }
 }
 
+function fmtRemaining(untilMs) {
+  const diff = Math.max(0, Math.floor((Number(untilMs) - Date.now()) / 1000));
+  const m = String(Math.floor(diff / 60)).padStart(2, '0');
+  const s = String(diff % 60).padStart(2, '0');
+  return `${m}:${s}`;
+}
+
 function renderOrder() {
+  clearInterval(S.countdownTimer);
   const o = S.order;
   const st = STAGES_AR[o.stage] || STAGES_AR[o.status] || STAGES_AR.awaiting_payment;
   const jp = S.data?.jawwalpay || {};
   const isEsim = Boolean(o.esim);
-  const hasQr = Boolean(o.esimQr && /^data:image\//.test(o.esimQr));
+  const hasQr = validQrDataUrl(o.esimQr);
   const payable = PAYABLE_STATUSES.includes(o.status);
   const wa = waHref(S.data?.supportWhatsapp, `مرحباً، بخصوص الطلب ${o.code}`);
+  const appleInstallHref = o.esimCode && /^LPA:1\$/i.test(String(o.esimCode).trim())
+    ? `https://esimsetup.apple.com/esim_qrcode_provisioning?carddata=${encodeURIComponent(String(o.esimCode).trim())}`
+    : '';
 
   shell(`
     <!-- Order Summary Card -->
@@ -1890,7 +1963,7 @@ function renderOrder() {
           <div>
             <span class="esim-carrier-label">طلب #<b class="ltr mono">${esc(o.code)}</b></span>
             <h3 style="margin:2px 0">${esc(o.packageLabel)}${isEsim ? ' · eSIM' : ''}</h3>
-            <small class="muted">${esc(o.customerName || '')} · ${o.number ? `<span class="ltr">${esc(fmtPhone(o.number))}</span>` : 'يظهر الرقم بعد الدفع'}</small>
+            <small class="muted">${esc(o.customerName || '')} · ${o.number ? `<span class="ltr">${esc(fmtPhone(o.number))}</span>` : '🔒 يظهر الرقم فور توثيق الدفع'}</small>
           </div>
         </div>
         <b class="mono shop-amount">${fmtMoney(o.amount)}</b>
@@ -1911,7 +1984,12 @@ function renderOrder() {
 
       <div class="row between" style="flex-wrap:wrap;gap:8px">
         <span class="pill ${st.cls}">${esc(st.label)}</span>
-        <small class="muted">${fmtDateTime(o.createdAt)}</small>
+        ${o.reservedUntil && o.status === 'awaiting_payment' ? `
+          <span class="shop-reserve-pill" title="مهلة حجز رقم eSIM">
+            ${icon('clock')}
+            <span>حجز الرقم: <b id="reserve-countdown" class="ltr mono">${fmtRemaining(o.reservedUntil)}</b></span>
+          </span>
+        ` : `<small class="muted">${fmtDateTime(o.createdAt)}</small>`}
       </div>
       ${st.desc ? `<p class="muted" style="margin:0;font-size:.86rem">${esc(st.desc)}</p>` : ''}
       ${o.response ? `<div class="esim-ready-notice">${icon('info')}<span>${esc(o.response)}</span></div>` : ''}
@@ -1925,57 +2003,67 @@ function renderOrder() {
     <!-- Step 2: Jawwal Pay Payment & Confirmation Box -->
     ${payable ? `
       <div class="card shop-pay no-print">
-        <h3>١. حوّل عبر Jawwal Pay</h3>
+        <div class="row between" style="flex-wrap:wrap;gap:8px">
+          <h3 style="margin:0">١. حوّل عبر Jawwal Pay</h3>
+          <span class="shop-sec-tag">${icon('shield')}<span>تحويل مشفّر وموثّق</span></span>
+        </div>
         <p class="muted" style="margin:0;font-size:.85rem">
-          حوّل المبلغ للمحفظة التالية.${o.reservedUntil ? ` الرقم محجوز حتى <b>${fmtTime(o.reservedUntil)}</b>.` : ''}
+          اضغط <b>نسخ</b> بجانب رقم المحفظة والمبلغ لتحويله من تطبيق جوال باي دون خطأ.${o.reservedUntil ? ` الرقم محجوز حتى <b>${fmtTime(o.reservedUntil)}</b>.` : ''}
         </p>
         <div class="shop-pay-kvs">
-          <div class="shop-kv">
-            <span>المبلغ</span>
-            <b class="ltr mono">${fmtMoney(o.amount)}</b>
-            <button type="button" class="btn ghost btn-sm" data-copy="${esc(String(o.amount))}">${icon('copy')}<span>نسخ</span></button>
+          <div class="shop-kv shop-copy-card">
+            <div class="shop-kv-meta">
+              <span>المبلغ المطلوب بالضبط</span>
+              <b class="ltr mono shop-kv-val">${fmtMoney(o.amount)}</b>
+            </div>
+            <button type="button" class="btn ghost btn-sm shop-copy-btn" data-copy="${esc(String(o.amount))}">${icon('copy')}<span>نسخ المبلغ</span></button>
           </div>
           ${jp.number ? `
-            <div class="shop-kv">
-              <span>محفظة جوال باي</span>
-              <b class="ltr mono">${esc(fmtPhone(jp.number))}</b>
-              <button type="button" class="btn ghost btn-sm" data-copy="${esc(jp.number)}">${icon('copy')}<span>نسخ</span></button>
+            <div class="shop-kv shop-copy-card">
+              <div class="shop-kv-meta">
+                <span>رقم محفظة جوال باي</span>
+                <b class="ltr mono shop-kv-val">${esc(fmtPhone(jp.number))}</b>
+              </div>
+              <button type="button" class="btn ghost btn-sm shop-copy-btn" data-copy="${esc(jp.number)}">${icon('copy')}<span>نسخ الرقم</span></button>
             </div>
           ` : ''}
           ${jp.name ? `
             <div class="shop-kv">
-              <span>المستلم</span>
+              <span>اسم المستلم</span>
               <b>${esc(jp.name)}</b>
             </div>
           ` : ''}
         </div>
 
+        ${renderPaymentSecurityShield({ mode: 'pay', amount: o.amount })}
+
         <hr style="border:0;border-top:1px solid var(--line);margin:4px 0">
 
-        <h3>٢. ${o.proofSent ? 'تحديث بيانات الدفع' : 'تأكيد الدفع'}</h3>
+        <h3>٢. ${o.proofSent ? 'تحديث بيانات الدفع' : 'تأكيد الدفع وتفعيل الطلب'}</h3>
         <p class="muted" style="margin:0;font-size:.84rem">
-          أدخل رقم الحركة أو اسم المحوِّل أو صورة الإشعار:
+          أدخل <b>رقم الحركة (Reference)</b> للتفعيل التلقائي الفوري، أو اسم المحوِّل أو لقطة شاشة للإشعار:
         </p>
 
         <form id="proof-f" class="form" style="margin-top:6px">
           <div class="field">
-            <label for="f-ref">رقم الحركة (Reference)</label>
+            <label for="f-ref">رقم الحركة المرجعي (Reference) <span class="shop-rec-pill">الأسرع للتفعيل الفوري</span></label>
             <input id="f-ref" name="payReference" class="input ltr" inputmode="numeric" autocomplete="off" placeholder="مثال: 2922...">
           </div>
           <div class="field">
             <label for="f-pname">اسم المحوِّل</label>
-            <input id="f-pname" name="payName" class="input" autocomplete="name" placeholder="الاسم كما في جوال باي">
+            <input id="f-pname" name="payName" class="input" autocomplete="name" placeholder="الاسم الثلاثي كما في جوال باي">
           </div>
           <div class="field">
             <label for="f-payer">رقم المحفظة المحوَّل منها <span class="muted">(اختياري)</span></label>
             <input id="f-payer" name="payPhone" class="input ltr" inputmode="tel" placeholder="059XXXXXXX">
           </div>
           <div class="field">
-            <label>صورة الإشعار <span class="muted">(اختياري)</span></label>
+            <label>صورة إشعار التحويل من الهاتف <span class="muted">(اختياري)</span></label>
             <label class="upload-box" id="proof-box">
               <input id="f-proof" type="file" accept="image/*" hidden>
-              ${icon('image')}
-              <span id="proof-label">${o.proofSent ? 'تم إرسال الإشعار — اضغط للتغيير' : 'اختر صورة الإشعار'}</span>
+              <img id="proof-preview" class="shop-proof-thumb" alt="معاينة الإشعار" hidden>
+              <span id="proof-ic">${icon('image')}</span>
+              <span id="proof-label">${o.proofSent ? 'تم إرسال الإشعار — اضغط للتغيير' : 'اضغط لاختيار لقطة شاشة الإشعار'}</span>
             </label>
           </div>
           <button class="btn primary lg" type="submit">${icon('checkCircle')}<span>${o.proofSent ? 'تحديث بيانات الدفع' : 'تأكيد الدفع وتفعيل الطلب'}</span></button>
@@ -1988,12 +2076,12 @@ function renderOrder() {
       <div class="card shop-qr-modern">
         <div class="shop-qr-badge">
           ${icon('checkCircle')}
-          <span>شريحة eSIM جاهزة للمسح</span>
+          <span>شريحة eSIM جاهزة للمسح والتثبيت</span>
         </div>
 
-        <h3 style="margin:0">امسح كود الـ QR لتثبيت الشريحة</h3>
+        <h3 style="margin:0">امسح كود الـ QR أو ثبّت الشريحة مباشرة</h3>
         <p class="muted" style="margin:0;font-size:.86rem">
-          اتصل بالـ Wi-Fi وامسح الكود من إعدادات الهاتف:
+          تأكد من اتصال هاتفك بشبكة Wi-Fi أثناء تثبيت الشريحة الإلكترونية:
         </p>
 
         <div class="shop-qr-frame">
@@ -2002,27 +2090,34 @@ function renderOrder() {
 
         <div class="esim-qr-details">
           ${o.number ? `
-            <div class="shop-kv">
-              <span>رقم الخط</span>
-              <b class="ltr mono">${esc(fmtPhone(o.number))}</b>
-              <button type="button" class="btn ghost btn-sm no-print" data-copy="${esc(o.number)}">${icon('copy')}<span>نسخ</span></button>
+            <div class="shop-kv shop-copy-card">
+              <div class="shop-kv-meta">
+                <span>رقم الخط المخصّص لك</span>
+                <b class="ltr mono shop-kv-val">${esc(fmtPhone(o.number))}</b>
+              </div>
+              <button type="button" class="btn ghost btn-sm no-print shop-copy-btn" data-copy="${esc(o.number)}">${icon('copy')}<span>نسخ الرقم</span></button>
             </div>
           ` : ''}
         </div>
 
         ${o.esimCode ? `
           <div class="shop-lpa-box no-print">
-            <small class="muted">كود التفعيل اليدوي (LPA):</small>
+            <small class="muted">كود التفعيل اليدوي (LPA) — للتثبيت على نفس الهاتف بدون كاميرا:</small>
             <div class="shop-lpa-row">
               <code class="ltr">${esc(o.esimCode)}</code>
-              <button type="button" class="btn ghost btn-sm" data-copy="${esc(o.esimCode)}">${icon('copy')}<span>نسخ</span></button>
+              <button type="button" class="btn ghost btn-sm shop-copy-btn" data-copy="${esc(o.esimCode)}">${icon('copy')}<span>نسخ الكود</span></button>
             </div>
           </div>
         ` : ''}
 
-        <div class="row no-print" style="justify-content:center;gap:10px;flex-wrap:wrap">
-          <a class="btn primary" href="${esc(o.esimQr)}" download="esim-${esc(o.number || o.code)}.png">
-            ${icon('download')}<span>تحميل الـ QR</span>
+        <div class="shop-qr-actions no-print">
+          ${appleInstallHref ? `
+            <a class="btn primary shop-apple-esim-btn" href="${esc(appleInstallHref)}">
+              ${icon('phone')}<span>تثبيت مباشر على iPhone (iOS 17.4+)</span>
+            </a>
+          ` : ''}
+          <a class="btn ${appleInstallHref ? 'ghost' : 'primary'}" href="${esc(o.esimQr)}" download="esim-${esc(o.number || o.code)}.png">
+            ${icon('download')}<span>حفظ صورة الـ QR في الهاتف</span>
           </a>
           <button type="button" class="btn ghost" id="print-qr-btn">
             ${icon('print')}<span>طباعة</span>
@@ -2031,19 +2126,24 @@ function renderOrder() {
 
         ${o.qrMailed ? `<p class="muted" style="margin:0;font-size:.84rem">${icon('checkCircle')} أُرسلت نسخة إلى <span class="ltr">${esc(o.email)}</span></p>` : ''}
 
+        <div class="shop-single-phone-tip no-print">
+          <b>📱 هل تفتح هذه الصفحة من نفس الهاتف الذي تريد تثبيت الشريحة عليه؟</b>
+          <p>اضغط <b>حفظ صورة الـ QR في الهاتف</b> ثم افتح إعدادات إضافة eSIM واختر <b>اختيار من الصور / المعرض</b>، أو انسخ <b>كود التفعيل اليدوي (LPA)</b> أعلاه والصقه في خيار «إدخال التفاصيل يدوياً».</p>
+        </div>
+
         <div class="shop-qr-guides">
           <div class="shop-qr-guide-col">
             <b>على iPhone:</b>
             <ol>
               <li>الإعدادات ← خلوي ← إضافة شريحة إلكترونية.</li>
-              <li>اختر <b>استخدام رمز QR</b> وامسح الكود.</li>
+              <li>اختر <b>استخدام رمز QR</b> (أو فتح من الصور / إدخال يدوي).</li>
             </ol>
           </div>
           <div class="shop-qr-guide-col">
             <b>على Android:</b>
             <ol>
               <li>الضبط ← الاتصالات ← إدارة SIM ← إضافة eSIM.</li>
-              <li>امسح الكود وانتظر اكتمال التنزيل.</li>
+              <li>امسح الكود أو اختر صورة الـ QR من المعرض.</li>
             </ol>
           </div>
         </div>
@@ -2061,15 +2161,23 @@ function renderOrder() {
     ${wa ? `<a class="btn ghost no-print" style="justify-self:center" href="${esc(wa)}" target="_blank" rel="noopener">${icon('whatsapp')}<span>تواصل مع الدعم</span></a>` : ''}
   `, { sub: `طلب ${o.code}` });
 
+  if (o.reservedUntil && o.status === 'awaiting_payment') {
+    S.countdownTimer = setInterval(() => {
+      const el = document.getElementById('reserve-countdown');
+      if (!el) { clearInterval(S.countdownTimer); return; }
+      el.textContent = fmtRemaining(o.reservedUntil);
+    }, 1000);
+  }
+
   const copyCode = document.getElementById('copy-code');
-  if (copyCode) copyCode.onclick = () => copyText(o.code);
+  if (copyCode) copyCode.onclick = () => copyWithFeedback(copyCode, o.code);
   const printBtn = document.getElementById('print-order');
   if (printBtn) printBtn.onclick = () => window.print();
   const printQrBtn = document.getElementById('print-qr-btn');
   if (printQrBtn) printQrBtn.onclick = () => window.print();
 
   root.querySelectorAll('[data-copy]').forEach((b) => {
-    b.onclick = () => copyText(b.dataset.copy);
+    b.onclick = () => copyWithFeedback(b, b.dataset.copy);
   });
 
   const cancelBtn = document.getElementById('cancel-order-btn');
@@ -2094,6 +2202,13 @@ function renderOrder() {
       try {
         proofData = await fileToDataUrl(file, { max: 1400 });
         document.getElementById('proof-label').textContent = `تم إرفاق: ${file.name}`;
+        const prevImg = document.getElementById('proof-preview');
+        const prevIc = document.getElementById('proof-ic');
+        if (prevImg && validQrDataUrl(proofData)) {
+          prevImg.src = proofData;
+          prevImg.hidden = false;
+          if (prevIc) prevIc.hidden = true;
+        }
       } catch (err) { notify(err.message, true); }
     };
   }
@@ -2128,6 +2243,7 @@ function renderOrder() {
 
 async function route() {
   clearInterval(S.pollTimer);
+  clearInterval(S.countdownTimer);
   try {
     await ensureCatalog();
   } catch (err) {

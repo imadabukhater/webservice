@@ -38,7 +38,7 @@ function readBody(req, limit) {
     req.on('end', () => {
       if (!chunks.length) return resolve({});
       try {
-        const body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+        const body = JSON.parse(Buffer.concat(chunks).toString('utf8'), (k, v) => (k === '__proto__' || k === 'constructor' || k === 'prototype' ? undefined : v));
         resolve(body && typeof body === 'object' ? body : {});
       } catch {
         reject(new ApiError(400, 'بيانات غير صالحة'));
@@ -69,6 +69,12 @@ async function dispatch(req, res, url) {
     user = sessionUser(token);
     if (!user) fail(401, 'انتهت الجلسة. سجّل الدخول مرة أخرى.');
     if (!r.roles.includes(user.role)) fail(403, 'ليست لديك صلاحية لهذه العملية');
+  }
+  if (['POST', 'PUT', 'DELETE'].includes(req.method) && req.headers?.origin) {
+    let originHost = '';
+    try { originHost = new URL(String(req.headers.origin)).host.toLowerCase(); } catch { fail(403, 'مصدر الطلب غير مصرح به'); }
+    const reqHost = String((TRUST_PROXY && req.headers['x-forwarded-host']) || req.headers.host || '').split(',')[0].trim().toLowerCase();
+    if (reqHost && originHost !== reqHost) fail(403, 'مصدر الطلب غير مصرح به');
   }
   const body = ['POST', 'PUT', 'DELETE'].includes(req.method) ? await readBody(req, r.maxBody) : {};
   return r.handler({
