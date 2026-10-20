@@ -109,13 +109,19 @@ test('email parsing: MIME, encoded headers, Arabic digits and sender authenticat
   assert.equal(mail.authenticSender({ ...jp, from: 'x <a@mail.jawwalpay.ps>' }, 'jawwalpay.ps'), true);
   const { namesMatch, matchReason } = require('../src/shop');
   assert.ok(namesMatch('محمد احمد', 'مُحمّد أحمد خليل'));
+  assert.ok(namesMatch('محمد حسين علي saek', 'mohammed Hussein ali skaek'), 'Arabic + English mixed name with 1-char typo matches');
+  assert.ok(namesMatch('منى محمد عمر حسب الاه', 'Mona Mohammed Omar Hasaballah'), 'Arabic compound name matches English JawwalPay name');
+  assert.ok(namesMatch('المعتز بالله عاطف ابو خاطر', 'المعتزبالله عاطف ابوخاطر'), 'compound Arabic names match regardless of spacing');
   assert.ok(!namesMatch('محمد', 'محمد أحمد'), 'one word is not enough unless it is the whole name');
   assert.ok(!namesMatch('سامي خليل', 'محمد أحمد'));
+  assert.ok(!namesMatch('محمد خليل', 'محمود خليل'), 'distinct Arabic names never collide');
+  assert.ok(!namesMatch('حسن علي', 'حسين علي'), 'distinct Arabic names never collide');
   // Payment matching security: conflicting reference or phone must never fall back to name, and untrusted emails never match.
   assert.equal(matchReason({ pay_reference: 'REF-111', pay_name: 'محمد أحمد' }, { reference: 'REF-999', sender_name: 'محمد أحمد', trusted: 1 }), null);
   assert.equal(matchReason({ pay_phone: '0599111111', pay_name: 'محمد أحمد' }, { sender_phone: '0599222222', sender_name: 'محمد أحمد', trusted: 1 }), null);
   assert.equal(matchReason({ pay_reference: 'REF-111' }, { reference: 'REF-111', trusted: 0 }), null);
   assert.equal(matchReason({ pay_reference: '12' }, { reference: '12', trusted: 1 }), null, 'too short reference');
+  assert.equal(matchReason({ pay_reference: '85749' }, { reference: '2922947585749', trusted: 1 }), 'الرقم المرجعي', 'last 5+ digits of long reference match');
 });
 
 test('customer shop: order, JawwalPay proof, automatic match from Gmail, fulfilment and manual review', async () => {
@@ -358,4 +364,41 @@ test('custom company eSIM QR fee, direct eSIM instant QR activation, and bulk pa
   const delRes = await ok(call(admin, 'POST', '/api/packages/bulk', { action: 'delete', ids: [p1.id, p2.id] }));
   assert.equal(delRes.affected, 2);
 });
+
+test('5-minute reservation auto-cancel, 5-minute 1st check, and 3-minute retry (8-minute 2nd check)', async () => {
+  const { q } = require('../src/db');
+  const admin = (await ok(call(null, 'POST', '/api/login', { username: 'admin', password: 'admin-pass' }))).token;
+  await ok(call(admin, 'PUT', '/api/settings', { shopEnabled: true, shopInstant: false }));
+  const cat = await ok(call(admin, 'GET', '/api/catalog'));
+  const co = cat.companies[0];
+  await ok(call(admin, 'PUT', `/api/companies/${co.id}`, { activation: 'direct' }));
+  const pkg = await ok(call(admin, 'POST', '/api/packages', {
+    companyId: co.id, name: 'باقة التحقق', kind: 'card', cost: 20, price: 25, shopPrice: 33, days: 30,
+  }));
+
+  // 1) Unconfirmed order older than 5 minutes is cancelled automatically
+  const expiredOrd = await ok(call(null, 'POST', '/api/shop/orders', { packageId: pkg.id, number: '0591112233' }));
+  q('UPDATE shop_orders SET created_at = ? WHERE code = ?').run(Date.now() - 5 * 60_000 - 1000, expiredOrd.code);
+  const afterExpire = await ok(call(null, 'GET', `/api/shop/orders/${expiredOrd.code}`));
+  assert.equal(afterExpire.status, 'cancelled', 'unconfirmed order auto-cancelled after 5 minutes');
+  assert.equal((await call(null, 'POST', `/api/shop/orders/${expiredOrd.code}/proof`, { payName: 'محمد احمد' })).status, 400);
+
+  // 2) Email received 6 minutes ago is outside the 5-minute 1st check, then matched by the 8-minute 2nd check (retry)
+  const retryOrd = await ok(call(null, 'POST', '/api/shop/orders', { packageId: pkg.id, number: '0592223344' }));
+  const sixMinAgo = Date.now() - 6 * 60_000;
+  q(`INSERT INTO payment_mails (uid_validity, uid, message_id, trusted, from_addr, subject, received_at, amount, reference, sender_phone, sender_name, body, created_at)
+     VALUES (1, 9991, '<retry@jp>', 1, 'noreply@jawwalpay.ps', 'Jawwal Pay', ?, 33, '2922949999999', '', 'mohammed Hussein ali skaek', 'incoming', ?)`).run(sixMinAgo, sixMinAgo);
+
+  // Attempt 1: wrong/typo name or 6-min old email -> searches only last 5 minutes -> stays verifying with canRetryProof = true
+  const try1 = await ok(call(null, 'POST', `/api/shop/orders/${retryOrd.code}/proof`, { payName: 'محمد حسين' }));
+  assert.equal(try1.status, 'verifying');
+  assert.equal(try1.proofTries, 1);
+  assert.equal(try1.canRetryProof, true);
+
+  // Attempt 2 (correction within retry window): searches last 8 minutes and matches Arabic/English name!
+  const try2 = await ok(call(null, 'POST', `/api/shop/orders/${retryOrd.code}/proof`, { payName: 'محمد حسين علي سكيك' }));
+  assert.equal(try2.status, 'paid', '2nd attempt searches last 8 minutes and matches');
+  assert.equal(try2.stage, 'done');
+});
+
 

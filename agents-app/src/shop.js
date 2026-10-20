@@ -14,7 +14,10 @@ const smtp = require('./smtp');
 const ql = require('./quickline');
 const { createLine } = require('./routes/lines');
 
-const VERIFY_MS = Number(process.env.SHOP_VERIFY_MS) || 15 * 60_000; // unmatched this long after the proof: to the manager
+const RESERVE_MS = Number(process.env.SHOP_RESERVE_MS) || 5 * 60_000; // 5 minutes to confirm sending payment or order is cancelled
+const FIRST_WINDOW_MS = Number(process.env.SHOP_FIRST_WINDOW_MS) || 5 * 60_000; // 1st check: search emails in last 5 minutes
+const RETRY_WINDOW_MS = Number(process.env.SHOP_RETRY_WINDOW_MS) || 8 * 60_000; // 2nd check (after 3m retry): search last 8 minutes
+const VERIFY_MS = Number(process.env.SHOP_VERIFY_MS) || 3 * 60_000; // 3-minute second chance window before escalating to manager
 const LOOP_MS = Number(process.env.MAIL_LOOP_MS) || 60_000;
 const IMAP = {
   host: process.env.IMAP_HOST || 'imap.gmail.com',
@@ -43,10 +46,152 @@ function shopAgent() {
 }
 
 // ---------- matching ----------
-const normRef = (s) => String(s || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
-const nameTokens = (s) => String(s || '').toLowerCase()
-  .replace(/[ً-ْـ]/g, '').replace(/[أإآ]/g, 'ا').replace(/ى/g, 'ي').replace(/ة/g, 'ه')
-  .replace(/[^\p{L}\s]/gu, ' ').split(/\s+/).filter((t) => t.length > 1);
+const normRef = (s) => mail.toLatinDigits(String(s || '')).toUpperCase().replace(/[^A-Z0-9]/g, '');
+
+// Canonical phonetic keys for common Palestinian/Arabic given and family names across Arabic & English spellings.
+// Two tokens that both appear in CANON_NAMES match if and only if they share the same canonical key, which prevents
+// false positives between distinct names (e.g. محمد vs محمود, حسن vs حسين, عمر vs عامر).
+const CANON_GROUPS = {
+  mhmd: ['محمد', 'mohammad', 'mohammed', 'muhammad', 'muhammed', 'mohamad', 'mohamed', 'mohd', 'mhmd'],
+  mhmwd: ['محمود', 'mahmoud', 'mahmud', 'mahmood', 'mhmoud'],
+  ahmd: ['احمد', 'ahmad', 'ahmed', 'ahmd'],
+  hsyn: ['حسين', 'hussein', 'hussain', 'husain', 'husein', 'hossein', 'hsyn'],
+  hsn: ['حسن', 'hasan', 'hassan', 'hsn'],
+  ali: ['علي', 'ali', 'aly'],
+  omr: ['عمر', 'omar', 'umar', 'omr'],
+  amrw: ['عمرو', 'amro', 'amr'],
+  amr: ['عامر', 'amer', 'aamer'],
+  mna: ['مني', 'منى', 'mona', 'muna', 'mouna', 'mna'],
+  skyk: ['سكيك', 'skaek', 'skeik', 'skik', 'saek', 'skaik', 'skeek'],
+  hsbalh: ['حسبالله', 'حسبالاه', 'hasaballah', 'hasballah', 'hassaballah', 'hasaballa'],
+  abukhtr: ['ابوخاطر', 'abukhater', 'abokhater', 'aboukhater', 'abukhatir'],
+  atf: ['عاطف', 'atef', 'atif', 'aatf'],
+  mtzbalh: ['المعتزبالله', 'معتزبالله', 'almotazbellah', 'motazbellah', 'almoatazbellah', 'moatazbellah'],
+  mtz: ['معتز', 'المعتز', 'motaz', 'mutaz', 'moataz', 'moutaz'],
+  khlyl: ['خليل', 'khalil', 'khaleel', 'khlil'],
+  ibrhm: ['ابراهيم', 'ibrahim', 'ebraheem', 'ibrahem', 'ibraheem'],
+  isml: ['اسماعيل', 'ismail', 'esmail', 'ismael', 'ismaeel'],
+  ywsf: ['يوسف', 'yousef', 'youssef', 'yusuf', 'yusef', 'yosef'],
+  rami: ['رامي', 'rami', 'ramy'],
+  sami: ['سامي', 'sami', 'samy'],
+  trq: ['طارق', 'tareq', 'tarik', 'tarek', 'tariq'],
+  khld: ['خالد', 'khaled', 'khalid'],
+  wlyd: ['وليد', 'waleed', 'walid'],
+  syd: ['سعيد', 'saeed', 'said', 'saed'],
+  sad: ['سعد', 'saad'],
+  aymn: ['ايمن', 'ayman', 'aiman'],
+  iyd: ['اياد', 'iyad', 'eyad'],
+  zyd: ['زياد', 'ziyad', 'ziad', 'zyad'],
+  imd: ['عماد', 'emad', 'imad'],
+  fadi: ['فادي', 'fadi', 'fady'],
+  shdi: ['شادي', 'shadi', 'shady'],
+  ndr: ['نادر', 'nader', 'nadir'],
+  mhr: ['ماهر', 'maher', 'mahir'],
+  ysr: ['ياسر', 'yasser', 'yaser', 'yasir'],
+  smr: ['سمر', 'samar'],
+  srh: ['ساره', 'sara', 'sarah'],
+  ftmh: ['فاطمه', 'fatima', 'fatma', 'fatmeh', 'fatimah'],
+  mrym: ['مريم', 'mariam', 'maryam', 'meriam'],
+  nwr: ['نور', 'nour', 'noor', 'nur'],
+  ans: ['انس', 'anas'],
+  usmh: ['اسامه', 'osama', 'usama', 'osamah'],
+  hmzh: ['حمزه', 'hamza', 'hamzah', 'hamzeh'],
+  bll: ['بلال', 'bilal', 'belal'],
+  jhd: ['جهاد', 'jihad', 'jehad'],
+  ndl: ['نضال', 'nidal', 'nedal'],
+  jml: ['جمال', 'jamal', 'gamal'],
+  kml: ['كمال', 'kamal'],
+  jll: ['جلال', 'jalal', 'galal'],
+  tll: ['طلال', 'talal'],
+  slymn: ['سليمان', 'sulaiman', 'suleiman', 'soliman', 'sleman'],
+  slmn: ['سلمان', 'salman', 'selman'],
+  slym: ['سليم', 'salim', 'saleem', 'slim'],
+  slm: ['سالم', 'salem', 'salim'],
+  abdlh: ['عبدالله', 'عبدالاه', 'abdullah', 'abdallah', 'abedallah'],
+  abdlrhmn: ['عبدالرحمن', 'abdelrahman', 'abdulrahman', 'abdalrahman'],
+};
+const CANON_NAMES = new Map();
+for (const [canon, variants] of Object.entries(CANON_GROUPS)) {
+  for (const v of variants) CANON_NAMES.set(v, canon);
+}
+
+// Normalizes Arabic & English compound names (e.g. "ابو خاطر" -> "ابوخاطر", "حسب الله" -> "حسبالله",
+// "المعتز بالله" -> "المعتزبالله") so token counts stay consistent between customer input and JawwalPay emails.
+function nameTokens(s) {
+  let clean = String(s || '').toLowerCase()
+    .replace(/[ً-ْـ]/g, '')
+    .replace(/[أإآٱ]/g, 'ا')
+    .replace(/ى/g, 'ي')
+    .replace(/ة/g, 'ه')
+    .replace(/[ؤئ]/g, 'ء')
+    .replace(/[^\p{L}\s]/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  clean = clean
+    .replace(/(^|\s)(ابو|ابا|ابي|ام|ابن|بن|بنت|عبد)\s+/g, '$1$2')
+    .replace(/\s+(بالله|الله|الاه|الدين|الرحمن|الرحيم)(?=\s|$)/g, '$1')
+    .replace(/(^|\s)(abu|abo|abou|abdel|abdul|ibn|bin)\s+/g, '$1$2')
+    .replace(/\s+(allah|ellah|alla|bellah|billah|aldine|eldin|aldeen)(?=\s|$)/g, '$1');
+  return clean.split(/\s+/).filter((t) => t.length > 1);
+}
+
+const isArabicToken = (t) => /[\u0600-\u06FF]/.test(t);
+const stripArticle = (t) => t.replace(/^ال(?=.{3,})/, '').replace(/^(?:al|el)(?=[a-z]{3,})/, '');
+
+const AR_TO_LATIN = {
+  ا: 'a', ب: 'b', ت: 't', ث: 'th', ج: 'j', ح: 'h', خ: 'kh', د: 'd', ذ: 'z', ر: 'r', ز: 'z',
+  س: 's', ش: 'sh', ص: 's', ض: 'd', ط: 't', ظ: 'z', ع: 'a', غ: 'gh', ف: 'f', ق: 'k', ك: 'k',
+  ل: 'l', م: 'm', ن: 'n', ه: 'h', و: 'w', ي: 'y', ء: '',
+};
+
+function phoneticSkeleton(tok) {
+  const base = stripArticle(tok);
+  const c = CANON_NAMES.get(tok) || CANON_NAMES.get(base);
+  if (c) return c;
+  const latin = isArabicToken(base)
+    ? [...base].map((ch) => AR_TO_LATIN[ch] ?? ch).join('')
+    : base;
+  const collapsed = latin
+    .replace(/ph/g, 'f')
+    .replace(/ou|oo|uu/g, 'w')
+    .replace(/ee|ie|ei|ai/g, 'y')
+    .replace(/([a-z])\1+/g, '$1');
+  if (!collapsed) return '';
+  return collapsed[0] + collapsed.slice(1).replace(/[aeiou]/g, '');
+}
+
+// Safe 1-character edit distance for tokens of length >= 4 that share both their first and last character.
+function editDistanceAtMost1(a, b) {
+  if (a === b) return true;
+  if (a.length < 4 || b.length < 4) return false;
+  if (Math.abs(a.length - b.length) > 1) return false;
+  if (a[0] !== b[0] || a[a.length - 1] !== b[b.length - 1]) return false;
+  let i = 0, j = 0, diffs = 0;
+  while (i < a.length && j < b.length) {
+    if (a[i] === b[j]) { i++; j++; continue; }
+    if (++diffs > 1) return false;
+    if (a.length > b.length) i++;
+    else if (b.length > a.length) j++;
+    else { i++; j++; }
+  }
+  return diffs + (a.length - i) + (b.length - j) <= 1;
+}
+
+function tokensEquivalent(a, b) {
+  if (a === b) return true;
+  const baseA = stripArticle(a);
+  const baseB = stripArticle(b);
+  if (baseA === baseB) return true;
+  const canonA = CANON_NAMES.get(a) || CANON_NAMES.get(baseA);
+  const canonB = CANON_NAMES.get(b) || CANON_NAMES.get(baseB);
+  if (canonA && canonB) return canonA === canonB;
+  if (isArabicToken(baseA) === isArabicToken(baseB)) {
+    return editDistanceAtMost1(baseA, baseB);
+  }
+  const skelA = phoneticSkeleton(baseA);
+  const skelB = phoneticSkeleton(baseB);
+  return skelA.length >= 3 && skelB.length >= 3 && (skelA === skelB || editDistanceAtMost1(skelA, skelB));
+}
 
 // Every word of the shorter name appears in the longer one; a single word must be the whole name.
 function namesMatch(a, b) {
@@ -54,8 +199,8 @@ function namesMatch(a, b) {
   const B = nameTokens(b);
   if (!A.length || !B.length) return false;
   const [short, long] = A.length <= B.length ? [A, B] : [B, A];
-  if (short.length < 2 && A.join(' ') !== B.join(' ')) return false;
-  return short.every((t) => long.includes(t));
+  if (short.length < 2 && !(A.length === 1 && B.length === 1 && tokensEquivalent(A[0], B[0]))) return false;
+  return short.every((t) => long.some((lt) => tokensEquivalent(t, lt)));
 }
 
 function matchReason(o, m) {
@@ -63,7 +208,10 @@ function matchReason(o, m) {
   if (o.pay_reference && m.reference) {
     const refA = normRef(o.pay_reference);
     const refB = normRef(m.reference);
-    return refA.length >= 3 && refA === refB ? 'الرقم المرجعي' : null;
+    if (refA.length >= 3 && (refA === refB || (refA.length >= 5 && refB.length >= 8 && /^\d+$/.test(refA) && refB.endsWith(refA)))) {
+      return 'الرقم المرجعي';
+    }
+    return null;
   }
   if (o.pay_phone && m.sender_phone) {
     return o.pay_phone === m.sender_phone ? 'رقم المحوِّل' : null;
@@ -73,9 +221,14 @@ function matchReason(o, m) {
 }
 
 // The oldest unused authenticated email with the order's amount that matches the customer's details.
+// Attempt 1 searches emails in the last 5 minutes (FIRST_WINDOW_MS); Attempt 2 (retry) searches the last 8 minutes (RETRY_WINDOW_MS).
 function findMail(o) {
+  const tries = Number(o.proof_tries) || 1;
+  const windowMs = tries >= 2 ? RETRY_WINDOW_MS : FIRST_WINDOW_MS;
+  const refTime = o.proof_at || o.created_at || now();
+  const since = refTime - windowMs;
   const mails = q(`SELECT * FROM payment_mails WHERE order_id IS NULL AND trusted = 1 AND amount IS NOT NULL
-                   AND ABS(amount - ?) < 0.005 AND received_at >= ? ORDER BY received_at, id`).all(o.amount, o.created_at - 10 * 60_000);
+                   AND ABS(amount - ?) < 0.005 AND received_at >= ? ORDER BY received_at, id`).all(o.amount, since);
   const rank = { 'الرقم المرجعي': 0, 'رقم المحوِّل': 1, 'اسم المحوِّل': 2 };
   let best = null;
   for (const m of mails) {
@@ -270,9 +423,20 @@ function saveMail(uidValidity, uid, raw, settings) {
       f.senderPhone || '', (f.senderName || '').slice(0, 80), p.text.slice(0, 8000), now()).lastInsertRowid) || null;
 }
 
+// Orders that stay in awaiting_payment beyond the 5-minute reservation window (RESERVE_MS) without confirming transfer are cancelled automatically.
+function expireUnconfirmed() {
+  const cutoff = now() - RESERVE_MS;
+  return q(`UPDATE shop_orders
+               SET status = 'cancelled',
+                   response = CASE WHEN response = '' THEN 'انتهت مهلة حجز الرقم (5 دقائق) دون تأكيد الإرسال وتم إلغاء الطلبية تلقائياً' ELSE response END,
+                   updated_at = ?
+             WHERE status = 'awaiting_payment' AND created_at <= ?`).run(now(), cutoff).changes;
+}
+
 // Proofs nobody could match in time go to the manager.
 function escalate() {
-  const late = q("SELECT * FROM shop_orders WHERE status = 'verifying' AND proof_at < ?").all(now() - VERIFY_MS);
+  expireUnconfirmed();
+  const late = q("SELECT * FROM shop_orders WHERE status = 'verifying' AND COALESCE(first_proof_at, proof_at) < ?").all(now() - VERIFY_MS);
   for (const o of late) {
     q("UPDATE shop_orders SET status = 'review', updated_at = ? WHERE id = ? AND status = 'verifying'").run(now(), o.id);
     D.notify({ role: 'admin', kind: 'task', title: `تحقق يدوي من تحويل ${o.code}`, body: `${o.amount} ₪ — لم يُعثر على إشعار مطابق`, link: '#/shop' });
@@ -315,4 +479,7 @@ async function run(force) {
 const timer = setInterval(() => { checkMail().catch((e) => console.error('shop mail', e.message)); }, LOOP_MS);
 timer.unref();
 
-module.exports = { shopAgent, namesMatch, matchReason, findMail, claim, tryMatch, fulfil, checkMail, escalate, saveMail, deliverQr, makeEsimQr };
+module.exports = {
+  RESERVE_MS, FIRST_WINDOW_MS, RETRY_WINDOW_MS, VERIFY_MS,
+  shopAgent, namesMatch, matchReason, findMail, claim, tryMatch, fulfil, checkMail, escalate, expireUnconfirmed, saveMail, deliverQr, makeEsimQr,
+};

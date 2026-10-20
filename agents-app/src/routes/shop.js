@@ -6,15 +6,18 @@ const { fail, now, round, str, normalizePhone, validPhone, normalizeIccid, valid
 const D = require('../domain');
 const shop = require('../shop');
 const ql = require('../quickline');
-const { MailError } = require('../mail');
+const { MailError, toLatinDigits } = require('../mail');
 const { validAddress } = require('../smtp');
 const { route, ADMIN } = require('../router');
 
-// An eSIM number picked by a customer is held for them this long while they transfer, and for as long as their
+// An eSIM number picked by a customer is held for them this long while they transfer (5 minutes), and for as long as their
 // transfer is being checked or their paid order waits.
-const RESERVE_MS = 30 * 60_000;
-const heldNumbers = () => q(`SELECT number, number_id FROM shop_orders WHERE esim = 1 AND ((status = 'awaiting_payment' AND created_at > ?)
-  OR status IN ('verifying','review') OR (status = 'paid' AND line_id IS NULL))`).all(now() - RESERVE_MS);
+const RESERVE_MS = shop.RESERVE_MS;
+const heldNumbers = () => {
+  shop.expireUnconfirmed();
+  return q(`SELECT number, number_id FROM shop_orders WHERE esim = 1 AND ((status = 'awaiting_payment' AND created_at > ?)
+    OR status IN ('verifying','review') OR (status = 'paid' AND line_id IS NULL))`).all(now() - RESERVE_MS);
+};
 // A package sold as an eSIM: a new line whose number (with its eSIM and QR code) comes from the supplier's free
 // eSIM numbers, activated automatically.
 // QuickLine (its eSIM numbers come with their QR code), Layan (it gives the eSIM's QR code when activating), and
@@ -73,19 +76,25 @@ function stage(o, line) {
 function orderView(o, { admin = false } = {}) {
   const line = o.line_id ? q('SELECT id, status, expires_at, esim_qr FROM lines WHERE id = ?').get(o.line_id) : null;
   const qr = (line?.status === 'active' && line.esim_qr) ? line.esim_qr : (o.status === 'paid' && o.esim_qr ? o.esim_qr : null);
+  const proofTries = Number(o.proof_tries) || 0;
+  const firstProofAt = o.first_proof_at || o.proof_at || null;
+  const retryUntil = o.status === 'verifying' && firstProofAt ? firstProofAt + shop.VERIFY_MS : null;
+  const canRetryProof = o.status === 'verifying' && proofTries === 1 && retryUntil !== null && now() < retryUntil;
   return {
     // An eSIM's number (given at random) shows to the customer once the order is paid.
     code: o.code, packageLabel: o.package_label, kind: o.kind, number: admin || !o.esim || o.status === 'paid' ? o.number : null, customerName: o.customer_name,
     amount: round(o.amount), esimFee: round(o.esim_fee || 0), packagePrice: round(o.amount - (o.esim_fee || 0)),
     status: o.status, stage: stage(o, line), response: o.response,
-    proofSent: !!o.proof_at, createdAt: o.created_at, paidAt: o.paid_at, expiresAt: line?.expires_at ?? null,
+    proofSent: !!o.proof_at, proofTries, firstProofAt, retryUntil, canRetryProof,
+    payPhone: o.pay_phone || '', payName: o.pay_name || '', payReference: o.pay_reference || '',
+    createdAt: o.created_at, paidAt: o.paid_at, expiresAt: line?.expires_at ?? null,
     // eSIM: the number is held while the customer transfers; the QR code to install it shows once the line is active.
     esim: !!o.esim, email: o.email, qrMailed: !!o.qr_mailed_at,
-    reservedUntil: o.esim && o.status === 'awaiting_payment' ? o.created_at + RESERVE_MS : null,
+    reservedUntil: o.status === 'awaiting_payment' ? o.created_at + RESERVE_MS : null,
     esimQr: o.esim && qr ? qr : null,
     esimCode: o.esim && (admin || o.status === 'paid') ? (o.esim_code || '') : null,
     ...(admin ? {
-      id: o.id, sim: o.sim, contactPhone: o.contact_phone, payPhone: o.pay_phone, payName: o.pay_name, payReference: o.pay_reference,
+      id: o.id, sim: o.sim, contactPhone: o.contact_phone,
       hasReceipt: !!o.receipt, proofAt: o.proof_at, mailId: o.mail_id, verifiedBy: o.verified_by, lineId: o.line_id, error: o.error,
       ip: o.ip, updatedAt: o.updated_at, qrMailedAt: o.qr_mailed_at,
     } : {}),
@@ -300,23 +309,53 @@ route('POST', '/api/shop/orders/:code/instant', null, ({ params, ip }) => {
 
 route('GET', '/api/shop/orders/:code', null, ({ params, ip }) => {
   throttle(ip, 'view', 600);
+  shop.expireUnconfirmed();
+  shop.escalate();
   return orderView(byCode(params.code, ip));
 });
 
 // The customer's transfer details. At least one way to verify: reference, sender phone, sender name or the receipt.
+// Attempt 1 checks emails from the last 5 minutes; if unmatched, the customer gets 1 retry within 3 minutes (searching the last 8 minutes).
 route('POST', '/api/shop/orders/:code/proof', null, async ({ params, body, ip }) => {
   enabled();
   throttle(ip, 'proof', 30);
+  shop.expireUnconfirmed();
+  shop.escalate();
   const o = byCode(params.code, ip);
+  if (o.status === 'cancelled') fail(400, 'انتهت مهلة حجز الرقم (5 دقائق) دون تأكيد الإرسال وتم إلغاء الطلبية تلقائياً');
   if (!['awaiting_payment', 'verifying', 'review'].includes(o.status)) fail(400, 'تم التعامل مع هذا الطلب');
-  const payPhone = body.payPhone ? validPhone(normalizePhone(body.payPhone)) : '';
-  const payName = str(body.payName, 80);
-  const payReference = str(body.payReference, 60);
+  const prevTries = Number(o.proof_tries) || 0;
+  if (prevTries >= 2) fail(400, 'لقد استنفدت فرصة تصحيح البيانات — الطلب الآن قيد المراجعة');
+  if (prevTries === 1 && o.status === 'review') fail(400, 'انتهت مهلة تصحيح البيانات (3 دقائق) — الطلب الآن قيد المراجعة');
+  let payPhone = body.payPhone ? validPhone(normalizePhone(toLatinDigits(body.payPhone))) : '';
+  let payName = str(body.payName, 80);
+  let payReference = str(toLatinDigits(body.payReference), 60);
+  const phoneLike = (v) => /^(?:\+?97[02][\s-]?|0)5\d(?:[\s-]?\d){7}$/.test(String(v || '').trim());
+  if (!payPhone && phoneLike(payReference)) {
+    payPhone = validPhone(normalizePhone(payReference));
+    payReference = '';
+  }
+  if (!payPhone && phoneLike(payName)) {
+    payPhone = validPhone(normalizePhone(payName));
+    payName = '';
+  }
+  if (!payReference && /^\d{8,20}$/.test(toLatinDigits(payName).replace(/\s+/g, ''))) {
+    payReference = toLatinDigits(payName).replace(/\s+/g, '').slice(0, 60);
+    payName = '';
+  }
   const receipt = imageOrEmpty(body.receipt, { maxKb: 1500, label: 'صورة الإشعار' });
   if (!payPhone && !payName && !payReference && !receipt && !o.receipt) fail(400, 'أدخل الرقم المرجعي أو رقم/اسم المحوِّل أو صورة الإشعار');
-  q(`UPDATE shop_orders SET pay_phone = ?, pay_name = ?, pay_reference = ?, receipt = CASE WHEN ? != '' THEN ? ELSE receipt END,
-     status = CASE WHEN status = 'review' THEN 'review' ELSE 'verifying' END, proof_at = ?, updated_at = ? WHERE id = ?`)
-    .run(payPhone, payName, payReference, receipt, receipt, now(), now(), o.id);
+  const t = now();
+  const nextTry = prevTries + 1;
+  q(`UPDATE shop_orders
+        SET pay_phone = ?, pay_name = ?, pay_reference = ?,
+            receipt = CASE WHEN ? != '' THEN ? ELSE receipt END,
+            status = CASE WHEN status = 'review' THEN 'review' ELSE 'verifying' END,
+            proof_tries = ?,
+            first_proof_at = COALESCE(first_proof_at, ?),
+            proof_at = ?, updated_at = ?
+      WHERE id = ?`)
+    .run(payPhone, payName, payReference, receipt, receipt, nextTry, t, t, t, o.id);
   if (!shop.tryMatch(o.id)) {
     // Read the mailbox now: the email often arrives a few seconds after the transfer.
     try { await shop.checkMail(); } catch (e) { console.error('shop mail', e.message); }

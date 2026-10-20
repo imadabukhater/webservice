@@ -385,6 +385,8 @@ ensureColumn('packages', 'old_price', 'old_price REAL');
 ensureColumn('packages', 'esim_enabled', 'esim_enabled INTEGER NOT NULL DEFAULT 0');
 ensureColumn('shop_orders', 'esim_fee', 'esim_fee REAL NOT NULL DEFAULT 0');
 ensureColumn('shop_orders', 'esim_code', "esim_code TEXT NOT NULL DEFAULT ''");
+ensureColumn('shop_orders', 'proof_tries', 'proof_tries INTEGER NOT NULL DEFAULT 0');
+ensureColumn('shop_orders', 'first_proof_at', 'first_proof_at INTEGER');
 // Before gone_at, a sync that briefly got an incomplete list from QuickLine hid packages for good. The manager hid
 // none of them by hand, so they are marked as the sync's, once, and the next sync brings back those QuickLine lists.
 if (!db.prepare("SELECT 1 FROM settings WHERE key = 'migr_ql_gone'").get()) {

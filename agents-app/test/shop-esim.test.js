@@ -253,7 +253,7 @@ test('eSIM shop: a random number held per order, pay by JawwalPay, confirmed fro
   assert.equal((await order({ customerName: 'زبون', email: 'not-an-email' })).status, 400);
   const a = await ok(order({ customerName: 'المعتز بالله ابو خاطر', email: 'Buyer@Example.com' }));
   assert.deepEqual([a.status, a.esim, a.number, a.amount, a.email, a.esimQr], ['awaiting_payment', true, null, 90, 'buyer@example.com', null]);
-  assert.ok(a.reservedUntil > Date.now() + 29 * 60_000, 'held for 30 minutes');
+  assert.ok(a.reservedUntil > Date.now() + 4 * 60_000 && a.reservedUntil <= Date.now() + 5 * 60_000 + 5000, 'held for 5 minutes');
   assert.equal(a.sim, undefined, 'the eSIM itself is not shown');
   const b = await ok(order({ customerName: 'زبون ثانٍ' }));
   const c = await ok(order({ customerName: 'محمد خليل' }));
