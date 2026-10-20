@@ -1104,34 +1104,36 @@ function renderInfoTabContent(tab) {
 
 function openPackDetailsSheet(pk, co) {
   const hasEsim = isEsimPkg(pk);
-  const gbVal = pkgGb(pk);
-  const daysVal = Number(pk.days) || 30;
+  const sp = extractPackageSpecs(pk, co);
   const qrFee = Number(pk.esimFee ?? co?.esimFee ?? S.data?.esimFee ?? 0);
-  const callsLabel = pk.minutes
-    ? `${fmtNum(pk.minutes)} دقيقة${pk.sms ? ` و ${fmtNum(pk.sms)} رسالة` : ''}`
-    : pk.tag || 'مكالمات ورسائل شاملة';
 
   sheet({
-    title: pk.name,
-    subtitle: `${co?.name || pk.companyName || 'HOT eSIM'} · تفاصيل الباقة`,
+    title: sp.companyName,
+    subtitle: `${sp.mainCap} · تفاصيل الباقة`,
     body: `
       <div class="shop-breakdown-box">
         <div class="shop-bd-row">
-          <span>الشبكة</span>
-          <b>${esc(co?.name || pk.companyName || 'HOT eSIM')}</b>
+          <span>الشركة / الشبكة</span>
+          <b>${esc(sp.companyName)}</b>
         </div>
         <div class="shop-bd-row">
-          <span>حجم البيانات</span>
-          <b class="ltr mono">${gbVal > 0 ? `${fmtNum(gbVal)} GB` : 'مفتوح'}</b>
+          <span>الإنترنت</span>
+          <b>${esc(sp.dataLabel)}</b>
+        </div>
+        <div class="shop-bd-row">
+          <span>الدقائق والرسائل</span>
+          <b>${esc(sp.callsLabel)}</b>
         </div>
         <div class="shop-bd-row">
           <span>مدة الصلاحية</span>
-          <b>${fmtNum(daysVal)} يوماً</b>
+          <b>${fmtNum(sp.days)} يوماً</b>
         </div>
-        <div class="shop-bd-row">
-          <span>المكالمات والرسائل</span>
-          <b>${esc(callsLabel)}</b>
-        </div>
+        ${sp.extraBonus ? `
+          <div class="shop-bd-row">
+            <span>مزايا إضافية</span>
+            <b>${esc(sp.extraBonus)}</b>
+          </div>
+        ` : ''}
         <div class="shop-bd-row">
           <span>سعر الباقة</span>
           <b class="mono">${fmtMoney(pk.price)}</b>
@@ -1143,7 +1145,6 @@ function openPackDetailsSheet(pk, co) {
           </div>
         ` : ''}
       </div>
-      ${pk.description ? `<p class="muted" style="margin-top:12px;font-size:.88rem">${esc(pk.description)}</p>` : ''}
       <div class="row" style="gap:10px;margin-top:16px;flex-wrap:wrap">
         ${hasEsim ? `<a class="btn primary grow" href="#/buy/${pk.id}?esim=1" data-close>${icon('qr')}<span>شراء شريحة eSIM</span></a>` : ''}
         <a class="btn ${hasEsim ? 'ghost' : 'primary'} grow" href="#/buy/${pk.id}" data-close>${icon('refresh')}<span>شحن رصيد لخطك</span></a>
@@ -1483,58 +1484,187 @@ function viewCatalog() {
   });
 }
 
+// Extract structured specs (company name, internet GB, minutes, SMS, duration days, extra bonus)
+// from package fields and Arabic/English text so every detail is displayed in its proper place.
+function extractPackageSpecs(pk, co) {
+  const companyName = String(co?.name || pk?.companyName || 'HOT eSIM').trim();
+  const rawName = String(pk?.name || '').trim();
+  const rawDesc = String(pk?.description || '').trim();
+  const combined = `${rawName} ${rawDesc}`;
+
+  // 1. Internet / Data (GB)
+  let gb = Number(pk?.dataGb ?? pk?.gb ?? 0) || 0;
+  if (!gb) {
+    const gbMatch = combined.match(/(\d+(?:\.\d+)?)\s*(?:GB|G\b|جيجابايت|جيجا|جبجا|غيغا)/i);
+    if (gbMatch) gb = Number(gbMatch[1]) || 0;
+  }
+
+  // 2. Minutes (عدد الدقائق)
+  let minutes = pk?.minutes !== null && pk?.minutes !== undefined ? Number(pk.minutes) : null;
+  const unlimitedCalls = minutes === -1 || /مكالمات\s*غير\s*محدود|غير\s*محدود/.test(combined);
+  if ((minutes === null || minutes === 0) && !unlimitedCalls) {
+    const minMatches = [...combined.matchAll(/(\d[\d,]*)\s*دقيق[ةه]/g)]
+      .map((m) => Number(m[1].replace(/,/g, '')))
+      .filter((n) => Number.isFinite(n) && n > 0);
+    if (minMatches.length) {
+      minutes = Math.max(...minMatches);
+    }
+  }
+
+  // 3. SMS (عدد الرسائل)
+  let sms = pk?.sms !== null && pk?.sms !== undefined ? Number(pk.sms) : null;
+  if (sms === null || sms === 0) {
+    const smsMatch = combined.match(/(\d[\d,]*)\s*(?:رسال[ةه]|نصية|SMS)/i);
+    if (smsMatch) sms = Number(smsMatch[1].replace(/,/g, '')) || null;
+  }
+
+  // 4. Duration in Days (مدة الصلاحية)
+  let days = Number(pk?.days) || 0;
+  if (!days) {
+    if (/شهرين|شهران/.test(combined)) {
+      days = 60;
+    } else if (/3\s*[أا]شهر|ثلاث[ةه]\s*[أا]شهر/.test(combined)) {
+      days = 90;
+    } else {
+      const dayMatches = [...combined.matchAll(/(\d+)\s*يوم(?![ي])/g)]
+        .map((m) => Number(m[1]))
+        .filter((n) => n >= 7 && n <= 365);
+      if (dayMatches.length) days = dayMatches[0];
+    }
+  }
+  if (!days) days = 30;
+
+  // 5. Extra international / Palestinian calls or credit bonus
+  const isOpenCredit = !gb && /لجميع\s*الشبكات/.test(combined);
+  const creditMatch = rawName.match(/(\d+)\s*(?:شيقل|شيكل|₪)/);
+  const creditVal = creditMatch ? Number(creditMatch[1]) : Number(pk?.price || 0);
+
+  let extraBonus = '';
+  const palMinMatch = combined.match(/(\d+)\s*دقيق[ةه]\s*(?:بونص\s*)?(?:على\s*)?(?:للشبكات\s*الفلسطيني[ةه]|لفلسطين)/);
+  const intlShekelMatch = combined.match(/(\d+)\s*(?:شيقل|شيكل|₪)\s*(?:بونص\s*)?(?:مكالمات\s*)?(?:للشبكات\s*الفلسطيني[ةه]|مكالمات\s*دولي[ةه]|لخارج\s*البلاد|للشبكات\s*المحلي[ةه]\s*والخارجي[ةه]|على\s*الشبكات\s*الفلسطيني[ةه]|رصيد)/);
+  if (palMinMatch && minutes && Number(palMinMatch[1]) !== minutes) {
+    extraBonus = `+ ${fmtNum(Number(palMinMatch[1]))} دقيقة لفلسطين`;
+  } else if (!isOpenCredit && intlShekelMatch && Number(intlShekelMatch[1]) !== Number(pk?.price)) {
+    extraBonus = `+ ${fmtNum(Number(intlShekelMatch[1]))} ₪ مكالمات دولية وفلسطينية`;
+  }
+
+  // 6. Main Headline Capacity (shown next to price in .pele-pack-top)
+  let mainCap = '';
+  if (gb > 0) {
+    mainCap = `${fmtNum(gb)}GB`;
+  } else if (isOpenCredit) {
+    mainCap = `${fmtNum(creditVal)}₪`;
+  } else if (minutes && minutes > 0) {
+    mainCap = `${fmtNum(minutes)}M`;
+  } else {
+    mainCap = `${fmtNum(creditVal)}₪`;
+  }
+
+  // 7. Formatted Internet & Calls labels for their dedicated places
+  let dataLabel = '';
+  if (gb > 0) {
+    dataLabel = `${fmtNum(gb)} جيجا إنترنت 5G`;
+  } else if (isOpenCredit) {
+    dataLabel = `رصيد ${fmtNum(creditVal)} ₪ لجميع الشبكات`;
+  } else {
+    dataLabel = 'باقة اتصال بدون إنترنت';
+  }
+
+  let callsLabel = '';
+  if (unlimitedCalls) {
+    callsLabel = sms > 0 ? `مكالمات غير محدودة و ${fmtNum(sms)} رسالة` : 'مكالمات ورسائل غير محدودة';
+  } else if (minutes && minutes > 0) {
+    if (sms && sms > 0) {
+      callsLabel = `${fmtNum(minutes)} دقيقة و ${fmtNum(sms)} رسالة`;
+    } else if (palMinMatch && Number(palMinMatch[1]) === minutes) {
+      callsLabel = `${fmtNum(minutes)} دقيقة للشبكات الفلسطينية`;
+    } else {
+      callsLabel = `${fmtNum(minutes)} دقيقة مكالمات`;
+    }
+  } else if (pk?.tag) {
+    callsLabel = pk.tag;
+  } else {
+    callsLabel = 'مكالمات ورسائل شاملة';
+  }
+
+  return {
+    companyName,
+    gb,
+    minutes,
+    sms,
+    days,
+    unlimitedCalls,
+    extraBonus,
+    mainCap,
+    dataLabel,
+    callsLabel,
+  };
+}
+
+function renderExtractedSpecsChips(sp) {
+  return `
+    <span class="chip">${icon('data')}<span>${esc(sp.dataLabel)}</span></span>
+    <span class="chip">${icon('call')}<span>${esc(sp.callsLabel)}</span></span>
+    <span class="chip">${icon('clock')}<span>${fmtNum(sp.days)} يوماً</span></span>
+    ${sp.extraBonus ? `<span class="chip">${icon('bolt')}<span>${esc(sp.extraBonus)}</span></span>` : ''}
+  `;
+}
+
 function renderPlanCard(pk, co) {
   const coColor = co?.color || '#1f6ff2';
   const hasEsim = isEsimPkg(pk);
   const featured = isFeaturedPkg(pk);
-  const gbVal = pkgGb(pk);
-  const daysVal = Number(pk.days) || 30;
-
-  // Main headline inside .pack_top (e.g. 500GB / 200GB / 100GB)
-  let mainCap = gbVal > 0 ? `${fmtNum(gbVal)}GB` : '';
-  if (!mainCap) {
-    const m = String(pk.name || '').match(/(\d+)\s*(?:GB|جيجا|غيغا)/i);
-    mainCap = m ? `${m[1]}GB` : pk.name;
-  }
-
-  const callsLabel = pk.minutes
-    ? `${fmtNum(pk.minutes)} دقيقة و ${pk.sms ? `${fmtNum(pk.sms)} رسالة` : 'رسائل شاملة'}`
-    : pk.tag || '3000 دقيقة و 1500 رسالة';
+  const sp = extractPackageSpecs(pk, co);
 
   const qrFee = Number(pk.esimFee ?? co?.esimFee ?? S.data?.esimFee ?? 0);
   const qrFeeLine = hasEsim
     ? (qrFee > 0 ? `+ ${fmtMoney(qrFee)} لإصدار شريحة eSIM QR` : 'شامل كود eSIM QR مجاناً')
-    : (pk.description || 'تفعيل وشحن فوري للخط');
+    : 'تفعيل وشحن فوري للخط';
 
   return `
     <div class="pele-pack-card ${featured ? 'is-featured' : ''}" style="--co:${esc(coColor)}">
       <div class="pele-pack-card-head">
         <div class="pele-best-offer">
-          <span class="pele-5g-pill" dir="ltr"><i>e</i>SIM <b>5G</b></span>
+          <span class="pele-5g-pill" dir="ltr">${hasEsim ? '<i>e</i>SIM' : 'TOP UP'} <b>5G</b></span>
         </div>
         <div class="pele-superlative">
           <div>
-            <span>${fmtNum(daysVal)}</span>
+            <span>${fmtNum(sp.days)}</span>
             <span>يوماً</span>
           </div>
         </div>
       </div>
 
       <div class="pele-pack-top" dir="ltr">
-        <div class="pele-pack-name"><span>${esc(mainCap)}</span></div>
+        <div class="pele-pack-name"><span>${esc(sp.mainCap)}</span></div>
         <div class="pele-pack-price">${fmtNum(pk.price)}<span>₪</span></div>
       </div>
 
       <div class="pele-pack-carrier">
-        ${companyLogo(co || { name: pk.companyName }, 'sm')}
-        <span>${esc(co?.name || pk.companyName || '')} · ${esc(pk.name)}</span>
+        ${companyLogo(co || { name: sp.companyName }, 'sm')}
+        <span>${esc(sp.companyName)}</span>
       </div>
 
       <div class="pele-pack-body-box">
+        <div class="pele-pack-specs-list">
+          <div class="pele-pack-spec-row">
+            <i class="pele-spec-ic">${icon('data')}</i>
+            <span>${esc(sp.dataLabel)}</span>
+          </div>
+          <div class="pele-pack-spec-row">
+            <i class="pele-spec-ic">${icon('call')}</i>
+            <span>${esc(sp.callsLabel)}</span>
+          </div>
+          ${sp.extraBonus ? `
+            <div class="pele-pack-spec-row is-bonus">
+              <i class="pele-spec-ic">${icon('bolt')}</i>
+              <span>${esc(sp.extraBonus)}</span>
+            </div>
+          ` : ''}
+        </div>
         <div class="pele-new-txt">استخدام حر للتطبيقات المختارة</div>
         ${renderAppsStripSvg()}
         <div class="pele-new-txt2">
-          ${esc(callsLabel)}
           <span>${esc(qrFeeLine)}</span>
         </div>
       </div>
@@ -1558,6 +1688,7 @@ function viewBuy(id) {
   const pk = (S.data?.packages || []).find((p) => String(p.id) === String(id));
   if (!pk) { location.hash = '#/'; return; }
   const co = (S.data?.companies || []).find((c) => c.id === pk.companyId) || { name: pk.companyName };
+  const sp = extractPackageSpecs(pk, co);
   const isCard = pk.kind === 'card';
   const canEsim = Boolean(pk.esim);
   const wantEsim = canEsim && (S.wantEsim || !isCard);
@@ -1588,12 +1719,11 @@ function viewBuy(id) {
         <div class="row" style="gap:12px">
           ${companyLogo(co)}
           <div class="grow">
-            <span class="esim-carrier-label">${esc(co?.name || '')}</span>
-            <h2 style="margin:2px 0 4px">${esc(pk.name)}</h2>
-            <div class="chips">${specs(pk)}</div>
+            <span class="esim-carrier-label">${esc(isCard ? 'تجديد وشحن باقة' : 'شريحة جديدة')}</span>
+            <h2 style="margin:2px 0 6px">${esc(sp.companyName)}</h2>
+            <div class="chips">${renderExtractedSpecsChips(sp)}</div>
           </div>
         </div>
-        ${pk.description ? `<p class="muted" style="margin:8px 0 0;font-size:.86rem">${esc(pk.description)}</p>` : ''}
       </div>
 
       ${canEsim && isCard ? `
@@ -1709,10 +1839,11 @@ function viewBuy(id) {
 
 // eSIM checkout: checks /api/shop/available, shows price + QR fee breakdown, and creates eSIM order
 async function esimForm(pk, co, canSwitchToCard = false) {
+  const sp = extractPackageSpecs(pk, co);
   const qrFee = Number(pk.esimFee ?? co?.esimFee ?? S.data?.esimFee ?? 0);
   const total = Number(pk.price || 0) + qrFee;
 
-  shell(`<div class="card empty"><p class="muted">جارٍ التحقق من توفّر الشريحة...</p></div>`, { sub: pk.name });
+  shell(`<div class="card empty"><p class="muted">جارٍ التحقق من توفّر الشريحة...</p></div>`, { sub: sp.companyName });
   if (S.esimAvailable === null || S.esimAvailable.pkgId !== pk.id) {
     try {
       const r = await jfetch(`/api/shop/available?packageId=${encodeURIComponent(pk.id)}`);
@@ -1742,13 +1873,12 @@ async function esimForm(pk, co, canSwitchToCard = false) {
         <div class="row" style="gap:12px">
           ${companyLogo(co)}
           <div class="grow">
-            <span class="esim-carrier-label">${esc(co?.name || '')} · شريحة eSIM</span>
-            <h2 style="margin:2px 0 4px">${esc(pk.name)}</h2>
-            <div class="chips">${specs(pk)}</div>
+            <span class="esim-carrier-label">شريحة eSIM فورية</span>
+            <h2 style="margin:2px 0 6px">${esc(sp.companyName)}</h2>
+            <div class="chips">${renderExtractedSpecsChips(sp)}</div>
           </div>
           ${esimChipSvg('esim-chip-svg')}
         </div>
-        ${pk.description ? `<p class="muted" style="margin:8px 0 0;font-size:.86rem">${esc(pk.description)}</p>` : ''}
       </div>
 
       ${canSwitchToCard ? `
