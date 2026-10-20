@@ -1684,6 +1684,48 @@ function renderPlanCard(pk, co) {
   `;
 }
 
+function renderCheckoutPackageSummary(pk, co, { isEsim = false, isCard = false } = {}) {
+  const sp = extractPackageSpecs(pk, co);
+  const badgeText = isEsim ? 'شريحة eSIM فورية' : (isCard ? 'تجديد وشحن باقة' : 'شريحة جديدة');
+  return `
+    <div class="esim-checkout-head">
+      <div class="pele-checkout-top">
+        <div class="pele-checkout-brand">
+          ${companyLogo(co, 'sm')}
+          <div class="pele-checkout-titles">
+            <span class="esim-carrier-label">${esc(badgeText)}</span>
+            <h2>${esc(sp.companyName)}</h2>
+          </div>
+        </div>
+        <div class="pele-checkout-cap" dir="ltr">
+          <b class="pele-checkout-maincap">${esc(sp.mainCap)}</b>
+          <span class="pele-checkout-price">${fmtNum(pk.price)}<span>₪</span></span>
+        </div>
+      </div>
+      <div class="pele-pack-specs-list pele-checkout-specs">
+        <div class="pele-pack-spec-row">
+          <i class="pele-spec-ic">${icon('data')}</i>
+          <span>${esc(sp.dataLabel)}</span>
+        </div>
+        <div class="pele-pack-spec-row">
+          <i class="pele-spec-ic">${icon('call')}</i>
+          <span>${esc(sp.callsLabel)}</span>
+        </div>
+        <div class="pele-pack-spec-row">
+          <i class="pele-spec-ic">${icon('clock')}</i>
+          <span>صلاحية ${fmtNum(sp.days)} يوماً</span>
+        </div>
+        ${sp.extraBonus ? `
+          <div class="pele-pack-spec-row is-bonus">
+            <i class="pele-spec-ic">${icon('bolt')}</i>
+            <span>${esc(sp.extraBonus)}</span>
+          </div>
+        ` : ''}
+      </div>
+    </div>
+  `;
+}
+
 function viewBuy(id) {
   const pk = (S.data?.packages || []).find((p) => String(p.id) === String(id));
   if (!pk) { location.hash = '#/'; return; }
@@ -1715,16 +1757,7 @@ function viewBuy(id) {
         <span><i>3</i>التفعيل</span>
       </div>
 
-      <div class="esim-checkout-head">
-        <div class="row" style="gap:12px">
-          ${companyLogo(co)}
-          <div class="grow">
-            <span class="esim-carrier-label">${esc(isCard ? 'تجديد وشحن باقة' : 'شريحة جديدة')}</span>
-            <h2 style="margin:2px 0 6px">${esc(sp.companyName)}</h2>
-            <div class="chips">${renderExtractedSpecsChips(sp)}</div>
-          </div>
-        </div>
-      </div>
+      ${renderCheckoutPackageSummary(pk, co, { isEsim: false, isCard })}
 
       ${canEsim && isCard ? `
         <div class="field">
@@ -1869,17 +1902,7 @@ async function esimForm(pk, co, canSwitchToCard = false) {
         <span><i>3</i>استلام QR</span>
       </div>
 
-      <div class="esim-checkout-head">
-        <div class="row" style="gap:12px">
-          ${companyLogo(co)}
-          <div class="grow">
-            <span class="esim-carrier-label">شريحة eSIM فورية</span>
-            <h2 style="margin:2px 0 6px">${esc(sp.companyName)}</h2>
-            <div class="chips">${renderExtractedSpecsChips(sp)}</div>
-          </div>
-          ${esimChipSvg('esim-chip-svg')}
-        </div>
-      </div>
+      ${renderCheckoutPackageSummary(pk, co, { isEsim: true, isCard: canSwitchToCard })}
 
       ${canSwitchToCard ? `
         <div class="field">
@@ -2094,12 +2117,12 @@ function renderOrder() {
       </div>
 
       <div class="row between" style="flex-wrap:wrap;gap:10px">
-        <div class="row" style="gap:10px">
-          <span class="shop-brand-mark">${icon(isEsim ? 'qr' : 'sim')}</span>
-          <div>
+        <div class="row" style="gap:10px;min-width:0;flex:1">
+          <span class="shop-brand-mark sm">${icon(isEsim ? 'qr' : 'sim')}</span>
+          <div class="grow">
             <span class="esim-carrier-label">طلب #<b class="ltr mono">${esc(o.code)}</b></span>
-            <h3 style="margin:2px 0">${esc(o.packageLabel)}${isEsim ? ' · eSIM' : ''}</h3>
-            <small class="muted">${esc(o.customerName || '')} · ${o.number ? `<span class="ltr">${esc(fmtPhone(o.number))}</span>` : '🔒 يظهر الرقم فور توثيق الدفع'}</small>
+            <h3 style="margin:2px 0;word-break:break-word">${esc(o.packageLabel)}${isEsim ? ' · eSIM' : ''}</h3>
+            <small class="muted">${esc(o.customerName || '')} · ${o.number ? `<span class="ltr">${esc(fmtPhone(o.number))}</span>` : 'يظهر الرقم فور توثيق الدفع'}</small>
           </div>
         </div>
         <b class="mono shop-amount">${fmtMoney(o.amount)}</b>

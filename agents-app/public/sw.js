@@ -1,5 +1,5 @@
 // App shell cache: pages and code load instantly and work offline; API calls always go to the network.
-const CACHE = 'agents-shell-v19';
+const CACHE = 'agents-shell-v20';
 const SHELL = [
   '/',
   '/css/app.css',
