@@ -34,6 +34,9 @@ const S = {
   q: '',
   compatBrand: 'apple',
   compatSearch: '',
+  infoTab: 'purchase', // 'purchase' | 'number' | 'credit' | ''
+  openCompatBrand: '', // 'apple' | 'samsung' | 'xiaomi' | 'google' | ''
+  openFaqIdx: -1,
   order: null,
   pollTimer: null,
   myCodes: savedOrderCodes(),
@@ -212,26 +215,42 @@ function shell(body, { sub = '' } = {}) {
 
     <main class="shop-main">${body}</main>
 
-    <footer class="shop-footer no-print">
-      <div class="shop-footer-inner">
-        <div class="shop-footer-brand">
+    <footer class="pele-footer no-print">
+      <div class="pele-footer-wrap">
+        <div class="pele-right-foot">
           <div class="row" style="gap:10px">
-            <span class="shop-brand-mark sm">${brandLogoSvg('hsim-logo-svg sm')}</span>
+            <span class="shop-brand-mark">${brandLogoSvg('hsim-logo-svg')}</span>
             <div>
-              <div class="row" style="gap:8px">
-                ${renderBrandWordmark(rawBrand)}
-              </div>
-              <small class="muted" style="font-size:.76rem">شرائح eSIM فورية وشحن باقات الخليوي</small>
+              ${renderBrandWordmark(rawBrand)}
+              <small class="muted" style="display:block;font-size:.78rem;margin-top:3px">شرائح eSIM فورية وشحن باقات الخليوي</small>
+            </div>
+          </div>
+          <div class="pele-foot-net">
+            ${wa ? `<a href="${esc(wa)}" target="_blank" rel="noopener" class="pele-net-ic" title="واتساب">${icon('whatsapp')}</a>` : ''}
+            <a href="#/track" class="pele-net-ic" title="تتبّع طلب">${icon('search')}</a>
+            <a href="#/compat" class="pele-net-ic" title="فحص التوافق">${icon('chip')}</a>
+            <button type="button" class="pele-net-ic" data-act="theme" title="تغيير المظهر">${icon(dark ? 'sun' : 'moon')}</button>
+          </div>
+        </div>
+
+        <div class="pele-left-foot">
+          <div class="pele-lnks">
+            <div>
+              <h3 class="ttl">عام والخدمات</h3>
+              <a href="#/" data-act="nav-all">جميع الباقات والشرائح</a>
+              <a href="#/" data-act="nav-esim">باقات شرائح eSIM</a>
+              <a href="#/compat" class="${hash === 'compat' ? 'active' : ''}">فحص توافق الهاتف مع eSIM</a>
+              <a href="#/track" class="${hash === 'track' ? 'active' : ''}">تتبّع حالة طلب / فحص الرصيد</a>
+            </div>
+            <div>
+              <h3 class="ttl">الشروط والدعم</h3>
+              <a href="#/terms" class="${hash === 'terms' ? 'active' : ''}">شروط البيع والتفعيل</a>
+              <a href="#/esim-policy" class="${hash === 'esim-policy' ? 'active' : ''}">سياسة كود eSIM QR</a>
+              <a href="#/guarantee" class="${hash === 'guarantee' ? 'active' : ''}">ضمان المتجر واسترجاع المبلغ</a>
+              ${wa ? `<a href="${esc(wa)}" target="_blank" rel="noopener">تواصل معنا عبر واتساب</a>` : ''}
             </div>
           </div>
         </div>
-        <nav class="shop-footer-links" aria-label="روابط المتجر">
-          <a href="#/compat" class="shop-footer-link ${hash === 'compat' ? 'active' : ''}">${icon('chip')}<span>فحص توافق الهاتف مع eSIM</span></a>
-          <a href="#/terms" class="shop-footer-link ${hash === 'terms' ? 'active' : ''}">${icon('shield')}<span>شروط البيع والتفعيل</span></a>
-          <a href="#/esim-policy" class="shop-footer-link ${hash === 'esim-policy' ? 'active' : ''}">${icon('qr')}<span>سياسة كود eSIM QR</span></a>
-          <a href="#/guarantee" class="shop-footer-link ${hash === 'guarantee' ? 'active' : ''}">${icon('checkCircle')}<span>ضمان المتجر واسترجاع المبلغ</span></a>
-          <a href="#/track" class="shop-footer-link ${hash === 'track' ? 'active' : ''}">${icon('search')}<span>تتبّع حالة طلب</span></a>
-        </nav>
       </div>
     </footer>
 
@@ -273,6 +292,14 @@ function bindGlobalTriggers(scope) {
       route();
     };
   });
+  scope.querySelectorAll('[data-jump]').forEach((b) => {
+    b.onclick = (e) => {
+      e.preventDefault();
+      const targetId = b.dataset.jump;
+      const el = document.getElementById(targetId);
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    };
+  });
   scope.querySelectorAll('[data-act="track-sheet"]').forEach((b) => {
     b.onclick = (e) => { e.preventDefault(); openTrackSheet(); };
   });
@@ -299,7 +326,7 @@ function bindGlobalTriggers(scope) {
         location.hash = '#/';
       } else {
         viewCatalog();
-        document.getElementById('esim-plans-anchor')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        document.getElementById('sec-packs')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
       }
     };
   });
@@ -898,6 +925,177 @@ async function ensureCatalog() {
   if (S.data?.appName) document.title = `متجر ${S.data.appName}`;
 }
 
+// Inline SVG strip of popular apps (matching Pelephone's apps strip inside each package card)
+function renderAppsStripSvg() {
+  return `
+    <div class="pele-all-apps" aria-label="تطبيقات مشمولة">
+      <span class="pele-app-badge" title="WhatsApp">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M20.5 11.5a8.5 8.5 0 0 1-12.5 7.5L3.5 20l1.2-4.3A8.5 8.5 0 1 1 20.5 11.5z"/><path d="M9.5 9.2c.3-.6.7-.6 1-.6h.6c.2 0 .5.1.6.5l.7 1.7c.1.2 0 .5-.2.7l-.5.5c-.2.2-.2.4 0 .7.4.7 1.2 1.5 2.1 1.9.3.1.5.1.7-.1l.6-.7c.2-.2.5-.3.8-.1l1.6.8c.3.2.4.4.4.7 0 .6-.4 1.3-1 1.6-.6.3-1.4.4-2.5 0-2.1-.7-3.9-2.4-4.7-4.3-.4-1-.4-1.8.1-2.5z"/></svg>
+      </span>
+      <span class="pele-app-badge" title="Instagram">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><rect x="3.5" y="3.5" width="17" height="17" rx="5"/><circle cx="12" cy="12" r="3.8"/><circle cx="17.2" cy="6.8" r="1" fill="currentColor"/></svg>
+      </span>
+      <span class="pele-app-badge" title="TikTok">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M9 12a4 4 0 1 0 4 4V4a5 5 0 0 0 5 5"/></svg>
+      </span>
+      <span class="pele-app-badge" title="YouTube">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"><rect x="2.5" y="5.5" width="19" height="13" rx="4"/><polygon points="10,9.5 15.5,12 10,14.5" fill="currentColor"/></svg>
+      </span>
+      <span class="pele-app-badge" title="Facebook">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M15 4h-2.5A3.5 3.5 0 0 0 9 7.5V10H6.5v3.5H9V20h3.8v-6.5h2.8L16 10h-3.2V7.8c0-.6.3-.8.9-.8H15V4z"/></svg>
+      </span>
+      <span class="pele-app-badge" title="Waze & Maps">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s-6.5-5.8-6.5-11a6.5 6.5 0 1 1 13 0c0 5.2-6.5 11-6.5 11z"/><circle cx="12" cy="10" r="2.4"/></svg>
+      </span>
+    </div>
+  `;
+}
+
+const HOME_FAQ_ITEMS = [
+  {
+    q: 'ما هي شريحة eSIM؟',
+    a: 'هي شريحة اتصال إلكترونية مدمجة داخل هاتفك يتم تنزيلها وتفعيلها فوراً عبر مسح كود QR بعد شراء الباقة دون الحاجة لبطاقة بلاستيكية. يمكنك <a href="#sec-compat" data-jump="sec-compat">فحص توافق جهازك من هنا</a>.',
+  },
+  {
+    q: 'كيف أعرف إذا كان جهازي يدعم شريحة eSIM؟',
+    a: 'يمكنك الضغط على قسم <a href="#sec-compat" data-jump="sec-compat">الأجهزة المتوافقة</a> في هذه الصفحة واختيار نوع هاتفك، أو طلب الكود <kbd dir="ltr">*#06#</kbd> في لوحة اتصال الهاتف للتأكد من ظهور رقم <b>EID</b>.',
+  },
+  {
+    q: 'متى تتفعل الباقة بعد الشراء؟',
+    a: 'طلبت شريحة eSIM جديدة؟ تتفعل باقة الإنترنت والمكالمات فور مسح كود الـ QR والاتصال بالشبكة.<br>قمت بإعادة شحن خطك الحالي؟ تتفعل الباقة فوراً بعد إتمام الطلب.',
+  },
+  {
+    q: 'استلمت كود QR، كيف أقوم بمسحه على هاتفي؟',
+    a: 'ادخل إلى إعدادات الجهاز (الإعدادات ← خلوي ← إضافة eSIM في آيفون، أو الضبط ← الاتصالات ← إدارة SIM في أندرويد) وامسح الكود أثناء اتصالك بشبكة Wi-Fi. يمكنك مراجعة <a href="#/esim-policy">دليل التثبيت الكامل هنا</a>.',
+  },
+  {
+    q: 'كيف أفعّل شريحة HOT eSIM؟',
+    a: 'بعد إتمام الدفع يظهر لك كود الـ QR مباشرة في صفحة الطلب. لتفعيل الشريحة تأكد من:<br>1. وجود اتصال بالإنترنت (Wi-Fi).<br>2. جاهزية كود الـ QR للمسح من شاشة أخرى أو استخدام كود التفعيل اليدوي (LPA).',
+  },
+  {
+    q: 'كيف أفحص حالة طلبي أو أعيد شحن الباقة؟',
+    a: 'اضغط على <a href="#/track">رصيدي وطلباتي</a> لعرض حالة طلبك أو استخراج كود الـ QR، أو اختر <b>شحن رصيد لخطك</b> على أي باقة في المتجر لتجديد باقتك.',
+  },
+  {
+    q: 'الشروط والأحكام وضمان المتجر',
+    a: 'يمكنك الاطلاع على كافة التفاصيل عبر صفحة <a href="#/terms">شروط البيع والتفعيل</a> وصفحة <a href="#/guarantee">ضمان المتجر واسترجاع المبلغ</a>.',
+  },
+];
+
+function renderInfoTabContent(tab) {
+  if (tab === 'number') {
+    return `
+      <div class="pele-info-panel">
+        <div class="pele-dtls">
+          <div class="pele-txt3">نسيت رقم هاتف شريحة eSIM الخاصة بك؟</div>
+          <p>لمعرفة رقم هاتفك مباشرة من داخل الجهاز:</p>
+          <p><b class="ltr">iOS (iPhone):</b> الإعدادات &gt; خلوي (Cellular) &gt; الشريحة (SIM)</p>
+          <p><b class="ltr">Android:</b> الضبط &gt; الاتصالات &gt; إدارة بطاقة SIM</p>
+          <div class="pele-info-highlight">
+            ${icon('whatsapp')}
+            <strong>تحتفظ بحسابك ورقمك على واتساب (WhatsApp) كما هو تماماً دون أي تغيير</strong>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+  if (tab === 'credit') {
+    return `
+      <div class="pele-info-panel">
+        <div class="pele-dtls">
+          <div class="pele-txt3">فحص حالة الطلب والرصيد</div>
+          <p>
+            يمكنك متابعة حالة طلبك واستخراج كود الـ QR في أي وقت عبر صفحة <a href="#/track">رصيدي وطلباتي</a>.<br>
+            يتم إشعارك تلقائياً بحالة التفعيل وموعد انتهاء صلاحية الباقة.
+          </p>
+          <div class="pele-txt3" style="margin-top:16px">إعادة الشحن وتجديد الباقة (Top Up)</div>
+          <p>
+            يمكنك <a href="#sec-packs" data-jump="sec-packs">إعادة شحن خطك من هنا</a> باختيار زر <b>«شحن رصيد لخطك»</b> على أي باقة.<br>
+            هل قمت بإعادة شحن شريحتك؟ تتفعل باقتك فوراً بعد إتمام عملية الشراء.
+          </p>
+        </div>
+      </div>
+    `;
+  }
+  return `
+    <div class="pele-info-panel">
+      <div class="pele-dtls">
+        <div class="pele-txt3">التوافق مع شريحة eSIM</div>
+        <p>
+          قبل الشراء تأكد أن هاتفك <a href="#sec-compat" data-jump="sec-compat">متوافق مع تقنية eSIM</a>.<br>
+          بعد إتمام الشراء والدفع يصدر لك كود QR فوراً. لتفعيل شريحة <b>HOT eSIM</b> يرجى التأكد من:<br>
+          1. وجود اتصال بالإنترنت (Wi-Fi) على هاتفك.<br>
+          2. أن كود الـ QR جاهز للمسح (مطبوع أو معروض على شاشة أخرى أو عبر النسخ اليدوي LPA).
+        </p>
+        <div class="pele-txt3" style="margin-top:16px">إعدادات الجهاز والتثبيت</div>
+        <p>
+          بعد مسح كود الـ QR ادخل إلى إعدادات الهاتف واتبع <a href="#/esim-policy">خطوات نظام التشغيل</a> لتفعيل الخط.<br>
+          طريقة تنزيل الشريحة متاحة خطوة بخطوة لأجهزة <a href="#/esim-policy">Apple iPhone</a> وأجهزة <a href="#/esim-policy">Android / Samsung</a>.
+        </p>
+        <div class="pele-info-highlight" style="margin-top:14px">
+          ${icon('info')}
+          <div>
+            <strong>ملاحظة هامة:</strong><br>
+            طلبت شريحة eSIM جديدة؟ تتفعل الباقة فور مسح الكود والاتصال بالشبكة.<br>
+            شحنت شريحتك الحالية؟ تتفعل الباقة فوراً بعد إتمام الشراء.
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function openPackDetailsSheet(pk, co) {
+  const hasEsim = isEsimPkg(pk);
+  const gbVal = pkgGb(pk);
+  const daysVal = Number(pk.days) || 30;
+  const qrFee = Number(pk.esimFee ?? co?.esimFee ?? S.data?.esimFee ?? 0);
+  const callsLabel = pk.minutes
+    ? `${fmtNum(pk.minutes)} دقيقة${pk.sms ? ` و ${fmtNum(pk.sms)} رسالة` : ''}`
+    : pk.tag || 'مكالمات ورسائل شاملة';
+
+  sheet({
+    title: pk.name,
+    subtitle: `${co?.name || pk.companyName || 'HOT eSIM'} · تفاصيل الباقة`,
+    body: `
+      <div class="shop-breakdown-box">
+        <div class="shop-bd-row">
+          <span>الشبكة</span>
+          <b>${esc(co?.name || pk.companyName || 'HOT eSIM')}</b>
+        </div>
+        <div class="shop-bd-row">
+          <span>حجم البيانات</span>
+          <b class="ltr mono">${gbVal > 0 ? `${fmtNum(gbVal)} GB` : 'مفتوح'}</b>
+        </div>
+        <div class="shop-bd-row">
+          <span>مدة الصلاحية</span>
+          <b>${fmtNum(daysVal)} يوماً</b>
+        </div>
+        <div class="shop-bd-row">
+          <span>المكالمات والرسائل</span>
+          <b>${esc(callsLabel)}</b>
+        </div>
+        <div class="shop-bd-row">
+          <span>سعر الباقة</span>
+          <b class="mono">${fmtMoney(pk.price)}</b>
+        </div>
+        ${hasEsim ? `
+          <div class="shop-bd-row">
+            <span>رسوم شريحة eSIM QR</span>
+            <b class="mono">${qrFee > 0 ? fmtMoney(qrFee) : 'مجاناً'}</b>
+          </div>
+        ` : ''}
+      </div>
+      ${pk.description ? `<p class="muted" style="margin-top:12px;font-size:.88rem">${esc(pk.description)}</p>` : ''}
+      <div class="row" style="gap:10px;margin-top:16px;flex-wrap:wrap">
+        ${hasEsim ? `<a class="btn primary grow" href="#/buy/${pk.id}?esim=1" data-close>${icon('qr')}<span>شراء شريحة eSIM</span></a>` : ''}
+        <a class="btn ${hasEsim ? 'ghost' : 'primary'} grow" href="#/buy/${pk.id}" data-close>${icon('refresh')}<span>شحن رصيد لخطك</span></a>
+      </div>
+    `,
+    footer: `<button type="button" class="btn ghost" data-close>إغلاق</button>`,
+  });
+}
+
 function viewCatalog() {
   if (!S.data.enabled) {
     shell(`
@@ -912,6 +1110,8 @@ function viewCatalog() {
   const companies = S.data.companies || [];
   const packages = S.data.packages || [];
   const coMap = new Map(companies.map((c) => [c.id, c]));
+  const rawBrand = S.data?.shopTitle || S.data?.appName || 'Hot Esim';
+  const wa = waHref(S.data?.supportWhatsapp, 'مرحباً، أحتاج مساعدة في المتجر');
 
   // Counts per service type
   const totalCount = packages.length;
@@ -932,171 +1132,239 @@ function viewCatalog() {
     return true;
   });
 
-  // Sort: featured/popular first, then price ascending
+  // Sort: featured/popular first, then price descending (like Pelephone 500GB -> 200GB -> 100GB) or price ascending
   shown.sort((a, b) => {
     if (isFeaturedPkg(b) !== isFeaturedPkg(a)) return (isFeaturedPkg(b) ? 1 : 0) - (isFeaturedPkg(a) ? 1 : 0);
-    return Number(a.price || 0) - Number(b.price || 0);
+    return Number(b.price || 0) - Number(a.price || 0);
   });
 
-  const maxGb = Math.max(100, ...packages.map((p) => pkgGb(p)));
+  const compatSearchRes = evaluateDeviceQuery(S.compatSearch);
 
   shell(`
-    <!-- Signature HOT eSIM & Telecom Hero -->
-    <section class="esim-hero">
-      <div class="esim-hero-grid">
-        <div class="esim-hero-copy">
-          <div class="esim-hero-kicker">
-            <span class="kicker-monogram ltr">HOT eSIM</span>
-            <span>تفعيل فوري</span>
+    <!-- 1. Pelephone-Style Full Banner (.general-slider / .top_banner / .flex_bnr) -->
+    <section class="pele-hero-slider">
+      <div class="pele-hero-overlay">
+        <div class="pele-top-banner">
+          <div class="pele-banner-logo">
+            <span class="pele-banner-mark">${brandLogoSvg('hsim-logo-svg')}</span>
+            ${renderBrandWordmark(rawBrand)}
           </div>
-          <h1>${esc(S.data.shopTitle || 'شرائح eSIM وباقات خليوي فورية')}</h1>
-          <p>
-            ${esc(S.data.shopSubtitle || 'اختر باقتك واستلم كود الـ QR فوراً، أو اشحن رقمك الحالي خلال ثوانٍ.')}
-          </p>
-
-          <div class="esim-search-box" role="search">
-            <span class="esim-search-ic">${icon('search')}</span>
-            <input id="shop-q" type="search" value="${esc(S.q)}" placeholder="ابحث عن باقة أو شبكة..." autocomplete="off">
-            ${S.q ? `<button type="button" class="icon-btn sm" id="shop-q-clear" aria-label="مسح البحث">${icon('x')}</button>` : ''}
-          </div>
-
-          <div class="esim-hero-actions">
-            <button type="button" class="esim-hero-btn primary" data-act="nav-esim">
-              ${icon('qr')}
-              <span>شرائح eSIM</span>
-            </button>
-            <a href="#/compat" class="esim-hero-btn ghost">
-              ${icon('chip')}
-              <span>فحص التوافق</span>
-            </a>
-            <a href="#/track" class="esim-hero-btn ghost">
-              ${icon('search')}
-              <span>تتبّع طلب</span>
-            </a>
+          <h1>${esc(S.data.shopTitle || 'الطريقة الأسهل للاتصال في البلاد')}</h1>
+          <div class="pele-flex-bnr">
+            <span class="pele-bnr-col">
+              <i class="pele-bnr-ic">${icon('bolt')}</i>
+              <b>أسرع شبكة خليوي 5G</b>
+            </span>
+            <span class="pele-bnr-col">
+              <i class="pele-bnr-ic">${icon('data')}</i>
+              <b>استخدام حر لتطبيقات مختارة</b>
+            </span>
+            <span class="pele-bnr-col">
+              <i class="pele-bnr-ic">${icon('call')}</i>
+              <b>دقائق مكالمات ورسائل</b>
+            </span>
           </div>
         </div>
 
-        <!-- Bespoke HOT eSIM Digital Pass Card Showcase -->
-        <div class="esim-hero-card-wrap" aria-hidden="true">
-          <div class="esim-showcase-card">
-            <div class="esim-showcase-top">
+        <div class="pele-hero-illustration" aria-hidden="true">
+          <div class="pele-sim-card-art">
+            <div class="pele-sim-art-top">
+              <span class="ltr">5G · eSIM</span>
+              ${esimChipSvg('esim-chip-svg lg')}
+            </div>
+            <div class="pele-sim-art-mid">
+              ${brandLogoSvg('hsim-logo-svg')}
               <div>
-                <span class="esim-showcase-tag">HOT eSIM</span>
-                <strong>شريحة رقمية فورية</strong>
+                <strong class="ltr">HOT eSIM</strong>
+                <small>كود QR فوري · شحن مباشر</small>
               </div>
-              <div class="esim-showcase-emblems">
-                ${esimChipSvg('esim-chip-svg lg')}
-                ${brandLogoSvg('hsim-logo-svg lg')}
-              </div>
-            </div>
-
-            <div class="esim-showcase-specs">
-              <div><small>الشبكة</small><b class="ltr">4G / 5G</b></div>
-              <div><small>التثبيت</small><b>مسح QR</b></div>
-              <div><small>الأجهزة</small><b class="ltr">iOS · Android</b></div>
-            </div>
-
-            <div class="esim-pass-journey">
-              <div class="esim-pass-step">
-                <i class="ltr">01</i>
-                <span>اختر الباقة</span>
-              </div>
-              <span class="esim-pass-arrow">←</span>
-              <div class="esim-pass-step">
-                <i class="ltr">02</i>
-                <span>ادفع</span>
-              </div>
-              <span class="esim-pass-arrow">←</span>
-              <div class="esim-pass-step active">
-                <i class="ltr">03</i>
-                <span>امسح QR</span>
-              </div>
-            </div>
-
-            <div class="esim-showcase-foot">
-              <span class="esim-showcase-status"><i class="shop-live-dot"></i> تفعيل فوري مباشر</span>
-              <span class="mono ltr" style="font-size:.75rem;opacity:.85">HOT-eSIM</span>
             </div>
           </div>
         </div>
       </div>
     </section>
 
-    <!-- Service Type Filter & Carrier Strip -->
-    <section id="esim-plans-anchor" class="esim-controls">
-      <div class="esim-type-tabs" role="tablist" aria-label="نوع الخدمة">
-        <button type="button" role="tab" class="esim-type-tab" aria-selected="${S.kindFilter === 'all'}" data-kind="all">
+    <!-- 2. Pelephone-Style Sticky Sub-Navigation Bar (.adv_feature_wrap / .adv_feature) -->
+    <div class="pele-adv-wrap">
+      <div class="pele-adv-feature">
+        <div class="pele-adv-link">
+          <a href="#sec-packs" data-jump="sec-packs">
+            <span class="txt">باقات eSIM</span>
+          </a>
+        </div>
+        <div class="pele-adv-link">
+          <a href="#sec-compat" data-jump="sec-compat">
+            <span class="txt">الأجهزة المتوافقة</span>
+          </a>
+        </div>
+        <div class="pele-adv-link">
+          <a href="#sec-info" data-jump="sec-info">
+            <span class="txt">معلومات ودعم</span>
+          </a>
+        </div>
+        <div class="pele-btn-special-adv">
+          <a href="#/track">
+            رصيدي وطلباتي${S.myCodes.length ? ` (${fmtNum(S.myCodes.length)})` : ''} &gt;
+          </a>
+        </div>
+      </div>
+    </div>
+
+    <!-- 3. Packages Section (#sec-packs -> .packs) -->
+    <section id="sec-packs" class="pele-content-section">
+      ${companies.length > 1 || cardCount > 0 ? `
+        <div class="pele-filter-bar">
+          <div class="esim-type-tabs" role="tablist" aria-label="نوع الخدمة">
+            <button type="button" role="tab" class="esim-type-tab" aria-selected="${S.kindFilter === 'all'}" data-kind="all">
+              <span>كل الباقات</span>
+              <small>${fmtNum(totalCount)}</small>
+            </button>
+            <button type="button" role="tab" class="esim-type-tab" aria-selected="${S.kindFilter === 'esim'}" data-kind="esim">
+              <span>شرائح eSIM</span>
+              <small>${fmtNum(esimCount)}</small>
+            </button>
+            ${cardCount ? `
+              <button type="button" role="tab" class="esim-type-tab" aria-selected="${S.kindFilter === 'card'}" data-kind="card">
+                <span>شحن رصيد</span>
+                <small>${fmtNum(cardCount)}</small>
+              </button>` : ''}
+          </div>
+
+          ${companies.length > 1 ? `
+            <div class="pele-co-pills" role="tablist" aria-label="الشبكات">
+              <button type="button" class="pele-co-pill" aria-pressed="${S.companyId === 'all'}" data-co="all">كل الشبكات</button>
+              ${companies.map((c) => `
+                <button type="button" class="pele-co-pill" aria-pressed="${String(S.companyId) === String(c.id)}" data-co="${c.id}">
+                  ${esc(c.name)}
+                </button>
+              `).join('')}
+            </div>
+          ` : ''}
+        </div>
+      ` : ''}
+
+      ${shown.length ? `
+        <div class="pele-packs" aria-label="باقات eSIM والشحن">
+          ${shown.map((pk) => renderPlanCard(pk, coMap.get(pk.companyId))).join('')}
+        </div>
+      ` : `
+        <div class="card empty">
           ${icon('sim')}
-          <span>الكل</span>
-          <small>${fmtNum(totalCount)}</small>
-        </button>
-        <button type="button" role="tab" class="esim-type-tab esim-tab-accent" aria-selected="${S.kindFilter === 'esim'}" data-kind="esim">
-          ${icon('qr')}
-          <span>شرائح eSIM</span>
-          <small>${fmtNum(esimCount)}</small>
-        </button>
-        ${cardCount ? `
-          <button type="button" role="tab" class="esim-type-tab" aria-selected="${S.kindFilter === 'card'}" data-kind="card">
-            ${icon('refresh')}
-            <span>شحن رصيد</span>
-            <small>${fmtNum(cardCount)}</small>
-          </button>` : ''}
+          <p>لا توجد باقات مطابقة</p>
+          <button type="button" class="btn ghost btn-sm" id="reset-filters">عرض كل الباقات</button>
+        </div>
+      `}
+    </section>
+
+    <!-- 4. "Everything You Need to Know" Interactive Icon Tabs (#sec-info -> .imp_info / .main_sec + .main_sec_info) -->
+    <section id="sec-info" class="pele-content-section">
+      <div class="pele-imp-info">
+        <div class="pele-main-sec">
+          <h2>كل ما تحتاج معرفته عن شريحة HOT eSIM</h2>
+          <div class="pele-icns" role="tablist">
+            <a role="tab" tabindex="0" class="pele-icn-item ${S.infoTab === 'credit' ? 'active' : ''}" data-itab="credit">
+              <span class="pele-icn-svg">${icon('bolt')}</span>
+              <span>الرصيد وإعادة الشحن</span>
+            </a>
+            <a role="tab" tabindex="0" class="pele-icn-item ${S.infoTab === 'number' ? 'active' : ''}" data-itab="number">
+              <span class="pele-icn-svg">${icon('phone')}</span>
+              <span>رقم هاتفي المحمول</span>
+            </a>
+            <a role="tab" tabindex="0" class="pele-icn-item ${S.infoTab === 'purchase' ? 'active' : ''}" data-itab="purchase">
+              <span class="pele-icn-svg">${icon('qr')}</span>
+              <span>الشراء والتفعيل</span>
+            </a>
+          </div>
+        </div>
       </div>
 
-      ${companies.length > 1 ? `
-        <div class="esim-carrier-strip" role="tablist" aria-label="شركات الاتصالات">
-          <button type="button" class="esim-carrier-pill" aria-pressed="${S.companyId === 'all'}" data-co="all">
-            <span class="esim-carrier-all-ic">${icon('grid')}</span>
-            <span class="esim-carrier-meta">
-              <b>كل الشبكات</b>
-              <small>${fmtNum(totalCount)} باقة</small>
-            </span>
-          </button>
-          ${companies.map((c) => {
-            const cPkgs = packages.filter((p) => p.companyId === c.id);
-            const hasEsim = cPkgs.some((p) => isEsimPkg(p));
-            return `
-              <button type="button" class="esim-carrier-pill" aria-pressed="${String(S.companyId) === String(c.id)}" data-co="${c.id}" style="--co:${esc(c.color || '#2563eb')}">
-                ${companyLogo(c, 'sm')}
-                <span class="esim-carrier-meta">
-                  <b>${esc(c.name)}</b>
-                  <small>${fmtNum(cPkgs.length)} باقة${hasEsim ? ' · eSIM' : ''}</small>
-                </span>
-              </button>`;
-          }).join('')}
+      ${S.infoTab ? `
+        <div class="pele-main-sec-info open">
+          <button type="button" class="pele-close-main-info" id="close-info-tab" aria-label="إغلاق">${icon('x')}</button>
+          ${renderInfoTabContent(S.infoTab)}
         </div>
       ` : ''}
     </section>
 
-    <!-- Package Cards Grid -->
-    ${shown.length ? `
-      <section class="esim-grid" aria-label="قائمة الباقات">
-        ${shown.map((pk) => renderPlanCard(pk, coMap.get(pk.companyId), maxGb)).join('')}
-      </section>
-    ` : `
-      <div class="card empty">
-        ${icon('sim')}
-        <p>لا توجد باقات مطابقة</p>
-        <button type="button" class="btn ghost btn-sm" id="reset-filters">عرض الكل</button>
+    <!-- 5. Device Compatibility Accordion Section (#sec-compat -> .checkEsim) -->
+    <section id="sec-compat" class="pele-check-esim">
+      <h2 class="h2-1 h2-line">هل ترغب بفحص توافق جهازك مع شريحة eSIM؟</h2>
+
+      <div class="pele-compat-quick">
+        <input id="home-compat-q" class="input" type="search" value="${esc(S.compatSearch)}" placeholder="ابحث بطراز هاتفك (مثال: iPhone 15 أو S24) أو اختر الشركة أدناه..." autocomplete="off">
+        ${compatSearchRes ? `
+          <div class="esim-compat-result is-${compatSearchRes.status}" style="margin-top:10px;text-align:start">
+            <div class="row" style="gap:8px">
+              ${icon(compatSearchRes.status === 'ok' ? 'checkCircle' : 'alert')}
+              <strong>${esc(compatSearchRes.title)}</strong>
+            </div>
+            <p style="margin:4px 0 0;font-size:.86rem">${esc(compatSearchRes.detail)}</p>
+          </div>
+        ` : ''}
       </div>
-    `}
+
+      <div class="pele-div-check">
+        ${Object.entries(COMPAT_DEVICES).map(([brandKey, group]) => {
+          const isOpen = S.openCompatBrand === brandKey;
+          return `
+            <a href="#sec-compat" class="pele-brand-bar ${isOpen ? 'on' : ''}" data-compat-toggle="${brandKey}">
+              <span class="ltr">${esc(group.label)}</span>
+              <i class="pele-brand-arrow">${icon('chevL')}</i>
+            </a>
+            <div class="pele-flex-degem ${isOpen ? 'on' : ''}" dir="ltr">
+              ${group.models.map((m) => `<span>${esc(m)}</span>`).join('')}
+            </div>
+          `;
+        }).join('')}
+      </div>
+
+      <div class="pele-not-found">
+        اطلب الكود <kbd dir="ltr">*#06#</kbd> من هاتفك — إذا ظهر رمز <b>EID</b> فجهازك متوافق مع <a href="#/compat">شريحة eSIM</a>.
+      </div>
+    </section>
+
+    <!-- 6. 24/7 Service Strip (.serv) -->
+    <section class="pele-content-section">
+      <div class="pele-serv">
+        <h2>خدمة ودعم مجاني على مدار الساعة 24/7</h2>
+        <div class="pele-serv-flex">
+          <a href="#/track">
+            <span class="pele-serv-badge">${icon('qr')}</span>
+            <span>فحص حالة الطلب<br>واستلام كود QR</span>
+          </a>
+          <a href="#/guarantee">
+            <span class="pele-serv-badge">${icon('shield')}</span>
+            <span>ضمان المتجر 100%<br>وفحص التوافق <b class="ltr">*#06#</b></span>
+          </a>
+          <a href="${esc(wa || '#/terms')}" ${wa ? 'target="_blank" rel="noopener"' : ''}>
+            <span class="pele-serv-badge">${icon('whatsapp')}</span>
+            <span>خدمة واتساب<br>بالعربية على مدار الساعة<br>${S.data?.supportWhatsapp ? `<b class="ltr">${esc(fmtPhone(S.data.supportWhatsapp))}</b>` : 'تواصل فوري'}</span>
+          </a>
+        </div>
+      </div>
+    </section>
+
+    <!-- 7. Questions and Answers Accordion (.faq) -->
+    <div class="pele-faq">
+      <h2>أسئلة وأجوبة</h2>
+      <div class="pele-faq-inner">
+        ${HOME_FAQ_ITEMS.map((item, idx) => {
+          const isOpen = S.openFaqIdx === idx;
+          return `
+            <div class="pele-faq-question ${isOpen ? 'open' : ''}" role="button" tabindex="0" data-faq-idx="${idx}" is-open="${isOpen ? 'yes' : 'no'}">
+              <span>${esc(item.q)}</span>
+              <i class="pele-faq-arrow">${icon('chevL')}</i>
+            </div>
+            <div class="pele-faq-answer ${isOpen ? 'open' : ''}">
+              <span>${item.a}</span>
+            </div>
+          `;
+        }).join('')}
+      </div>
+    </div>
   `);
 
-  // Bind search & filter events
-  const qInput = document.getElementById('shop-q');
-  if (qInput) {
-    qInput.oninput = (e) => {
-      S.q = e.currentTarget.value;
-      const pos = e.currentTarget.selectionStart;
-      viewCatalog();
-      const next = document.getElementById('shop-q');
-      if (next) { next.focus(); try { next.setSelectionRange(pos, pos); } catch {} }
-    };
-  }
-  const qClear = document.getElementById('shop-q-clear');
-  if (qClear) {
-    qClear.onclick = () => { S.q = ''; viewCatalog(); };
-  }
+  // Bind filter & interactive events
   const resetBtn = document.getElementById('reset-filters');
   if (resetBtn) {
     resetBtn.onclick = () => { S.companyId = 'all'; S.kindFilter = 'all'; S.q = ''; viewCatalog(); };
@@ -1107,111 +1375,119 @@ function viewCatalog() {
   root.querySelectorAll('[data-co]').forEach((b) => {
     b.onclick = () => { S.companyId = b.dataset.co; viewCatalog(); };
   });
+  root.querySelectorAll('[data-pack-info]').forEach((b) => {
+    b.onclick = () => {
+      const pk = packages.find((p) => String(p.id) === String(b.dataset.packInfo));
+      if (pk) openPackDetailsSheet(pk, coMap.get(pk.companyId));
+    };
+  });
+  root.querySelectorAll('[data-itab]').forEach((b) => {
+    b.onclick = (e) => {
+      e.preventDefault();
+      const t = b.dataset.itab;
+      S.infoTab = S.infoTab === t ? '' : t;
+      viewCatalog();
+    };
+  });
+  const closeInfoBtn = document.getElementById('close-info-tab');
+  if (closeInfoBtn) {
+    closeInfoBtn.onclick = () => {
+      S.infoTab = '';
+      viewCatalog();
+    };
+  }
+  root.querySelectorAll('[data-compat-toggle]').forEach((b) => {
+    b.onclick = (e) => {
+      e.preventDefault();
+      const k = b.dataset.compatToggle;
+      S.openCompatBrand = S.openCompatBrand === k ? '' : k;
+      viewCatalog();
+    };
+  });
+  const homeCompatQ = document.getElementById('home-compat-q');
+  if (homeCompatQ) {
+    homeCompatQ.oninput = (e) => {
+      S.compatSearch = e.currentTarget.value;
+      const pos = e.currentTarget.selectionStart;
+      viewCatalog();
+      const next = document.getElementById('home-compat-q');
+      if (next) { next.focus(); try { next.setSelectionRange(pos, pos); } catch {} }
+    };
+  }
+  root.querySelectorAll('[data-faq-idx]').forEach((b) => {
+    b.onclick = () => {
+      const idx = Number(b.dataset.faqIdx);
+      S.openFaqIdx = S.openFaqIdx === idx ? -1 : idx;
+      viewCatalog();
+    };
+  });
 }
 
-function renderPlanCard(pk, co, maxGb) {
-  const coColor = co?.color || '#2563eb';
+function renderPlanCard(pk, co) {
+  const coColor = co?.color || '#1f6ff2';
   const hasEsim = isEsimPkg(pk);
   const featured = isFeaturedPkg(pk);
-  const hasDiscount = Number(pk.oldPrice) > Number(pk.price);
-  const savePct = hasDiscount ? Math.round(((pk.oldPrice - pk.price) / pk.oldPrice) * 100) : 0;
   const gbVal = pkgGb(pk);
-  const gbPct = gbVal > 0 ? Math.min(100, Math.max(14, Math.round((gbVal / maxGb) * 100))) : 100;
-  const daysVal = Number(pk.days) || 0;
-  const perDay = daysVal >= 7 && pk.price > 0 ? (pk.price / daysVal).toFixed(1) : null;
+  const daysVal = Number(pk.days) || 30;
+
+  // Main headline inside .pack_top (e.g. 500GB / 200GB / 100GB)
+  let mainCap = gbVal > 0 ? `${fmtNum(gbVal)}GB` : '';
+  if (!mainCap) {
+    const m = String(pk.name || '').match(/(\d+)\s*(?:GB|جيجا|غيغا)/i);
+    mainCap = m ? `${m[1]}GB` : pk.name;
+  }
 
   const callsLabel = pk.minutes
-    ? `${fmtNum(pk.minutes)} دقيقة${pk.sms ? ` · ${fmtNum(pk.sms)} رسالة` : ''}`
-    : pk.tag || 'إنترنت ومكالمات';
+    ? `${fmtNum(pk.minutes)} دقيقة و ${pk.sms ? `${fmtNum(pk.sms)} رسالة` : 'رسائل شاملة'}`
+    : pk.tag || '3000 دقيقة و 1500 رسالة';
 
   const qrFee = Number(pk.esimFee ?? co?.esimFee ?? S.data?.esimFee ?? 0);
-  const qrFeeText = hasEsim
-    ? (qrFee > 0 ? `+ ${fmtMoney(qrFee)} رسوم QR` : 'شامل كود QR مجاناً')
-    : 'شحن مباشر للرقم';
-  const hasTwoBtns = pk.kind === 'card' && hasEsim;
+  const qrFeeLine = hasEsim
+    ? (qrFee > 0 ? `+ ${fmtMoney(qrFee)} لإصدار شريحة eSIM QR` : 'شامل كود eSIM QR مجاناً')
+    : (pk.description || 'تفعيل وشحن فوري للخط');
 
   return `
-    <article class="esim-card ${featured ? 'is-featured' : ''} ${hasEsim ? 'has-esim' : ''}" style="--co:${esc(coColor)}">
-      <div class="esim-card-head">
-        <div class="esim-card-carrier">
-          ${companyLogo(co || { name: pk.companyName }, 'sm')}
-          <div class="esim-card-titles">
-            <span class="esim-carrier-label">${esc(co?.name || pk.companyName || '')}</span>
-            <h3 class="esim-plan-title">${esc(pk.name)}</h3>
-          </div>
-        </div>
-        <div class="esim-card-emblem" title="${hasEsim ? 'شريحة eSIM' : 'شحن فوري'}">
-          ${hasEsim ? `
-            ${esimChipSvg('esim-chip-svg')}
-            <span class="esim-chip-tag">eSIM QR</span>
-          ` : `
-            ${simCardSvg('esim-sim-svg')}
-            <span class="esim-sim-tag">${pk.kind === 'card' ? 'شحن' : 'خط'}</span>
-          `}
+    <div class="pele-pack-card ${featured ? 'is-featured' : ''}" style="--co:${esc(coColor)}">
+      <div class="pele-superlative">
+        <div>
+          <span>${fmtNum(daysVal)}</span>
+          <span>يوماً</span>
         </div>
       </div>
 
-      ${featured || hasDiscount || pk.tag ? `
-        <div class="esim-card-flags">
-          ${featured ? `<span class="esim-flag featured">${icon('checkCircle')}<span>مميزة</span></span>` : ''}
-          ${hasDiscount ? `<span class="esim-flag discount">خصم ${savePct}%</span>` : ''}
-          ${pk.tag && !featured ? `<span class="esim-flag featured">${esc(pk.tag)}</span>` : ''}
-        </div>
-      ` : ''}
-
-      <div class="esim-data-banner">
-        <div class="esim-data-main">
-          <div class="esim-data-col">
-            <small>${icon('data')}<span>الإنترنت</span></small>
-            <strong class="ltr">${gbVal > 0 ? `${fmtNum(gbVal)} GB` : 'مفتوح'}</strong>
-          </div>
-          <div class="esim-data-sep" aria-hidden="true"></div>
-          <div class="esim-data-col end">
-            <small>${icon('clock')}<span>الصلاحية</span></small>
-            <strong>${daysVal > 0 ? `${fmtNum(daysVal)} يوم` : 'شهرية'}</strong>
-          </div>
-        </div>
-        ${gbVal > 0 ? `<div class="esim-gb-meter" aria-hidden="true"><span style="width:${gbPct}%"></span></div>` : ''}
+      <div class="pele-best-offer">
+        <span class="pele-5g-pill" dir="ltr"><i>e</i>SIM <b>5G</b></span>
       </div>
 
-      <div class="esim-spec-box">
-        <div class="esim-spec-row">
-          <span class="esim-spec-k">${icon('call')}<span>المكالمات</span></span>
-          <strong class="esim-spec-v">${esc(callsLabel)}</strong>
-        </div>
-
-        <div class="esim-spec-row ${hasEsim ? 'esim-qr-row' : ''}">
-          <span class="esim-spec-k">${icon(hasEsim ? 'qr' : 'refresh')}<span>${hasEsim ? 'شريحة eSIM' : 'التفعيل'}</span></span>
-          <strong class="esim-spec-v">${esc(qrFeeText)}</strong>
-        </div>
+      <div class="pele-pack-top" dir="ltr">
+        <div class="pele-pack-name"><span>${esc(mainCap)}</span></div>
+        <div class="pele-pack-price">${fmtNum(pk.price)}<span>₪</span></div>
       </div>
 
-      ${pk.description ? `<p class="esim-plan-desc">${esc(pk.description)}</p>` : ''}
-
-      <div class="esim-card-foot">
-        <div class="esim-price-row">
-          <div class="esim-price-block">
-            <span class="esim-price-label">السعر</span>
-            ${perDay ? `<small class="esim-daily-hint">≈ ${perDay} ₪ / يوم</small>` : ''}
-          </div>
-          <div class="esim-price-val">
-            ${hasDiscount ? `<s>${fmtMoney(pk.oldPrice)}</s>` : ''}
-            <b>${fmtMoney(pk.price)}</b>
-          </div>
-        </div>
-
-        <div class="esim-card-btns ${hasTwoBtns ? 'has-two' : 'has-one'}">
-          ${hasTwoBtns ? `
-            <a href="#/buy/${pk.id}" class="btn ghost">${icon('refresh')}<span>شحن رقمي</span></a>
-            <a href="#/buy/${pk.id}?esim=1" class="btn primary">${icon('qr')}<span>شراء eSIM</span></a>
-          ` : hasEsim ? `
-            <a href="#/buy/${pk.id}?esim=1" class="btn primary">${icon('qr')}<span>شراء eSIM</span></a>
-          ` : `
-            <a href="#/buy/${pk.id}" class="btn primary">${icon('arrowL')}<span>شراء الباقة</span></a>
-          `}
-        </div>
+      <div class="pele-pack-carrier">
+        ${companyLogo(co || { name: pk.companyName }, 'sm')}
+        <span>${esc(co?.name || pk.companyName || '')} · ${esc(pk.name)}</span>
       </div>
-    </article>
+
+      <div class="pele-new-txt">استخدام حر للتطبيقات المختارة</div>
+
+      ${renderAppsStripSvg()}
+
+      <div class="pele-new-txt2">
+        ${esc(callsLabel)}<br>
+        <span>${esc(qrFeeLine)}</span>
+      </div>
+
+      <a class="pele-btn-b order-b" href="#/buy/${pk.id}${hasEsim ? '?esim=1' : ''}">
+        ${hasEsim ? 'شراء شريحة eSIM' : 'شراء الآن'}
+      </a>
+      <a class="pele-btn-b order-c" href="#/buy/${pk.id}">
+        شحن رصيد لخطك
+      </a>
+      <button type="button" class="pele-lnk-inc" data-pack-info="${esc(String(pk.id))}">
+        تفاصيل إضافية
+      </button>
+    </div>
   `;
 }
 

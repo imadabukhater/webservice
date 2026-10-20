@@ -1012,6 +1012,871 @@ body.shop { background: var(--bg); min-height: 100dvh; display: flex; flex-direc
 .shop-footer-link.active svg { color: var(--primary); }
 
 /* ============================================================================
+   Pelephone Israeli-eSIM Style Layout (Preserving Our Brand Colors & Fonts)
+   ============================================================================ */
+
+/* 1. Hero Banner (.pele-hero-slider / .pele-top-banner / .pele-flex-bnr) */
+.pele-hero-slider {
+  position: relative;
+  border-radius: 26px;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 18% 22%, rgba(56, 189, 248, .22), transparent 45%),
+    radial-gradient(circle at 85% 80%, rgba(31, 111, 242, .32), transparent 50%),
+    linear-gradient(135deg, #071329 0%, #0d2147 52%, #153e82 100%);
+  color: #fff;
+  box-shadow: 0 18px 40px -16px rgba(7, 19, 41, .45);
+}
+.pele-hero-overlay {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 28px;
+  padding: clamp(26px, 4.5vw, 48px) clamp(20px, 4vw, 44px) clamp(38px, 5vw, 56px);
+}
+.pele-top-banner {
+  flex: 1 1 540px;
+  min-width: 0;
+}
+.pele-banner-logo {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 14px 6px 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, .09);
+  border: 1px solid rgba(255, 255, 255, .16);
+  backdrop-filter: blur(8px);
+}
+.pele-banner-mark {
+  width: 30px;
+  height: 30px;
+  display: inline-grid;
+  place-items: center;
+}
+.pele-banner-mark .hsim-logo-svg { width: 28px; height: 28px; }
+.pele-banner-logo .hsim-wordmark-main { color: #fff; font-size: 1.02rem; }
+.pele-top-banner h1 {
+  margin: 16px 0 24px;
+  font: 800 clamp(1.55rem, 3.3vw, 2.45rem)/1.22 var(--f-ui);
+  color: #fff;
+  letter-spacing: -.01em;
+}
+.pele-flex-bnr {
+  display: flex;
+  align-items: stretch;
+  flex-wrap: wrap;
+  gap: 0;
+}
+.pele-bnr-col {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+  padding-inline-end: 24px;
+  margin-inline-end: 24px;
+  border-inline-end: 1px solid rgba(255, 255, 255, .24);
+  max-width: 195px;
+}
+.pele-bnr-col:last-child {
+  border-inline-end: 0;
+  padding-inline-end: 0;
+  margin-inline-end: 0;
+}
+.pele-bnr-ic {
+  width: 42px;
+  height: 42px;
+  border-radius: 12px;
+  background: rgba(56, 189, 248, .16);
+  border: 1px solid rgba(56, 189, 248, .35);
+  color: #38bdf8;
+  display: grid;
+  place-items: center;
+}
+.pele-bnr-ic svg { width: 22px; height: 22px; }
+.pele-bnr-col b {
+  font: 700 .95rem/1.38 var(--f-ui);
+  color: #fff;
+}
+
+/* Visual eSIM Card Art in Banner */
+.pele-hero-illustration {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.pele-sim-card-art {
+  width: 260px;
+  padding: 20px;
+  border-radius: 22px;
+  background: linear-gradient(145deg, rgba(255, 255, 255, .15), rgba(255, 255, 255, .05));
+  border: 1.5px solid rgba(56, 189, 248, .42);
+  box-shadow: 0 20px 40px rgba(0, 0, 0, .28), inset 0 1px 0 rgba(255, 255, 255, .25);
+  backdrop-filter: blur(12px);
+  transform: rotate(-4deg);
+  display: grid;
+  gap: 18px;
+}
+.pele-sim-art-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.pele-sim-art-top span {
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(56, 189, 248, .2);
+  color: #7dd3fc;
+  font: 800 .78rem var(--f-brand);
+}
+.pele-sim-art-top .esim-chip-svg.lg { width: 46px; height: 36px; }
+.pele-sim-art-mid {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.pele-sim-art-mid .hsim-logo-svg { width: 42px; height: 42px; flex: none; }
+.pele-sim-art-mid strong {
+  display: block;
+  font: 800 1.15rem/1.1 var(--f-brand);
+  color: #fff;
+}
+.pele-sim-art-mid small {
+  display: block;
+  font: 600 .78rem var(--f-body);
+  color: #cbd5e1;
+  margin-top: 3px;
+}
+
+/* 2. Sticky Sub-Navigation Bar (.pele-adv-wrap / .pele-adv-feature) */
+.pele-adv-wrap {
+  position: sticky;
+  top: 62px;
+  z-index: 19;
+  margin: -26px auto 6px;
+  width: min(100% - 24px, 1060px);
+}
+.pele-adv-feature {
+  display: flex;
+  align-items: stretch;
+  justify-content: space-between;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  min-height: 58px;
+  overflow: hidden;
+  box-shadow: 0 10px 26px -8px rgba(8, 17, 36, .14);
+}
+.pele-adv-link {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-inline-end: 1px solid var(--line);
+}
+.pele-adv-link a {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  padding: 0 14px;
+  color: var(--ink);
+  font: 700 .94rem var(--f-ui);
+  text-decoration: none;
+  transition: background .15s ease, color .15s ease;
+  text-align: center;
+}
+.pele-adv-link a:hover {
+  background: var(--primary-soft);
+  color: var(--primary);
+}
+.pele-btn-special-adv {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #0b1c3d 0%, var(--primary) 100%);
+  padding: 0 24px;
+  flex-shrink: 0;
+}
+.pele-btn-special-adv a {
+  color: #fff;
+  font: 700 .94rem var(--f-ui);
+  text-decoration: none;
+  white-space: nowrap;
+}
+.pele-btn-special-adv:hover {
+  filter: brightness(1.08);
+}
+
+/* 3. Content Sections & Filter Bar */
+.pele-content-section {
+  scroll-margin-top: 130px;
+}
+.pele-filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+.pele-co-pills {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px;
+}
+.pele-co-pill {
+  min-height: 36px;
+  padding: 0 14px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--ink-2);
+  font: 700 .82rem var(--f-ui);
+  cursor: pointer;
+  transition: all .15s ease;
+}
+.pele-co-pill:hover { border-color: var(--primary); color: var(--primary); }
+.pele-co-pill[aria-pressed="true"] {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #fff;
+}
+
+/* 4. Pelephone-Style Package Cards (.pele-packs / .pele-pack-card) */
+.pele-packs {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 28px;
+  padding: 24px 4px 12px;
+}
+.pele-pack-card {
+  width: 325px;
+  max-width: 100%;
+  background: var(--surface);
+  border-radius: 26px;
+  border: 1.5px solid var(--line);
+  box-shadow: 0 8px 26px rgba(8, 17, 36, .09);
+  padding: 22px 20px 20px;
+  position: relative;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  transition: transform .2s ease, box-shadow .2s ease, border-color .2s ease;
+}
+.pele-pack-card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 16px 34px -10px rgba(8, 17, 36, .16);
+}
+.pele-pack-card.is-featured {
+  border-color: var(--primary);
+  box-shadow: 0 14px 34px -8px color-mix(in srgb, var(--primary) 26%, rgba(8, 17, 36, .14));
+}
+
+/* Floating Circular Corner Duration Badge (.pele-superlative) */
+.pele-superlative {
+  position: absolute;
+  top: -16px;
+  inset-inline-end: -10px;
+  width: 66px;
+  height: 66px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--primary) 0%, #0d2f6e 100%);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 3px solid var(--surface);
+  box-shadow: 0 8px 18px rgba(31, 111, 242, .34);
+  z-index: 2;
+}
+.pele-superlative > div {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  line-height: 1.05;
+}
+.pele-superlative span:first-child {
+  font: 800 1.22rem/1 var(--f-mono);
+}
+.pele-superlative span:last-child {
+  font: 700 .7rem/1.1 var(--f-ui);
+}
+
+/* Top-Left eSIM 5G Offer Badge (.pele-best-offer) */
+.pele-best-offer {
+  align-self: flex-start;
+  margin-bottom: 4px;
+}
+.pele-5g-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: var(--primary-soft);
+  color: var(--primary);
+  font: 800 .8rem/1.2 var(--f-brand);
+}
+.pele-5g-pill i {
+  font-style: italic;
+  color: #0284c7;
+}
+.pele-5g-pill b {
+  background: var(--primary);
+  color: #fff;
+  padding: 1px 5px;
+  border-radius: 5px;
+  font-size: .68rem;
+  margin-left: 3px;
+}
+
+/* Split Capacity | Price Header (.pele-pack-top) */
+.pele-pack-top {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  margin: 8px 0 10px;
+  direction: ltr;
+}
+.pele-pack-name {
+  font: 800 2.45rem/1 var(--f-mono);
+  color: var(--ink);
+  letter-spacing: -.03em;
+  padding-right: 14px;
+}
+.pele-pack-price {
+  font: 800 2.2rem/1 var(--f-mono);
+  color: var(--primary);
+  border-left: 3px solid var(--primary);
+  padding-left: 14px;
+  display: inline-flex;
+  align-items: baseline;
+}
+.pele-pack-price span {
+  font-size: 1.2rem;
+  font-weight: 700;
+  margin-left: 2px;
+}
+
+/* Carrier + Package Subtitle */
+.pele-pack-carrier {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 4px 12px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--ink-2);
+  font: 700 .82rem var(--f-ui);
+  margin-bottom: 10px;
+  max-width: 100%;
+}
+.pele-pack-carrier span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Included Apps Strip (.pele-new-txt & .pele-all-apps) */
+.pele-new-txt {
+  font: 700 .9rem/1.35 var(--f-ui);
+  color: var(--ink);
+  margin: 2px 0 8px;
+}
+.pele-all-apps {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin: 2px 0 14px;
+  width: 100%;
+}
+.pele-app-badge {
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  color: var(--primary);
+  display: grid;
+  place-items: center;
+}
+.pele-app-badge svg {
+  width: 18px;
+  height: 18px;
+}
+
+/* Calls/SMS + eSIM Fee Text (.pele-new-txt2) */
+.pele-new-txt2 {
+  font: 700 .94rem/1.45 var(--f-body);
+  color: var(--ink);
+  margin-bottom: 16px;
+  min-height: 44px;
+}
+.pele-new-txt2 span {
+  display: block;
+  font: 600 .8rem/1.4 var(--f-body);
+  color: var(--muted);
+  margin-top: 3px;
+}
+
+/* Stacked Pill CTA Buttons (.pele-btn-b.order-b & .order-c) */
+.pele-btn-b {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 220px;
+  max-width: 100%;
+  height: 42px;
+  border-radius: 999px;
+  font: 700 .92rem var(--f-ui);
+  text-decoration: none;
+  transition: all .18s ease;
+  margin: 0 auto 10px;
+}
+.pele-btn-b.order-b {
+  background: linear-gradient(135deg, var(--primary) 0%, #1557c0 100%);
+  color: #fff;
+  box-shadow: 0 8px 18px -6px color-mix(in srgb, var(--primary) 65%, transparent);
+}
+.pele-btn-b.order-b:hover {
+  transform: translateY(-1px);
+  filter: brightness(1.06);
+}
+.pele-btn-b.order-c {
+  background: transparent;
+  color: var(--primary);
+  border: 2px solid var(--primary);
+}
+.pele-btn-b.order-c:hover {
+  background: var(--primary-soft);
+}
+.pele-lnk-inc {
+  background: none;
+  border: 0;
+  padding: 4px 8px;
+  margin-top: 2px;
+  color: var(--ink-2);
+  font: 700 .84rem var(--f-ui);
+  text-decoration: underline;
+  cursor: pointer;
+}
+.pele-lnk-inc:hover {
+  color: var(--primary);
+}
+
+/* 5. "Everything You Need to Know" Interactive Icon Tabs (.pele-imp-info) */
+.pele-imp-info {
+  background: linear-gradient(135deg, #08152f 0%, #0f2856 55%, #194691 100%);
+  border-radius: 24px;
+  padding: 36px 24px;
+  color: #fff;
+  text-align: center;
+  box-shadow: 0 14px 32px rgba(7, 19, 41, .18);
+}
+.pele-main-sec h2 {
+  margin: 0 0 28px;
+  font: 800 clamp(1.3rem, 2.5vw, 1.85rem)/1.3 var(--f-ui);
+  color: #fff;
+}
+.pele-icns {
+  display: flex;
+  justify-content: space-around;
+  align-items: flex-start;
+  gap: 16px;
+  max-width: 780px;
+  margin: 0 auto;
+  flex-wrap: wrap;
+}
+.pele-icn-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  color: rgba(255, 255, 255, .88);
+  text-decoration: none;
+  cursor: pointer;
+  padding: 12px 18px;
+  border-radius: 18px;
+  transition: all .2s ease;
+  min-width: 160px;
+}
+.pele-icn-svg {
+  width: 68px;
+  height: 68px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, .1);
+  border: 2px solid rgba(56, 189, 248, .38);
+  display: grid;
+  place-items: center;
+  color: #38bdf8;
+  transition: all .2s ease;
+}
+.pele-icn-svg svg { width: 30px; height: 30px; }
+.pele-icn-item span:last-child {
+  font: 700 .96rem var(--f-ui);
+}
+.pele-icn-item:hover,
+.pele-icn-item.active {
+  background: rgba(255, 255, 255, .1);
+  color: #fff;
+  transform: translateY(-2px);
+}
+.pele-icn-item.active .pele-icn-svg {
+  background: #38bdf8;
+  color: #071329;
+  border-color: #fff;
+  box-shadow: 0 0 22px rgba(56, 189, 248, .55);
+}
+.pele-main-sec-info {
+  background: var(--surface);
+  border: 1.5px solid color-mix(in srgb, var(--primary) 30%, var(--line));
+  border-radius: 22px;
+  margin-top: 14px;
+  padding: 28px 26px;
+  position: relative;
+  box-shadow: var(--shadow);
+}
+.pele-close-main-info {
+  position: absolute;
+  top: 16px;
+  inset-inline-end: 16px;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: 1px solid var(--line);
+  background: var(--surface-2);
+  color: var(--ink-2);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+.pele-close-main-info:hover {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+.pele-close-main-info svg { width: 18px; height: 18px; }
+.pele-txt3 {
+  font: 800 1.12rem var(--f-ui);
+  color: var(--primary);
+  margin-bottom: 8px;
+}
+.pele-dtls p {
+  margin: 0 0 10px;
+  font-size: .95rem;
+  line-height: 1.75;
+  color: var(--ink-2);
+}
+.pele-dtls a {
+  color: var(--primary);
+  font-weight: 700;
+  text-decoration: underline;
+}
+.pele-info-highlight {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  border-radius: 14px;
+  background: var(--primary-soft);
+  color: var(--ink);
+  margin-top: 12px;
+}
+.pele-info-highlight svg {
+  width: 24px;
+  height: 24px;
+  color: var(--primary);
+  flex: none;
+}
+
+/* 6. Device Compatibility Accordion (.pele-check-esim / .pele-div-check) */
+.pele-check-esim {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 24px;
+  padding: 36px 24px;
+  text-align: center;
+  box-shadow: var(--shadow-sm);
+  scroll-margin-top: 130px;
+}
+.pele-check-esim .h2-1 {
+  font: 800 clamp(1.25rem, 2.4vw, 1.75rem)/1.3 var(--f-ui);
+  color: var(--ink);
+  margin: 0 0 18px;
+}
+.pele-compat-quick {
+  max-width: 560px;
+  margin: 0 auto 20px;
+}
+.pele-div-check {
+  max-width: 820px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.pele-brand-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 54px;
+  padding: 0 22px;
+  border-radius: 14px;
+  background: linear-gradient(135deg, #0b1c3d 0%, #153878 100%);
+  color: #fff;
+  font: 700 1.02rem var(--f-brand);
+  text-decoration: none;
+  transition: all .18s ease;
+}
+.pele-brand-bar:hover,
+.pele-brand-bar.on {
+  background: linear-gradient(135deg, var(--primary) 0%, #0d2f6e 100%);
+}
+.pele-brand-arrow {
+  display: inline-grid;
+  place-items: center;
+  transition: transform .2s ease;
+}
+.pele-brand-arrow svg { width: 20px; height: 20px; }
+.pele-brand-bar.on .pele-brand-arrow {
+  transform: rotate(-90deg);
+}
+.pele-flex-degem {
+  display: none;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 16px;
+  border-radius: 14px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  text-align: left;
+}
+.pele-flex-degem.on {
+  display: flex;
+}
+.pele-flex-degem span {
+  padding: 7px 12px;
+  border-radius: 9px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  font: 600 .84rem var(--f-brand);
+  color: var(--ink);
+}
+.pele-not-found {
+  margin-top: 20px;
+  font-size: .95rem;
+  color: var(--ink-2);
+}
+.pele-not-found a {
+  color: var(--primary);
+  font-weight: 700;
+  text-decoration: underline;
+}
+
+/* 7. 24/7 Service Strip (.pele-serv / .pele-serv-flex) */
+.pele-serv {
+  text-align: center;
+  padding: 20px 16px;
+}
+.pele-serv h2 {
+  font: 800 clamp(1.3rem, 2.4vw, 1.8rem)/1.3 var(--f-ui);
+  color: var(--ink);
+  margin: 0 0 28px;
+}
+.pele-serv-flex {
+  display: flex;
+  justify-content: space-around;
+  align-items: flex-start;
+  gap: 24px;
+  max-width: 860px;
+  margin: 0 auto;
+  flex-wrap: wrap;
+}
+.pele-serv-flex a {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  text-decoration: none;
+  color: var(--ink);
+  font: 700 .96rem/1.45 var(--f-ui);
+  min-width: 200px;
+  transition: transform .18s ease, color .18s ease;
+}
+.pele-serv-flex a:hover {
+  transform: translateY(-3px);
+  color: var(--primary);
+}
+.pele-serv-badge {
+  width: 76px;
+  height: 76px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--primary-soft), color-mix(in srgb, var(--primary) 18%, var(--surface)));
+  border: 2px solid color-mix(in srgb, var(--primary) 35%, transparent);
+  color: var(--primary);
+  display: grid;
+  place-items: center;
+  box-shadow: 0 10px 24px -10px color-mix(in srgb, var(--primary) 50%, transparent);
+}
+.pele-serv-badge svg { width: 34px; height: 34px; }
+
+/* 8. Questions & Answers Accordion (.pele-faq) */
+.pele-faq {
+  border-top: 8px solid var(--surface-3);
+  border-bottom: 8px solid var(--surface-3);
+  padding: 36px 0;
+  margin-top: 4px;
+}
+.pele-faq h2 {
+  font: 800 clamp(1.35rem, 2.4vw, 1.85rem)/1.3 var(--f-ui);
+  color: var(--ink);
+  margin: 0 auto 18px;
+  max-width: 900px;
+  padding: 0 16px;
+}
+.pele-faq-inner {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 0 16px;
+}
+.pele-faq-question {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 18px 8px;
+  border-bottom: 1px solid var(--line);
+  font: 700 1.02rem/1.4 var(--f-ui);
+  color: var(--ink);
+  cursor: pointer;
+  transition: color .15s ease;
+}
+.pele-faq-question:hover,
+.pele-faq-question.open {
+  color: var(--primary);
+}
+.pele-faq-arrow {
+  display: inline-grid;
+  place-items: center;
+  transition: transform .2s ease;
+  color: var(--primary);
+  flex: none;
+}
+.pele-faq-arrow svg { width: 19px; height: 19px; }
+.pele-faq-question.open .pele-faq-arrow {
+  transform: rotate(-90deg);
+}
+.pele-faq-answer {
+  display: none;
+  padding: 14px 14px 18px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-2);
+  border-radius: 0 0 12px 12px;
+  font-size: .94rem;
+  line-height: 1.75;
+  color: var(--ink-2);
+}
+.pele-faq-answer.open {
+  display: block;
+}
+.pele-faq-answer a {
+  color: var(--primary);
+  font-weight: 700;
+  text-decoration: underline;
+}
+
+/* 9. Multi-Column Pelephone-Style Footer (.pele-footer) */
+.pele-footer {
+  background: #071329;
+  color: #e2e8f0;
+  padding: 42px 20px;
+  margin-top: auto;
+  border-top: 1px solid rgba(255, 255, 255, .08);
+}
+.pele-footer .hsim-wordmark-main { color: #fff; }
+.pele-footer .muted { color: #94a3b8 !important; }
+.pele-footer-wrap {
+  max-width: 1140px;
+  margin: 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 32px;
+}
+.pele-right-foot {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  min-width: 240px;
+}
+.pele-foot-net {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.pele-net-ic {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, .08);
+  border: 1px solid rgba(255, 255, 255, .14);
+  color: #38bdf8;
+  display: grid;
+  place-items: center;
+  text-decoration: none;
+  cursor: pointer;
+  transition: all .18s ease;
+}
+.pele-net-ic:hover {
+  background: var(--primary);
+  color: #fff;
+  border-color: var(--primary);
+  transform: translateY(-2px);
+}
+.pele-net-ic svg { width: 18px; height: 18px; }
+.pele-left-foot {
+  flex: 1;
+  min-width: 280px;
+}
+.pele-lnks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 48px;
+  justify-content: flex-start;
+}
+.pele-lnks > div {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 180px;
+}
+.pele-lnks .ttl {
+  font: 700 .96rem var(--f-ui);
+  color: #fff;
+  margin: 0 0 6px;
+}
+.pele-lnks a {
+  color: #cbd5e1;
+  font-size: .88rem;
+  text-decoration: none;
+  transition: color .15s;
+}
+.pele-lnks a:hover,
+.pele-lnks a.active {
+  color: #38bdf8;
+  text-decoration: underline;
+}
+
+/* ============================================================================
    Mobile Phone Ergonomics & Responsive Refinements (<= 760px & <= 480px)
    ============================================================================ */
 @media (max-width: 760px) {
@@ -1022,7 +1887,82 @@ body.shop { background: var(--bg); min-height: 100dvh; display: flex; flex-direc
   .shop-brand-text strong { font-size: .96rem; }
   .shop-brand-text small { font-size: .7rem; max-width: 210px; }
   .shop-main { padding: 14px 12px 36px; gap: 14px; }
-  .shop-footer { padding: 20px 12px calc(82px + env(safe-area-inset-bottom, 0px)); }
+  .shop-footer,
+  .pele-footer { padding: 28px 14px calc(86px + env(safe-area-inset-bottom, 0px)); }
+
+  /* Pelephone-Style Hero & Sticky Bar on Tablet/Mobile */
+  .pele-hero-overlay {
+    flex-direction: column;
+    align-items: flex-start;
+    padding: 24px 18px 34px;
+    gap: 20px;
+  }
+  .pele-top-banner { flex: none; width: 100%; }
+  .pele-hero-illustration { display: none; }
+  .pele-flex-bnr {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 10px;
+    width: 100%;
+  }
+  .pele-bnr-col {
+    padding-inline-end: 10px;
+    margin-inline-end: 0;
+    max-width: none;
+  }
+  .pele-bnr-col b { font-size: .82rem; }
+  .pele-adv-wrap {
+    top: 56px;
+    width: 100%;
+    margin-top: -18px;
+  }
+  .pele-adv-feature {
+    min-height: 48px;
+    border-radius: 14px;
+  }
+  .pele-adv-link a {
+    padding: 0 8px;
+    font-size: .78rem;
+  }
+  .pele-btn-special-adv {
+    padding: 0 12px;
+  }
+  .pele-btn-special-adv a {
+    font-size: .78rem;
+  }
+  .pele-packs {
+    gap: 24px;
+    padding-top: 18px;
+  }
+  .pele-pack-card {
+    width: min(100%, 340px);
+  }
+  .pele-imp-info,
+  .pele-check-esim {
+    padding: 26px 16px;
+    border-radius: 20px;
+  }
+  .pele-icn-item {
+    min-width: 100px;
+    flex: 1 1 95px;
+    padding: 8px 6px;
+  }
+  .pele-icn-svg {
+    width: 56px;
+    height: 56px;
+  }
+  .pele-icn-svg svg { width: 24px; height: 24px; }
+  .pele-icn-item span:last-child { font-size: .82rem; }
+  .pele-serv-flex a {
+    min-width: 140px;
+    flex: 1 1 130px;
+    font-size: .86rem;
+  }
+  .pele-serv-badge {
+    width: 62px;
+    height: 62px;
+  }
+  .pele-serv-badge svg { width: 28px; height: 28px; }
 
   /* Prevent iOS Safari auto-zoom when focusing inputs */
   .esim-search-box input,
