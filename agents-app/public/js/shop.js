@@ -113,7 +113,7 @@ function applyTheme(t) {
   localStorage.setItem('agents.theme', t);
   localStorage.setItem('theme', t);
   const meta = document.querySelector('meta[name="theme-color"]');
-  if (meta) meta.content = t === 'dark' ? '#09111f' : '#0f172a';
+  if (meta) meta.content = t === 'dark' ? '#12100e' : '#1c1917';
 }
 applyTheme(getTheme());
 
@@ -137,9 +137,9 @@ function brandLogoSvg(cls = 'hsim-logo-svg') {
   return `<svg class="${cls}" viewBox="0 0 44 44" fill="none" aria-hidden="true">
     <defs>
       <linearGradient id="hSimFrame${id}" x1="4" y1="2" x2="40" y2="42" gradientUnits="userSpaceOnUse">
-        <stop offset="0%" stop-color="#38bdf8"/>
-        <stop offset="55%" stop-color="#0ea5e9"/>
-        <stop offset="100%" stop-color="#2563eb"/>
+        <stop offset="0%" stop-color="#fb7185"/>
+        <stop offset="55%" stop-color="#e11d48"/>
+        <stop offset="100%" stop-color="#9f1239"/>
       </linearGradient>
       <linearGradient id="hSimGold${id}" x1="10" y1="10" x2="34" y2="34" gradientUnits="userSpaceOnUse">
         <stop offset="0%" stop-color="#fef08a"/>
@@ -149,9 +149,9 @@ function brandLogoSvg(cls = 'hsim-logo-svg') {
     </defs>
     <!-- Outer SIM Card Body with 45-degree Chamfered Top-Right Corner -->
     <path d="M11 3.5H26.5L36.5 13.5V35.5A5 5 0 0 1 31.5 40.5H11A5 5 0 0 1 6 35.5V8.5A5 5 0 0 1 11 3.5Z"
-          fill="#071124" fill-opacity=".85" stroke="url(#hSimFrame${id})" stroke-width="2.2" stroke-linejoin="round"/>
+          fill="#1c1917" fill-opacity=".92" stroke="url(#hSimFrame${id})" stroke-width="2.2" stroke-linejoin="round"/>
     <!-- Chamfered SIM Corner Trace -->
-    <path d="M25.8 4V11.8A2.2 2.2 0 0 0 28 14H35.8" stroke="#7dd3fc" stroke-width="1.3" stroke-opacity=".55" stroke-linecap="round"/>
+    <path d="M25.8 4V11.8A2.2 2.2 0 0 0 28 14H35.8" stroke="#fda4af" stroke-width="1.3" stroke-opacity=".55" stroke-linecap="round"/>
     <!-- Bold Letter 'H' Formed as the Metallic SIM Chip Contact Pad -->
     <g fill="url(#hSimGold${id})">
       <rect x="11.5" y="12.5" width="5.6" height="19.5" rx="1.8"/>
@@ -162,9 +162,9 @@ function brandLogoSvg(cls = 'hsim-logo-svg') {
     <g stroke="#78350f" stroke-width="1.15" stroke-opacity=".6" stroke-linecap="round">
       <path d="M12 17.6h4.6M12 26.8h4.6M24.1 17.6h5.9M24.1 26.8h5.9"/>
     </g>
-    <!-- Glowing eSIM Core Node in the Center of the H -->
-    <circle cx="21" cy="22.25" r="1.7" fill="#071124"/>
-    <circle cx="21" cy="22.25" r=".95" fill="#38bdf8"/>
+    <!-- Warm eSIM Core Node in the Center of the H -->
+    <circle cx="21" cy="22.25" r="1.7" fill="#1c1917"/>
+    <circle cx="21" cy="22.25" r=".95" fill="#f43f5e"/>
   </svg>`;
 }
 
