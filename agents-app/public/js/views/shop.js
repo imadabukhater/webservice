@@ -50,7 +50,7 @@ function keyRow(k) {
 
 function setupNote() {
   const s = V.settings;
-  const missing = [!s.shopEnabled && 'المتجر مغلق', !s.jawwalpayNumber && 'رقم محفظة جوال باي', !s.gmailConfigured && 'ربط Gmail'].filter(Boolean);
+  const missing = [!s.shopEnabled && 'المتجر مغلق', !(s.jawwalpayNumber || s.palpayNumber) && 'رقم المحفظة (جوال باي / بال باي)', !s.gmailConfigured && 'ربط Gmail'].filter(Boolean);
   if (!missing.length) return '';
   return `<div class="msg warn">${icon('info')}<span>لإكمال الإعداد: ${missing.join('، ')}. <button class="btn btn-sm btn-soft" data-action="settings">${icon('sliders')}الإعدادات</button></span></div>`;
 }
@@ -76,7 +76,9 @@ function openSettings() {
       <div class="row2"><div class="field"><label for="st-title">عنوان المتجر الترحيبي <span class="opt">(اختياري)</span></label><input class="input" id="st-title" name="shopTitle" value="${esc(s.shopTitle || '')}" placeholder="فعّل خطك أو شريحتك الإلكترونية eSIM فوراً"></div>
         <div class="field"><label for="st-sub">وصف المتجر الفرعي <span class="opt">(اختياري)</span></label><input class="input" id="st-sub" name="shopSubtitle" value="${esc(s.shopSubtitle || '')}" placeholder="أفضل الباقات المحلية والـ eSIM بأسعار شفافة وتفعيل فوري"></div></div>
       <div class="row2"><div class="field"><label for="st-jp">رقم محفظة جوال باي</label><input class="input ltr" id="st-jp" name="jawwalpayNumber" value="${esc(s.jawwalpayNumber)}" inputmode="tel"></div>
-        <div class="field"><label for="st-jpn">اسم صاحب المحفظة</label><input class="input" id="st-jpn" name="jawwalpayName" value="${esc(s.jawwalpayName)}"></div></div>
+        <div class="field"><label for="st-jpn">اسم صاحب محفظة جوال باي</label><input class="input" id="st-jpn" name="jawwalpayName" value="${esc(s.jawwalpayName)}"></div></div>
+      <div class="row2"><div class="field"><label for="st-pp">رقم بال باي / الدفع لصديق <span class="opt">(اتركه فارغاً إن كان نفس رقم جوال باي)</span></label><input class="input ltr" id="st-pp" name="palpayNumber" value="${esc(s.palpayNumber || '')}" inputmode="tel"></div>
+        <div class="field"><label for="st-ppn">اسم المستلم في بال باي <span class="opt">(اختياري)</span></label><input class="input" id="st-ppn" name="palpayName" value="${esc(s.palpayName || '')}"></div></div>
       <div class="divider"></div>
       <h3>بريد إشعارات التحويل (Gmail)</h3>
       <p class="small muted">فعّل IMAP في Gmail وأنشئ «كلمة مرور التطبيقات» من إعدادات أمان حساب Google. البريد يُقرأ فقط ولا تُعلَّم الرسائل كمقروءة.</p>
@@ -84,7 +86,7 @@ function openSettings() {
       <div class="field"><label for="st-gp">كلمة مرور التطبيقات ${s.gmailConfigured ? '<span class="opt">(محفوظة — اتركها فارغة للإبقاء عليها)</span>' : ''}</label>
         <input class="input ltr" id="st-gp" name="gmailPass" type="password" autocomplete="new-password" placeholder="xxxx xxxx xxxx xxxx"></div>
       <div class="field"><label for="st-mf">نطاق مرسل الإشعارات</label><input class="input ltr" id="st-mf" name="mailFrom" value="${esc(s.mailFrom)}">
-        <span class="hint">نطاق المرسل، مثل jawwalpay.ps (إشعارات جوال باي تأتي من noreply@jawwalpay.ps). يُعتمد الإشعار تلقائياً فقط إذا وثّق Gmail أن المرسل من هذا النطاق نفسه، وفقط إشعارات الاستلام («لقد استلمت…»).</span></div>
+        <span class="hint">نطاق المرسل، مثل jawwalpay.ps. كما يعتمد النظام تلقائياً إشعارات بال باي («الدفع لصديق» / SMSForwarder) المرسلة من نفس بريد Gmail المربوط أعلاه.</span></div>
       <button type="button" class="btn btn-soft btn-block" id="st-check">${icon('refresh')}فحص البريد الآن</button>`,
     submit: 'حفظ',
     onMount(form) {
@@ -104,6 +106,7 @@ function openSettings() {
         shopTitle: field(form, 'shopTitle'),
         shopSubtitle: field(form, 'shopSubtitle'),
         jawwalpayNumber: field(form, 'jawwalpayNumber'), jawwalpayName: field(form, 'jawwalpayName'),
+        palpayNumber: field(form, 'palpayNumber'), palpayName: field(form, 'palpayName'),
         gmailUser: field(form, 'gmailUser'), gmailPass: field(form, 'gmailPass'), mailFrom: field(form, 'mailFrom'),
       });
       changed();

@@ -435,6 +435,59 @@ test('5-minute reservation auto-cancel, 5-minute 1st check, and 3-minute retry (
   const moreTry = await ok(call(null, 'POST', `/api/shop/orders/${amtOrd.code}/proof`, { payName: 'سامي طارق' }));
   assert.equal(moreTry.status, 'paid', 'more than required amount (35 >= 33) is accepted');
   assert.equal(moreTry.stage, 'done');
+
+  // 5) PalPay ("الدفع لصديق") notification via SMSForwarder from the shop's own Gmail
+  const mail = require('../src/mail');
+  const { namesMatch, saveMail } = require('../src/shop');
+  const { getSettings } = require('../src/db');
+  const palpayParsed = mail.parseJawwalPay({
+    subject: '[SMSForwarder] New message from الدفع لصديق - ١٠/٢٢، ١١:٢٠ ص',
+    text: 'الدفع لصديق\nتحويل دفع لصديق: Almotazbellah Atef Mohammed Abukhater, بمبلغ 5.00 ILS',
+  });
+  assert.deepEqual(palpayParsed, {
+    amount: 5,
+    reference: null,
+    senderPhone: null,
+    senderName: 'Almotazbellah Atef Mohammed Abukhater',
+    incoming: true,
+  });
+  assert.ok(namesMatch('المعتز بالله عاطف محمد ابو خاطر', palpayParsed.senderName));
+  assert.ok(namesMatch('معتز عاطف ابو خاطر', palpayParsed.senderName));
+
+  await ok(call(admin, 'PUT', '/api/settings', { gmailUser: 'moatazbll@gmail.com', mailFrom: 'jawwalpay.ps' }));
+  const curSettings = getSettings();
+
+  // Spoofed display name from another Gmail address must be rejected
+  const spoofedRaw = [
+    'Authentication-Results: mx.google.com; dkim=pass header.i=@gmail.com; dmarc=pass header.from=gmail.com',
+    'From: "moatazbll@gmail.com" <attacker@gmail.com>',
+    'Subject: [SMSForwarder] New message from الدفع لصديق',
+    'Message-ID: <spoof-palpay@gmail.com>',
+    `Date: ${new Date().toUTCString()}`,
+    'Content-Type: text/plain; charset=utf-8',
+    '',
+    'الدفع لصديق\nتحويل دفع لصديق: Almotazbellah Atef Mohammed Abukhater, بمبلغ 33.00 ILS',
+  ].join('\r\n');
+  assert.equal(saveMail(1, 9995, spoofedRaw, curSettings), null, 'spoofed display name from external gmail is rejected');
+
+  // Authentic SMSForwarder email from the shop's own Gmail is saved as trusted and matches order automatically
+  const validPalpayRaw = [
+    'Authentication-Results: mx.google.com; dkim=pass header.i=@gmail.com; dmarc=pass header.from=gmail.com',
+    'From: moatazbll@gmail.com',
+    `Subject: =?UTF-8?B?${Buffer.from('[SMSForwarder] New message from الدفع لصديق - ١٠/٢٢، ١١:٢٠ ص').toString('base64')}?=`,
+    'Message-ID: <valid-palpay@gmail.com>',
+    `Date: ${new Date().toUTCString()}`,
+    'Content-Type: text/plain; charset=utf-8',
+    'Content-Transfer-Encoding: base64',
+    '',
+    Buffer.from('الدفع لصديق\nتحويل دفع لصديق: Almotazbellah Atef Mohammed Abukhater, بمبلغ 33.00 ILS').toString('base64'),
+  ].join('\r\n');
+  const savedId = saveMail(1, 9996, validPalpayRaw, curSettings);
+  assert.ok(savedId > 0, 'SMSForwarder PalPay email from own Gmail is saved');
+  const palpayOrd = await ok(call(null, 'POST', '/api/shop/orders', { packageId: pkg.id, number: '0595556677' }));
+  const palpayProof = await ok(call(null, 'POST', `/api/shop/orders/${palpayOrd.code}/proof`, { payName: 'المعتز بالله عاطف ابو خاطر' }));
+  assert.equal(palpayProof.status, 'paid', 'PalPay order is verified automatically by sender name');
+  assert.equal(palpayProof.stage, 'done');
 });
 
 

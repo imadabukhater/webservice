@@ -1989,7 +1989,7 @@ async function esimForm(pk, co, canSwitchToCard = false) {
 }
 
 const STAGES_AR = {
-  awaiting_payment: { label: 'بانتظار الدفع', cls: 's-open', step: 1, desc: 'أرسل المبلغ عبر Jawwal Pay ثم أكّد الإرسال — يتم التحقق تلقائياً وخلال ثوانٍ.' },
+  awaiting_payment: { label: 'بانتظار الدفع', cls: 's-open', step: 1, desc: 'أرسل المبلغ عبر Jawwal Pay أو PalPay ثم أكّد الإرسال — يتم التحقق تلقائياً وخلال ثوانٍ.' },
   verifying: { label: 'جارٍ التحقق التلقائي…', cls: 's-open', step: 2, desc: 'يتم التحقق من التحويل تلقائياً وخلال ثوانٍ.' },
   review: { label: 'بانتظار التحقق التلقائي', cls: 's-open', step: 2, desc: '' },
   processing: { label: 'تم الدفع — جارٍ التفعيل…', cls: 's-open', step: 2, desc: 'يتم الآن تفعيل الباقة وإصدار كود الـ QR.' },
@@ -2057,6 +2057,8 @@ function renderOrder() {
   const o = S.order;
   const st = STAGES_AR[o.stage] || STAGES_AR[o.status] || STAGES_AR.awaiting_payment;
   const jp = S.data?.jawwalpay || {};
+  const pp = S.data?.palpay || {};
+  const hasSeparatePalpay = Boolean(pp.number && pp.number !== jp.number);
   const isEsim = Boolean(o.esim);
   const hasQr = validQrDataUrl(o.esimQr);
   const payable = PAYABLE_STATUSES.includes(o.status);
@@ -2141,7 +2143,7 @@ function renderOrder() {
         </div>` : ''}
     </div>
 
-    <!-- Step 2: Jawwal Pay Payment & Confirmation Box -->
+    <!-- Step 2: Jawwal Pay & PalPay Payment & Confirmation Box -->
     ${canShowForm ? `
       <div class="card shop-pay no-print">
         ${isRetryChance ? `
@@ -2156,11 +2158,11 @@ function renderOrder() {
           </div>
         ` : `
           <div class="row between" style="flex-wrap:wrap;gap:8px">
-            <h3 style="margin:0">الدفع عبر Jawwal Pay</h3>
+            <h3 style="margin:0">الدفع عبر Jawwal Pay أو PalPay</h3>
             <span class="shop-sec-tag">${icon('bolt')}<span>التحقق تلقائي وخلال ثوانٍ</span></span>
           </div>
           <p class="muted" style="margin:0;font-size:.85rem">
-            أرسل المبلغ المطلوب من تطبيق <b>Jawwal Pay</b> إلى المحفظة أدناه ثم أكّد الإرسال:
+            أرسل المبلغ المطلوب من تطبيق <b>Jawwal Pay</b> أو <b>PalPay (الدفع لصديق)</b> إلى الرقم أدناه ثم أكّد الإرسال:
           </p>
         `}
 
@@ -2175,16 +2177,33 @@ function renderOrder() {
           ${jp.number ? `
             <div class="shop-kv shop-copy-card">
               <div class="shop-kv-meta">
-                <span>رقم محفظة جوال باي</span>
+                <span>${hasSeparatePalpay ? 'رقم محفظة جوال باي (Jawwal Pay)' : 'رقم المحفظة (Jawwal Pay / PalPay)'}</span>
                 <b class="ltr mono shop-kv-val">${esc(fmtPhone(jp.number))}</b>
               </div>
               <button type="button" class="btn ghost btn-sm shop-copy-btn" data-copy="${esc(jp.number)}">${icon('copy')}<span>نسخ الرقم</span></button>
             </div>
           ` : ''}
-          ${jp.name ? `
+          ${hasSeparatePalpay ? `
+            <div class="shop-kv shop-copy-card">
+              <div class="shop-kv-meta">
+                <span>رقم بال باي / الدفع لصديق (PalPay)</span>
+                <b class="ltr mono shop-kv-val">${esc(fmtPhone(pp.number))}</b>
+              </div>
+              <button type="button" class="btn ghost btn-sm shop-copy-btn" data-copy="${esc(pp.number)}">${icon('copy')}<span>نسخ الرقم</span></button>
+            </div>
+          ` : !jp.number && pp.number ? `
+            <div class="shop-kv shop-copy-card">
+              <div class="shop-kv-meta">
+                <span>رقم بال باي / الدفع لصديق (PalPay)</span>
+                <b class="ltr mono shop-kv-val">${esc(fmtPhone(pp.number))}</b>
+              </div>
+              <button type="button" class="btn ghost btn-sm shop-copy-btn" data-copy="${esc(pp.number)}">${icon('copy')}<span>نسخ الرقم</span></button>
+            </div>
+          ` : ''}
+          ${jp.name || pp.name ? `
             <div class="shop-kv">
               <span>اسم المستلم</span>
-              <b>${esc(jp.name)}</b>
+              <b>${esc(jp.name || pp.name)}</b>
             </div>
           ` : ''}
         </div>
@@ -2197,11 +2216,11 @@ function renderOrder() {
 
         <form id="proof-f" class="form" style="margin-top:4px">
           <div class="field">
-            <label for="f-pname">اسم صاحب المحفظة المحوِّل</label>
-            <input id="f-pname" name="payName" class="input" autocomplete="name" value="${esc(o.payName || '')}" placeholder="مثال: محمد حسين علي سكيك">
+            <label for="f-pname">اسم صاحب المحفظة / الحساب المحوِّل</label>
+            <input id="f-pname" name="payName" class="input" autocomplete="name" value="${esc(o.payName || (o.customerName && o.customerName !== 'زبون المتجر' ? o.customerName : ''))}" placeholder="مثال: المعتز بالله عاطف أبو خاطر">
           </div>
           <div class="field">
-            <label for="f-payer">رقم محفظة جوال باي المحوَّل منها</label>
+            <label for="f-payer">رقم المحفظة المحوَّل منها <span class="muted">(اختياري)</span></label>
             <input id="f-payer" name="payPhone" class="input ltr" inputmode="tel" value="${esc(o.payPhone || '')}" placeholder="059XXXXXXX">
           </div>
           <div class="field">

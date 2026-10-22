@@ -135,6 +135,12 @@ route('PUT', '/api/settings', ADMIN, ({ body }) => {
     setSetting('jawwalpay_number', n);
   }
   if (body.jawwalpayName !== undefined) setSetting('jawwalpay_name', str(body.jawwalpayName, 80));
+  if (body.palpayNumber !== undefined) {
+    const n = String(body.palpayNumber).replace(/[^\d+]/g, '');
+    if (n && !/^\+?\d{6,15}$/.test(n)) fail(400, 'رقم محفظة بال باي غير صحيح');
+    setSetting('palpay_number', n);
+  }
+  if (body.palpayName !== undefined) setSetting('palpay_name', str(body.palpayName, 80));
   if (body.gmailUser !== undefined) setSetting('gmail_user', str(body.gmailUser, 120));
   if (body.gmailPass) setSetting('gmail_pass', String(body.gmailPass).replace(/\s+/g, '').slice(0, 64));
   if (body.mailFrom !== undefined) setSetting('mail_from', str(body.mailFrom, 80));

@@ -67,8 +67,7 @@ const CANON_GROUPS = {
   hsbalh: ['حسبالله', 'حسبالاه', 'hasaballah', 'hasballah', 'hassaballah', 'hasaballa'],
   abukhtr: ['ابوخاطر', 'abukhater', 'abokhater', 'aboukhater', 'abukhatir'],
   atf: ['عاطف', 'atef', 'atif', 'aatf'],
-  mtzbalh: ['المعتزبالله', 'معتزبالله', 'almotazbellah', 'motazbellah', 'almoatazbellah', 'moatazbellah'],
-  mtz: ['معتز', 'المعتز', 'motaz', 'mutaz', 'moataz', 'moutaz'],
+  mtz: ['المعتزبالله', 'معتزبالله', 'almotazbellah', 'motazbellah', 'almoatazbellah', 'moatazbellah', 'معتز', 'المعتز', 'motaz', 'mutaz', 'moataz', 'moutaz'],
   khlyl: ['خليل', 'khalil', 'khaleel', 'khlil'],
   ibrhm: ['ابراهيم', 'ibrahim', 'ebraheem', 'ibrahem', 'ibraheem'],
   isml: ['اسماعيل', 'ismail', 'esmail', 'ismael', 'ismaeel'],
@@ -411,13 +410,26 @@ async function deliverQr() {
 function saveMail(uidValidity, uid, raw, settings) {
   const p = mail.parseMessage(raw);
   if (p.messageId && q('SELECT 1 FROM payment_mails WHERE message_id = ?').get(p.messageId)) return null;
-  const term = String(settings.mailFrom || '').toLowerCase();
-  if (term && !p.from.toLowerCase().includes(term)) return null;
-  const f = mail.parseJawwalPay(p, { ownNumber: settings.jawwalpayNumber });
+  const f = mail.parseJawwalPay(p, { ownNumber: settings.jawwalpayNumber || settings.palpayNumber });
+  const term = String(settings.mailFrom || '').toLowerCase().trim();
+  const senderEmail = mail.extractEmail(p.from);
+  const ownGmail = String(settings.gmailUser || '').toLowerCase().trim();
+  const isForwardedPayment = Boolean(ownGmail && senderEmail === ownGmail && (
+    f.incoming || /smsforwarder|الدفع لصديق|دفع لصديق|palpay|بال\s*باي/i.test(`${p.subject}\n${p.text}`)
+  ));
+  const isPalPayDomain = /@(?:[a-z0-9.-]+\.)?(?:palpay\.ps|bop\.ps)\b/i.test(senderEmail);
+  const termList = term ? term.split(/[,;\s]+/).filter(Boolean) : [];
+  const matchesTerm = !termList.length || termList.some((t) => p.from.toLowerCase().includes(t));
+  if (!matchesTerm && !isForwardedPayment && !isPalPayDomain) return null;
   // Only money that came in can pay an order: a transfer sent from the wallet (or a one-time code) is kept without an
   // amount, so it never matches, even when its reference or the number it went to is known.
   if (!f.incoming) f.amount = null;
-  const trusted = mail.authenticSender(p, term) ? 1 : 0;
+  const authTargets = [
+    ...termList,
+    ...(isPalPayDomain ? ['palpay.ps', 'bop.ps'] : []),
+    ...(isForwardedPayment ? [ownGmail] : []),
+  ].join(',');
+  const trusted = mail.authenticSender(p, authTargets) ? 1 : 0;
   return Number(q(`INSERT OR IGNORE INTO payment_mails (uid_validity, uid, message_id, trusted, from_addr, subject, received_at, amount, reference,
                      sender_phone, sender_name, body, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
     .run(uidValidity, uid, p.messageId, trusted, p.from.slice(0, 200), p.subject.slice(0, 300), p.date || now(), f.amount, f.reference || '',
@@ -462,7 +474,8 @@ async function run(force) {
     const last = q('SELECT uid_validity FROM payment_mails ORDER BY id DESC LIMIT 1').get()?.uid_validity;
     const known = new Set(last ? q('SELECT uid FROM payment_mails WHERE uid_validity = ?').all(last).map((r) => r.uid) : []);
     const since = Math.max(now() - 3 * 864e5, (open.t || now()) - 864e5);
-    const { uidValidity, messages } = await mail.fetchMail({ ...IMAP, user: creds.user, pass: creds.pass, since, from: s.mailFrom, known });
+    const searchFrom = s.mailFrom ? [s.mailFrom, 'palpay.ps', creds.user].filter(Boolean) : '';
+    const { uidValidity, messages } = await mail.fetchMail({ ...IMAP, user: creds.user, pass: creds.pass, since, from: searchFrom, known });
     // Messages that were skipped (other senders) are remembered too, so they are not downloaded again.
     for (const m of messages) {
       if (saveMail(uidValidity, m.uid, m.raw, s)) fetched++;

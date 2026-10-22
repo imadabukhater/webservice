@@ -1,5 +1,5 @@
 'use strict';
-// Reads payment notification emails over IMAP (Gmail with an app password) and parses JawwalPay transfers.
+// Reads payment notification emails over IMAP (Gmail with an app password) and parses JawwalPay / PalPay transfers.
 // Read-only: messages are fetched with BODY.PEEK so they stay unread in the mailbox.
 const net = require('node:net');
 const tls = require('node:tls');
@@ -103,8 +103,15 @@ async function fetchMail({ host = 'imap.gmail.com', port = 993, secure = true, u
     const uidValidity = Number(sel.map((r) => r.text.match(/UIDVALIDITY (\d+)/i)?.[1]).find(Boolean) || 0);
     const uidNext = Number(sel.map((r) => r.text.match(/UIDNEXT (\d+)/i)?.[1]).find(Boolean) || 0);
     // Non-ASCII sender filters are applied after parsing (SEARCH would need CHARSET).
-    const ascii = from && /^[\x20-\x7e]+$/.test(from);
-    const found = await c.cmd(`UID SEARCH SINCE ${imapDate(since)}${ascii ? ` FROM ${quote(from)}` : ''}`);
+    const terms = [...new Set(
+      (Array.isArray(from) ? from : String(from || '').split(/[,;\s]+/))
+        .map((s) => String(s || '').trim())
+        .filter((s) => s && /^[\x20-\x7e]+$/.test(s))
+    )];
+    const fromClause = terms.length === 0 ? ''
+      : terms.length === 1 ? ` FROM ${quote(terms[0])}`
+      : ' ' + terms.slice(0, -1).map((t) => `OR FROM ${quote(t)}`).join(' ') + ` FROM ${quote(terms[terms.length - 1])}`;
+    const found = await c.cmd(`UID SEARCH SINCE ${imapDate(since)}${fromClause}`);
     const uids = found.flatMap((r) => (/^\* SEARCH/i.test(r.text) ? r.text.replace(/^\* SEARCH/i, '').trim().split(/\s+/).filter(Boolean).map(Number) : []))
       .filter((u) => u > after && !known.has(u)).sort((a, b) => a - b).slice(-limit);
     const messages = [];
@@ -167,7 +174,7 @@ function htmlToText(h) {
     .replace(/<br\s*\/?>|<\/(p|div|tr|li|h\d|table)>/gi, '\n').replace(/<\/t[dh]>/gi, ' ')
     .replace(/<[^>]+>/g, '')
     .replace(/&(#x[0-9a-f]+|#\d+|\w+);/gi, (m, e) => (e[0] === '#' ? String.fromCodePoint(e[1].toLowerCase() === 'x' ? parseInt(e.slice(2), 16) : Number(e.slice(1))) : ENTITIES[e.toLowerCase()] ?? m))
-    .replace(/[ \t ]+/g, ' ').replace(/\s*\n\s*/g, '\n').trim();
+    .replace(/[ \t\u00a0]+/g, ' ').replace(/\s*\n\s*/g, '\n').trim();
 }
 
 // Text of a part (latin1 string keeps the raw bytes); collects plain and html bodies.
@@ -201,7 +208,7 @@ function parseMessage(raw) {
   };
 }
 
-// ---------- JawwalPay notification ----------
+// ---------- JawwalPay & PalPay notification ----------
 const toLatinDigits = (s) => String(s || '').replace(/[٠-٩]/g, (d) => d.charCodeAt(0) - 0x660).replace(/[۰-۹]/g, (d) => d.charCodeAt(0) - 0x6f0)
   .replace(/٫/g, '.').replace(/٬/g, ',');
 const NUM = String.raw`(\d{1,3}(?:,\d{3})+(?:\.\d{1,2})?|\d{1,7}(?:[.,]\d{1,2})?)`;
@@ -214,10 +221,11 @@ function localPhone(s) {
   return d;
 }
 
-// Money that came in, as JawwalPay words it ("لقد استلمت حركه تحويل اموال بقيمة: ILS 1.00 من …"). Its other e-mails —
-// a transfer sent from the wallet ("تمت حركة تحويل الأموال لمبلغ … للمشترك …"), a one-time code — are not payments.
+// Money that came in, as JawwalPay or PalPay ("الدفع لصديق") words it ("لقد استلمت حركه تحويل اموال بقيمة: ILS 1.00 من …"
+// or "تحويل دفع لصديق: Almotazbellah ..., بمبلغ 5.00 ILS"). Other e-mails — a transfer sent from the wallet
+// ("تمت حركة تحويل الأموال لمبلغ … للمشترك …"), a one-time code — are not payments.
 // Also "<name> قام بتحويل مبلغ ILS 50.00 لحسابك بتاريخ …": no reference, and the sender's name (often in English) first.
-const INCOMING = /استلمت|تم استلام|استلام حوالة|وصلتك|وصلك|حوالة واردة|لحسابك|\breceived\b|\bcredited\b/i;
+const INCOMING = /استلمت|تم استلام|استلام حوالة|وصلتك|وصلك|حوالة واردة|تحويل\s+دفع\s+لصديق|دفعة\s+واردة|تم\s+إيداع|تم\s+ايداع|لحسابك|\breceived\b|\bcredited\b/i;
 
 // What can be read from a transfer notification. Every field may be null: the format is matched loosely.
 // incoming: the notification says money was received (only such a notification can pay an order).
@@ -226,7 +234,7 @@ function parseJawwalPay({ subject = '', text = '' }, { ownNumber = '' } = {}) {
   const amountRes = [
     new RegExp(String.raw`${NUM}\s*${CUR}`, 'i'),
     new RegExp(String.raw`${CUR}\s*${NUM}`, 'i'),
-    new RegExp(String.raw`(?:المبلغ|مبلغ|بقيمة|قيمة|amount)\s*[:：]?\s*${NUM}`, 'i'),
+    new RegExp(String.raw`(?:المبلغ|بمبلغ|مبلغ|بقيمة|قيمة|amount)\s*[:：]?\s*${NUM}`, 'i'),
   ];
   let amount = null;
   for (const re of amountRes) { const m = t.match(re); if (m) { amount = money(m[1]); break; } }
@@ -235,9 +243,10 @@ function parseJawwalPay({ subject = '', text = '' }, { ownNumber = '' } = {}) {
   const ref = t.match(/(?:الرقم المرجعي|رقم مرجعي|رقم المرجع|المرجع|رقم العملية|رقم الحركة|رقم التحويل|reference(?:\s*(?:no\.?|number|#))?|ref\.?(?:\s*no\.?)?|transaction\s*(?:id|no\.?|number))\s*[:：#-]?\s*[(\[]?\s*([A-Za-z0-9][A-Za-z0-9-]{3,40})/i);
   const own = localPhone(ownNumber);
   const phones = [...new Set([...t.matchAll(/(?:\+?97[02][\s-]?|0)5\d(?:[\s-]?\d){7}/g)].map((m) => localPhone(m[0])))].filter((p) => p !== own);
-  const name = t.match(/^\s*([^\n\r\d:|.,]{2,60}?)\s+قام\s+بتحويل/m)
-    || t.match(/(?:اسم المرسل|المرسل|المحوِّل|المحول|من|sender(?:\s*name)?|from)\s*[:：]\s*([^\n\r\d:|]{2,50})/i)
-    || t.match(/(?:من|from)\s+([^\n\r\d:|.,]{2,40}?)\s*(?:[.,]|\s(?:بمبلغ|مبلغ|amount)|$)/im);
+  const name = t.match(/(?:تحويل\s+دفع\s+لصديق|دفع\s+لصديق)\s*[:：-]\s*([^\n\r\d:|,،]{2,60}?)(?:\s*[,،]|\s+(?:بمبلغ|مبلغ|بقيمة|قيمة|amount)|$)/im)
+    || t.match(/^\s*([^\n\r\d:|.,]{2,60}?)\s+قام\s+بتحويل/m)
+    || t.match(/(?:اسم المرسل|المرسل|المحوِّل|المحول|من|sender(?:\s*name)?|from)\s*[:：]\s*([^\n\r\d:|,،]{2,50})/i)
+    || t.match(/(?:(?<!New message )(?:من|from))\s+([^\n\r\d:|.,،]{2,40}?)\s*(?:[.,،]|\s(?:بمبلغ|مبلغ|amount)|$)/im);
   return {
     amount: Number.isFinite(amount) ? amount : null,
     reference: ref ? ref[1].toUpperCase() : null,
@@ -247,19 +256,38 @@ function parseJawwalPay({ subject = '', text = '' }, { ownNumber = '' } = {}) {
   };
 }
 
-// True when the receiving server (Gmail) authenticated the sender for the domain `term`: DMARC passed for the From
+function extractEmail(from) {
+  const s = String(from || '').trim();
+  const angle = s.match(/<([^<>@\s]+@[^<>@\s]+)>/);
+  if (angle) return angle[1].toLowerCase();
+  const plain = s.match(/([^\s<>@"]+@[^\s<>@"]+)/);
+  return plain ? plain[1].toLowerCase() : '';
+}
+
+// True when the receiving server (Gmail) authenticated the sender for the domain/address `term`: DMARC passed for the From
 // domain, or a DKIM signature passed for that domain. A From header alone can be forged. A term with a dot is a domain
 // and must be the domain itself or one under it (jawwalpay.ps: not jawwalpay.ps.example.com, not myjawwalpay.ps);
-// a term without one ("jawwal") is matched anywhere in the domain, as before.
+// a term with '@' must match the exact sender email address and its domain's DMARC/DKIM; a term without a dot ("jawwal")
+// is matched anywhere in the domain, as before.
 function authenticSender({ from, auth }, term) {
-  const t = String(term || '').toLowerCase().trim();
-  if (!t || !auth) return false;
+  const rawTerms = String(term || '').toLowerCase().split(/[,;\s]+/).map((s) => s.trim()).filter(Boolean);
+  if (!rawTerms.length || !auth) return false;
   const a = auth.toLowerCase();
-  const fits = (d) => (t.includes('.') ? d === t || d.endsWith(`.${t}`) : d.includes(t));
-  const fromDomain = (String(from).toLowerCase().match(/@([a-z0-9.-]+)/) || [])[1] || '';
-  if (/\bdmarc=pass\b/.test(a) && fits(fromDomain)) return true;
-  return [...a.matchAll(/\bdkim=pass\b[^;]*?header\.(?:d|i)=@?([a-z0-9.-]+)/g)].some((m) => fits(m[1]));
+  const senderEmail = extractEmail(from);
+  const fromDomain = senderEmail.split('@')[1] || (String(from).toLowerCase().match(/@([a-z0-9.-]+)/) || [])[1] || '';
+  const dkimDomains = [...a.matchAll(/\bdkim=pass\b[^;]*?header\.(?:d|i)=@?([a-z0-9.-]+)/g)].map((m) => m[1]);
+  const dmarcPass = /\bdmarc=pass\b/.test(a);
+  return rawTerms.some((t) => {
+    if (t.includes('@')) {
+      if (senderEmail !== t) return false;
+      const dom = t.split('@')[1];
+      return Boolean(dom && ((dmarcPass && fromDomain === dom) || dkimDomains.some((d) => d === dom || d.endsWith(`.${dom}`))));
+    }
+    const fits = (d) => (t.includes('.') ? d === t || d.endsWith(`.${t}`) : d.includes(t));
+    if (dmarcPass && fits(fromDomain)) return true;
+    return dkimDomains.some((d) => fits(d));
+  });
 }
 
 module.exports = {
-  authenticSender, fetchMail, parseMessage, parseJawwalPay, htmlToText, toLatinDigits, MailError };
+  authenticSender, extractEmail, fetchMail, parseMessage, parseJawwalPay, htmlToText, toLatinDigits, MailError };

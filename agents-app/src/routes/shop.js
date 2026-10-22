@@ -134,8 +134,9 @@ function shopCatalogResponse() {
     shopName: s.shopTitle || (s.appName ? `متجر ${s.appName}` : 'متجر الباقات'),
     shopTitle: s.shopTitle || '', shopSubtitle: s.shopSubtitle || '',
     supportWhatsapp: s.supportWhatsapp, esimFee: s.esimFee,
-    payPhone: s.jawwalpayNumber || '',
+    payPhone: s.jawwalpayNumber || s.palpayNumber || '',
     jawwalpay: { number: s.jawwalpayNumber, name: s.jawwalpayName },
+    palpay: { number: s.palpayNumber || s.jawwalpayNumber, name: s.palpayName || s.jawwalpayName },
     companies: q('SELECT id, name, color, logo, esim_fee FROM companies ORDER BY sort, id').all().filter((c) => ids.has(c.id)).map((c) => ({
       id: c.id, name: c.name, color: c.color, logo: c.logo,
       esimFee: c.esim_fee === null || c.esim_fee === undefined ? s.esimFee : round(c.esim_fee),
