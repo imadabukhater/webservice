@@ -192,26 +192,16 @@ route('GET', '/api/shop/available', null, async ({ query, ip }) => {
   const s = enabled();
   throttle(ip, 'numbers', 120);
   const pk = esimPackage(query.packageId);
-  if (!pk.ref && pk.direct) return { available: true };
+  if (!pk.ref) return { available: false };
   try {
     const list = await freeEsimNumbers(s, pk);
-    return { available: list.length > 0 || pk.direct };
+    return { available: list.length > 0 };
   } catch (e) {
-    // The supplier not set up (or its registration details missing): simply none to sell now (unless direct eSIM enabled).
-    if (e.status === 503) return { available: !!pk.direct };
+    // The supplier not set up (or its registration details missing): simply none to sell now.
+    if (e.status === 503) return { available: false };
     throw e;
   }
 });
-
-function genDirectNumber() {
-  for (;;) {
-    const num = `059${String(crypto.randomInt(1000000, 9999999))}`;
-    if (!q("SELECT 1 FROM lines WHERE number = ? AND status != 'disconnected'").get(num) &&
-        !q("SELECT 1 FROM shop_orders WHERE number = ? AND status IN ('awaiting_payment','verifying','review','paid')").get(num)) {
-      return num;
-    }
-  }
-}
 
 route('POST', '/api/shop/orders', null, ({ body, ip, req }) => {
   const s = enabled();
@@ -283,18 +273,14 @@ async function esimOrder(body, ip, clientId = '') {
   const contact = body.contactPhone ? validPhone(normalizePhone(body.contactPhone)) : '';
   let picked = null;
   if (pk.ref) {
-    try {
-      const list = await freeEsimNumbers(s, pk);
-      const held = new Set(heldNumbers().map((h) => h.number));
-      const free = list.filter((n) => !held.has(n.phone) && !q("SELECT 1 FROM lines WHERE number = ? AND status != 'disconnected'").get(n.phone));
-      if (free.length) picked = free[crypto.randomInt(free.length)];
-    } catch (e) {
-      if (!pk.direct) throw e;
-    }
-  }
-  if (!picked) {
-    if (!pk.direct) fail(409, 'نفدت أرقام eSIM لهذه الباقة الآن. جرّب باقة أخرى أو عد لاحقاً.');
-    const customPhone = body.number ? validPhone(normalizePhone(body.number)) : genDirectNumber();
+    const list = await freeEsimNumbers(s, pk);
+    const held = new Set(heldNumbers().map((h) => h.number));
+    const free = list.filter((n) => !held.has(n.phone) && !q("SELECT 1 FROM lines WHERE number = ? AND status != 'disconnected'").get(n.phone));
+    if (!free.length) fail(409, 'نفدت أرقام eSIM لهذه الباقة الآن. جرّب باقة أخرى أو عد لاحقاً.');
+    picked = free[crypto.randomInt(free.length)];
+  } else {
+    if (!pk.direct || !body.number) fail(409, 'نفدت أرقام eSIM لهذه الباقة الآن. جرّب باقة أخرى أو عد لاحقاً.');
+    const customPhone = validPhone(normalizePhone(body.number));
     picked = { id: phoneId(customPhone), phone: customPhone, sim: '', qr: '' };
   }
   const t = now();
@@ -304,7 +290,7 @@ async function esimOrder(body, ip, clientId = '') {
   const esimFee = (hasCompanyFee || body.includeEsimFee) ? round(compFee) : 0;
   const totalAmount = round(pk.p.shop_price + esimFee);
   const esimCode = `LPA:1$rsp.${String(pk.p.company_name || 'esim').toLowerCase().replace(/[^a-z0-9]/g, '') || 'telecom'}.portal$ESIM-${code}-${picked.phone}`;
-  const qrData = picked.qr || (pk.direct || (body.instant && s.shopInstant) ? shop.makeEsimQr(esimCode, picked.phone) : '');
+  const qrData = picked.qr || ((!pk.ref && pk.direct) || (body.instant && s.shopInstant) ? shop.makeEsimQr(esimCode, picked.phone) : '');
   const row = q(`INSERT INTO shop_orders (code, package_id, package_label, kind, number, sim, customer_name, contact_phone, amount, esim_fee, esim_code, ip, client_id, created_at, updated_at,
        esim, number_id, esim_qr, email) VALUES (?, ?, ?, 'new', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)`)
     .run(code, pk.p.id, D.packageLabel(pk.p), picked.phone, String(picked.sim || '').replace(/\D/g, ''), customerName, contact, totalAmount, esimFee, esimCode, ip, clientId, t, t,

@@ -170,6 +170,7 @@ async function sendLyEsim(taskId, j) {
     pkg = (await ly.catalog(creds, 'invoice')).find((c) => c.ref === j.ref);
     if (pkg) esim = await ly.emptyEsim(creds, ref.packageId, number);
   } catch (e) {
+    if (e.refused) return fail(`رفض ليان تفعيل eSIM: ${e.message}`);
     return notSentYet({ ...j.t, number }, taskId, e, 'تعذّر تفعيل eSIM التلقائي');
   }
   if (!pkg) return fail('الرزمة لم تعد عند ليان بهذه المدة — زامن ليان ثم نفّذه يدوياً أو ارفضه');
