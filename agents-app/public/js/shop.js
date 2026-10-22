@@ -1184,7 +1184,8 @@ function viewCatalog() {
     if (S.kindFilter === 'card' && p.kind !== 'card') return false;
     if (q) {
       const coName = coMap.get(p.companyId)?.name || p.companyName || '';
-      const hay = `${p.name} ${p.description || ''} ${p.tag || ''} ${coName} ${pkgGb(p) || ''} ${p.days || ''}`.toLowerCase();
+      const isEsim = isEsimPkg(p);
+      const hay = `${p.name} ${p.description || ''} ${p.tag || ''} ${coName} ${pkgGb(p) || ''} ${p.days || ''} ${isEsim ? 'esim إلكترونية الكترونية شريحة' : 'شريحة كرت sim'} باقة حزمة نت ${p.price || ''}`.toLowerCase();
       if (!hay.includes(q)) return false;
     }
     return true;
@@ -1273,8 +1274,15 @@ function viewCatalog() {
 
     <!-- 3. Packages Section (#sec-packs -> .packs) -->
     <section id="sec-packs" class="pele-content-section">
-      ${companies.length > 1 || cardCount > 0 ? `
+      ${packages.length > 0 ? `
         <div class="pele-filter-bar">
+          <div class="shop-packs-search-wrap">
+            <div class="shop-search-input-box">
+              <span class="shop-search-icon">${icon('search')}</span>
+              <input id="packs-search-input" class="input" type="search" value="${esc(S.q)}" placeholder="ابحث بالاسم، حجم الجيجا، أو الشركة (مثال: هوت موبايل، 500 جيجا، سلكوم، 90 يوم)..." autocomplete="off">
+              ${S.q ? `<button type="button" class="btn ghost btn-sm" id="packs-search-clear">مسح</button>` : ''}
+            </div>
+          </div>
           <div class="esim-type-tabs" role="tablist" aria-label="نوع الخدمة">
             <button type="button" role="tab" class="esim-type-tab" aria-selected="${S.kindFilter === 'all'}" data-kind="all">
               <span>كل الباقات</span>
@@ -1429,6 +1437,23 @@ function viewCatalog() {
   const resetBtn = document.getElementById('reset-filters');
   if (resetBtn) {
     resetBtn.onclick = () => { S.companyId = 'all'; S.kindFilter = 'all'; S.q = ''; viewCatalog(); };
+  }
+  const packsQ = document.getElementById('packs-search-input');
+  if (packsQ) {
+    packsQ.oninput = (e) => {
+      S.q = e.currentTarget.value;
+      const pos = e.currentTarget.selectionStart;
+      viewCatalog();
+      const next = document.getElementById('packs-search-input');
+      if (next) { next.focus(); try { next.setSelectionRange(pos, pos); } catch {} }
+    };
+  }
+  const packsQClear = document.getElementById('packs-search-clear');
+  if (packsQClear) {
+    packsQClear.onclick = () => {
+      S.q = '';
+      viewCatalog();
+    };
   }
   root.querySelectorAll('[data-kind]').forEach((b) => {
     b.onclick = () => { S.kindFilter = b.dataset.kind; viewCatalog(); };

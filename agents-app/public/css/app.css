@@ -1342,6 +1342,59 @@ body.shop {
   width: 100%;
   box-sizing: border-box;
 }
+.shop-packs-search-wrap {
+  width: 100%;
+}
+.shop-search-input-box {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+}
+.shop-search-icon {
+  position: absolute;
+  right: 14px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 18px;
+  height: 18px;
+  color: var(--muted);
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.shop-search-icon svg {
+  width: 18px;
+  height: 18px;
+}
+.shop-search-input-box .input {
+  width: 100%;
+  padding-right: 42px;
+  padding-left: 60px;
+  border-radius: 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  font-size: .88rem;
+  min-height: 42px;
+  box-sizing: border-box;
+  transition: all .15s ease;
+}
+.shop-search-input-box .input:focus {
+  border-color: var(--primary);
+  background: var(--surface);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 12%, transparent);
+}
+#packs-search-clear {
+  position: absolute;
+  left: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  padding: 3px 10px;
+  font-size: .76rem;
+  min-height: 28px;
+  border-radius: 8px;
+}
 .pele-filter-bar .esim-type-tabs {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(105px, 1fr));
