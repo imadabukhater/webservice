@@ -1,13 +1,14 @@
 'use strict';
 
 class ApiError extends Error {
-  constructor(status, message) {
+  constructor(status, message, extra = null) {
     super(message);
     this.status = status;
+    this.extra = extra;
   }
 }
-const fail = (status, message) => {
-  throw new ApiError(status, message);
+const fail = (status, message, extra = null) => {
+  throw new ApiError(status, message, extra);
 };
 
 const now = () => Date.now();

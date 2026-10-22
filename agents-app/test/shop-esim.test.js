@@ -195,8 +195,8 @@ const tcSite = http.createServer((req, res) => {
 
 let base;
 let server;
-const call = async (token, method, url, body) => {
-  const res = await fetch(base + url, { method, headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) }, body: body === undefined ? undefined : JSON.stringify(body) });
+const call = async (token, method, url, body, extraHeaders = {}) => {
+  const res = await fetch(base + url, { method, headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}), ...extraHeaders }, body: body === undefined ? undefined : JSON.stringify(body) });
   return { status: res.status, body: await res.json() };
 };
 const ok = async (p) => { const r = await p; assert.equal(r.status, 200, JSON.stringify(r.body)); return r.body; };
@@ -362,4 +362,46 @@ test('eSIM shop with telecom (ALOHA): a free number, an eSIM taken and registere
   assert.match(lead.serviceEndDate, /^\d{2}\/\d{2}\/\d{4}$/);
   const task = (await ok(call(admin, 'GET', '/api/tasks'))).find((t) => t.lineNumber === num);
   assert.deepEqual([task.type, task.status, task.source], ['esim', 'done', 'telecom']);
+});
+
+test('safety: single card reservation at a time per user, and 1-minute rate limit on mailbox checks', async () => {
+  const admin = (await ok(call(null, 'POST', '/api/login', { username: 'admin', password: 'admin-pass' }))).token;
+  const pkg = (await ok(call(admin, 'GET', '/api/catalog'))).packages.find((p) => p.supplier === 'ly' && p.kind === 'invoice');
+
+  const headersUserA = { 'X-Client-Id': 'client-device-alpha' };
+
+  // 1. User A reserves their 1st card
+  const r1 = await ok(call(null, 'POST', '/api/shop/orders', { kind: 'esim', packageId: pkg.id, customerName: 'أحمد محمود', email: 'ahmad@example.com' }, headersUserA));
+  assert.equal(r1.status, 'awaiting_payment');
+
+  // 2. User A tries to reserve a 2nd card at the same time: blocked with 409
+  const r2 = await call(null, 'POST', '/api/shop/orders', { kind: 'esim', packageId: pkg.id, customerName: 'أحمد محمود', email: 'ahmad2@example.com' }, headersUserA);
+  assert.equal(r2.status, 409);
+  assert.match(r2.body.error, /حجز نشط/);
+  assert.equal(r2.body.code, r1.code);
+
+  // 3. User A cancels their first reservation
+  const cancelled = await ok(call(null, 'POST', `/api/shop/orders/${r1.code}/cancel`));
+  assert.equal(cancelled.status, 'cancelled');
+
+  // 4. Now User A can reserve a card again
+  const r3 = await ok(call(null, 'POST', '/api/shop/orders', { kind: 'esim', packageId: pkg.id, customerName: 'أحمد محمود', email: 'ahmad@example.com' }, headersUserA));
+  assert.equal(r3.status, 'awaiting_payment');
+
+  // 5. Customer mail check is rate-limited to at most once per minute
+  const shopMod = require('../src/shop');
+  assert.equal(shopMod.CHECK_COOLDOWN_MS, 60_000);
+
+  // Submit proof -> triggers initial check
+  const proofRes = await ok(call(null, 'POST', `/api/shop/orders/${r3.code}/proof`, { payReference: 'REF-SAFETY-101' }));
+  assert.equal(proofRes.status, 'verifying');
+
+  // Subsequent check within 60s is throttled from hitting IMAP
+  const resThrottled = await shopMod.checkMail();
+  assert.equal(resThrottled.throttled, true);
+  assert.equal(resThrottled.fetched, 0);
+
+  // Force check (like admin button) bypasses the cooldown
+  const resAdmin = await ok(call(admin, 'POST', '/api/shop/admin/check-mail'));
+  assert.equal(resAdmin.throttled, undefined);
 });

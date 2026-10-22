@@ -458,13 +458,26 @@ function escalate() {
 }
 
 let running = null;
-// Reads new payment emails, then matches waiting orders. force: read even with no order waiting (the manager's check).
+let lastImapCheckAt = 0;
+const CHECK_COOLDOWN_MS = Number.isFinite(Number(process.env.SHOP_CHECK_COOLDOWN_MS)) ? Number(process.env.SHOP_CHECK_COOLDOWN_MS) : 60_000;
+
+// Reads new payment emails, then matches waiting orders. force: read even with no order waiting or when cooldown has not elapsed.
+// Automatically rate-limits remote IMAP mailbox queries to at most once per minute (CHECK_COOLDOWN_MS)
+// to prevent mailbox connection floods, server overload, and Gmail account rate-limiting.
 function checkMail({ force = false } = {}) {
+  const elapsed = now() - lastImapCheckAt;
+  if (!force && elapsed < CHECK_COOLDOWN_MS) {
+    let matched = 0;
+    for (const { id } of q("SELECT id FROM shop_orders WHERE status IN ('verifying','review') ORDER BY proof_at").all()) if (tryMatch(id)) matched++;
+    const escalated = escalate();
+    return Promise.resolve({ fetched: 0, matched, escalated, mailed: 0, throttled: true });
+  }
   if (!running) running = run(force).finally(() => { running = null; });
   return running;
 }
 
 async function run(force) {
+  lastImapCheckAt = now();
   const s = getSettings();
   const open = q("SELECT MIN(created_at) AS t, COUNT(*) AS n FROM shop_orders WHERE status IN ('awaiting_payment','verifying','review') AND created_at > ?")
     .get(now() - 3 * 864e5);
@@ -494,6 +507,6 @@ const timer = setInterval(() => { checkMail().catch((e) => console.error('shop m
 timer.unref();
 
 module.exports = {
-  RESERVE_MS, FIRST_WINDOW_MS, RETRY_WINDOW_MS, VERIFY_MS, WAIT_REVIEW_MS,
+  RESERVE_MS, FIRST_WINDOW_MS, RETRY_WINDOW_MS, VERIFY_MS, WAIT_REVIEW_MS, CHECK_COOLDOWN_MS,
   shopAgent, namesMatch, matchReason, findMail, claim, tryMatch, fulfil, checkMail, escalate, expireUnconfirmed, saveMail, deliverQr, makeEsimQr,
 };

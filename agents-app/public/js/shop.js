@@ -98,8 +98,22 @@ function applyTheme(t) {
 }
 applyTheme(getTheme());
 
+const CLIENT_ID_KEY = 'agents.shop.client_id';
+function getClientId() {
+  let id = '';
+  try { id = localStorage.getItem(CLIENT_ID_KEY) || ''; } catch {}
+  if (!id || id.length < 10) {
+    id = 'c_' + (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID().replace(/-/g, '') : Math.random().toString(36).slice(2) + Date.now().toString(36));
+    try { localStorage.setItem(CLIENT_ID_KEY, id); } catch {}
+  }
+  return id;
+}
+
 async function jfetch(path, opts = {}) {
-  const headers = { ...(opts.headers || {}) };
+  const headers = {
+    'X-Client-Id': getClientId(),
+    ...(opts.headers || {}),
+  };
   let body = opts.body;
   if (body && typeof body === 'object') {
     headers['Content-Type'] = 'application/json';
@@ -107,7 +121,12 @@ async function jfetch(path, opts = {}) {
   }
   const res = await fetch(path, { ...opts, headers, body });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || `خطأ (${res.status})`);
+  if (!res.ok) {
+    const err = new Error(data.error || `خطأ (${res.status})`);
+    err.status = res.status;
+    err.code = data.code;
+    throw err;
+  }
   return data;
 }
 
@@ -840,7 +859,7 @@ async function viewTrackPage() {
   clearInterval(S.pollTimer);
   const codes = S.myCodes;
   if (codes.length) {
-    const results = await Promise.all(codes.map((c) => jfetch(`/api/shop/orders/${encodeURIComponent(c)}?check=1`).catch(() => null)));
+    const results = await Promise.all(codes.map((c, i) => jfetch(`/api/shop/orders/${encodeURIComponent(c)}${i === 0 ? '?check=1' : ''}`).catch(() => null)));
     S.myOrders = results.filter(Boolean);
   } else {
     S.myOrders = [];
@@ -1835,6 +1854,40 @@ function viewBuy(id) {
     } catch (err) {
       notify(err.message, true);
       btn.disabled = false;
+      if (err.code) {
+        rememberOrderCode(err.code);
+        S.myCodes = savedOrderCodes();
+        let box = f.querySelector('.shop-active-res-box');
+        if (!box) {
+          box = document.createElement('div');
+          box.className = 'shop-active-res-box';
+          box.style.cssText = 'margin-top:12px;padding:12px;background:rgba(234,88,12,0.1);border:1px solid rgba(234,88,12,0.3);border-radius:12px;display:flex;flex-direction:column;gap:8px';
+          f.appendChild(box);
+        }
+        box.innerHTML = `
+          <div style="font-size:13px;font-weight:700;color:var(--text, #111)">⚠️ لديك حجز بطاقة نشط حالياً (طلب ${esc(err.code)})</div>
+          <div style="font-size:12px;color:var(--text-muted, #666)">لا يمكن حجز أكثر من بطاقة في نفس الوقت منعاً لنفاد الأرقام. يمكنك إتمام دفع الحجز السابق أو إلغاؤه لحجز هذه الباقة.</div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <a href="#/order/${encodeURIComponent(err.code)}" class="btn primary sm" onclick="closeSheet()">متابعة دفع الطلب المحجوز</a>
+            <button type="button" class="btn sm" id="cancel-active-res-btn">إلغاء الحجز السابق وحجز هذه الباقة</button>
+          </div>
+        `;
+        const cBtn = box.querySelector('#cancel-active-res-btn');
+        if (cBtn) {
+          cBtn.onclick = async () => {
+            cBtn.disabled = true;
+            try {
+              await jfetch(`/api/shop/orders/${encodeURIComponent(err.code)}/cancel`, { method: 'POST' });
+              notify('تم إلغاء الحجز السابق بنجاح');
+              box.remove();
+              btn.click();
+            } catch (ce) {
+              notify(ce.message, true);
+              cBtn.disabled = false;
+            }
+          };
+        }
+      }
     }
   };
 }
@@ -1984,6 +2037,40 @@ async function esimForm(pk, co, canSwitchToCard = false) {
       notify(err.message, true);
       S.esimAvailable = null;
       btn.disabled = false;
+      if (err.code) {
+        rememberOrderCode(err.code);
+        S.myCodes = savedOrderCodes();
+        let box = f.querySelector('.shop-active-res-box');
+        if (!box) {
+          box = document.createElement('div');
+          box.className = 'shop-active-res-box';
+          box.style.cssText = 'margin-top:12px;padding:12px;background:rgba(234,88,12,0.1);border:1px solid rgba(234,88,12,0.3);border-radius:12px;display:flex;flex-direction:column;gap:8px';
+          f.appendChild(box);
+        }
+        box.innerHTML = `
+          <div style="font-size:13px;font-weight:700;color:var(--text, #111)">⚠️ لديك حجز بطاقة نشط حالياً (طلب ${esc(err.code)})</div>
+          <div style="font-size:12px;color:var(--text-muted, #666)">لا يمكن حجز أكثر من بطاقة في نفس الوقت منعاً لنفاد الأرقام. يمكنك إتمام دفع الحجز السابق أو إلغاؤه لحجز هذه الباقة.</div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <a href="#/order/${encodeURIComponent(err.code)}" class="btn primary sm" onclick="closeSheet()">متابعة دفع الطلب المحجوز</a>
+            <button type="button" class="btn sm" id="cancel-active-res-btn">إلغاء الحجز السابق وحجز هذه الباقة</button>
+          </div>
+        `;
+        const cBtn = box.querySelector('#cancel-active-res-btn');
+        if (cBtn) {
+          cBtn.onclick = async () => {
+            cBtn.disabled = true;
+            try {
+              await jfetch(`/api/shop/orders/${encodeURIComponent(err.code)}/cancel`, { method: 'POST' });
+              notify('تم إلغاء الحجز السابق بنجاح');
+              box.remove();
+              btn.click();
+            } catch (ce) {
+              notify(ce.message, true);
+              cBtn.disabled = false;
+            }
+          };
+        }
+      }
     }
   };
 }

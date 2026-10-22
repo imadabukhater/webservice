@@ -213,10 +213,45 @@ function genDirectNumber() {
   }
 }
 
-route('POST', '/api/shop/orders', null, ({ body, ip }) => {
+route('POST', '/api/shop/orders', null, ({ body, ip, req }) => {
   const s = enabled();
   throttle(ip, 'order', 20);
-  if (body.kind === 'esim' || body.esim) return esimOrder(body, ip);
+  shop.expireUnconfirmed();
+  const clientId = str(req?.headers?.['x-client-id'] || body.clientId || '', 64);
+
+  // Safety rule: A customer can hold at most 1 active reservation (awaiting_payment) at a time.
+  if (clientId) {
+    const activeClientOrder = q(`SELECT id, code, package_label FROM shop_orders
+                                 WHERE client_id = ? AND status = 'awaiting_payment' AND created_at > ? LIMIT 1`)
+                              .get(clientId, now() - RESERVE_MS);
+    if (activeClientOrder) {
+      fail(409, `لديك حجز نشط بالفعل (طلب رقم ${activeClientOrder.code}). يرجى إتمام الدفع أو إلغاء الحجز الحالي لحجز بطاقة جديدة.`, { code: activeClientOrder.code });
+    }
+  }
+
+  // Prevent holding multiple lines with the same phone number
+  const rawNum = body.contactPhone || body.number;
+  if (rawNum) {
+    const cleanNum = normalizePhone(rawNum);
+    if (cleanNum && validPhone(cleanNum)) {
+      const activePhoneOrder = q(`SELECT id, code FROM shop_orders
+                                  WHERE (number = ? OR contact_phone = ?) AND status = 'awaiting_payment' AND created_at > ? LIMIT 1`)
+                               .get(cleanNum, cleanNum, now() - RESERVE_MS);
+      if (activePhoneOrder) {
+        fail(409, `يوجد حجز نشط بالفعل مسجل بنفس الرقم (طلب رقم ${activePhoneOrder.code}). يرجى إتمام الدفع أو إلغاء الحجز السابق أولاً.`, { code: activePhoneOrder.code });
+      }
+    }
+  }
+
+  // Network anti-hoarding limit: Max concurrent active reservations from the same IP
+  const MAX_ACTIVE_PER_IP = Number(process.env.SHOP_MAX_ACTIVE_PER_IP) || 15;
+  const activeIpCount = q(`SELECT COUNT(*) AS c FROM shop_orders
+                           WHERE ip = ? AND status = 'awaiting_payment' AND created_at > ?`).get(ip, now() - RESERVE_MS)?.c || 0;
+  if (activeIpCount >= MAX_ACTIVE_PER_IP) {
+    fail(429, 'تم الوصول للحد الأقصى لعدد الحجوزات المعلقة المتزامنة من هذه الشبكة. يرجى إتمام الدفع أو الانتظار حتى انتهاء مهلة الحجز.');
+  }
+
+  if (body.kind === 'esim' || body.esim) return esimOrder(body, ip, clientId);
   const p = q(`SELECT p.*, c.name AS company_name, c.esim_fee AS company_esim_fee FROM packages p JOIN companies c ON c.id = p.company_id
                WHERE p.id = ? AND p.active = 1 AND p.shop_price > 0`).get(Number(body.packageId));
   if (!p) fail(404, 'الباقة غير متوفرة');
@@ -226,9 +261,9 @@ route('POST', '/api/shop/orders', null, ({ body, ip }) => {
   const contact = body.contactPhone ? validPhone(normalizePhone(body.contactPhone)) : number;
   const t = now();
   const code = newCode();
-  const row = q(`INSERT INTO shop_orders (code, package_id, package_label, kind, number, sim, customer_name, contact_phone, amount, ip, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-    .run(code, p.id, D.packageLabel(p), kind, number, sim, str(body.customerName, 80), contact, round(p.shop_price), ip, t, t);
+  const row = q(`INSERT INTO shop_orders (code, package_id, package_label, kind, number, sim, customer_name, contact_phone, amount, ip, client_id, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    .run(code, p.id, D.packageLabel(p), kind, number, sim, str(body.customerName, 80), contact, round(p.shop_price), ip, clientId, t, t);
   if (body.instant && s.shopInstant) {
     const orderId = Number(row.lastInsertRowid);
     if (shop.claim(orderId, null, 'تفعيل فوري مباشر')) shop.fulfil(orderId);
@@ -238,7 +273,7 @@ route('POST', '/api/shop/orders', null, ({ body, ip }) => {
 
 // An eSIM on a free number picked at random. It is held for this order (no other customer gets it) and checked again
 // when it is sold; QuickLine's eSIM and QR code are kept with the order. The customer sees the number once paid.
-async function esimOrder(body, ip) {
+async function esimOrder(body, ip, clientId = '') {
   const s = getSettings();
   const pk = esimPackage(body.packageId);
   const customerName = str(body.customerName, 80);
@@ -270,9 +305,9 @@ async function esimOrder(body, ip) {
   const totalAmount = round(pk.p.shop_price + esimFee);
   const esimCode = `LPA:1$rsp.${String(pk.p.company_name || 'esim').toLowerCase().replace(/[^a-z0-9]/g, '') || 'telecom'}.portal$ESIM-${code}-${picked.phone}`;
   const qrData = picked.qr || (pk.direct || (body.instant && s.shopInstant) ? shop.makeEsimQr(esimCode, picked.phone) : '');
-  const row = q(`INSERT INTO shop_orders (code, package_id, package_label, kind, number, sim, customer_name, contact_phone, amount, esim_fee, esim_code, ip, created_at, updated_at,
-       esim, number_id, esim_qr, email) VALUES (?, ?, ?, 'new', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)`)
-    .run(code, pk.p.id, D.packageLabel(pk.p), picked.phone, String(picked.sim || '').replace(/\D/g, ''), customerName, contact, totalAmount, esimFee, esimCode, ip, t, t,
+  const row = q(`INSERT INTO shop_orders (code, package_id, package_label, kind, number, sim, customer_name, contact_phone, amount, esim_fee, esim_code, ip, client_id, created_at, updated_at,
+       esim, number_id, esim_qr, email) VALUES (?, ?, ?, 'new', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)`)
+    .run(code, pk.p.id, D.packageLabel(pk.p), picked.phone, String(picked.sim || '').replace(/\D/g, ''), customerName, contact, totalAmount, esimFee, esimCode, ip, clientId, t, t,
       picked.id, qrData, email);
   if (body.instant && s.shopInstant) {
     const orderId = Number(row.lastInsertRowid);
@@ -317,6 +352,7 @@ route('GET', '/api/shop/orders/:code', null, async ({ params, query, ip }) => {
   shop.escalate();
   let o = byCode(params.code, ip);
   if (o.status === 'verifying' || o.status === 'review') {
+    if (query.check === '1') throttle(ip, 'mail_check', 30);
     if (!shop.tryMatch(o.id) && (query.check === '1' || Number(o.proof_tries) >= 2)) {
       try { await shop.checkMail(); } catch (e) { console.error('shop mail', e.message); }
     }
@@ -369,7 +405,7 @@ route('POST', '/api/shop/orders/:code/proof', null, async ({ params, body, ip })
     .run(payPhone, payName, payReference, receipt, receipt, nextTry, t, t, t, o.id);
   if (!shop.tryMatch(o.id)) {
     // Read the mailbox now: the email often arrives a few seconds after the transfer.
-    try { await shop.checkMail(); } catch (e) { console.error('shop mail', e.message); }
+    try { await shop.checkMail({ force: true }); } catch (e) { console.error('shop mail', e.message); }
   }
   return orderView(byCode(o.code));
 }, { maxBody: 2200 * 1024 });

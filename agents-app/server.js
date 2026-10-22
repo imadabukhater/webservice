@@ -108,7 +108,7 @@ async function handle(req, res) {
     if (!out?.raw) sendJson(res, 200, out);
   } catch (e) {
     if (res.headersSent) return res.destroy();
-    if (e instanceof ApiError) return sendJson(res, e.status, { error: e.message });
+    if (e instanceof ApiError) return sendJson(res, e.status, { error: e.message, ...(e.extra || {}) });
     console.error(e);
     sendJson(res, 500, { error: 'حدث خطأ في الخادم' });
   }
