@@ -396,8 +396,8 @@ route('GET', '/api/shop/admin/orders', ADMIN, ({ query }) => {
 route('GET', '/api/shop/admin/orders/:id', ADMIN, ({ params }) => {
   const o = adminOrder(params.id);
   const m = o.mail_id ? q('SELECT * FROM payment_mails WHERE id = ?').get(o.mail_id) : null;
-  // Unused emails with the same amount, to confirm by hand.
-  const candidates = q(`SELECT * FROM payment_mails WHERE order_id IS NULL AND amount IS NOT NULL AND ABS(amount - ?) < 0.005
+  // Unused emails with at least the order's amount, to confirm by hand.
+  const candidates = q(`SELECT * FROM payment_mails WHERE order_id IS NULL AND amount IS NOT NULL AND amount + 0.005 >= ?
                         ORDER BY received_at DESC LIMIT 20`).all(o.amount);
   return { ...orderView(o, { admin: true }), receipt: o.receipt, mail: m && { ...mailView(m), body: m.body }, candidates: candidates.map(mailView) };
 });

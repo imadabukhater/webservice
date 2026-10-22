@@ -221,7 +221,7 @@ function matchReason(o, m) {
   return null;
 }
 
-// The oldest unused authenticated email with the order's amount that matches the customer's details.
+// The oldest unused authenticated email with at least the order's amount that matches the customer's details.
 // Attempt 1 searches emails in the last 5 minutes (FIRST_WINDOW_MS); Attempt 2 (retry) searches the last 8 minutes (RETRY_WINDOW_MS).
 function findMail(o) {
   const tries = Number(o.proof_tries) || 1;
@@ -229,7 +229,7 @@ function findMail(o) {
   const refTime = o.proof_at || o.created_at || now();
   const since = refTime - windowMs;
   const mails = q(`SELECT * FROM payment_mails WHERE order_id IS NULL AND trusted = 1 AND amount IS NOT NULL
-                   AND ABS(amount - ?) < 0.005 AND received_at >= ? ORDER BY received_at, id`).all(o.amount, since);
+                   AND amount + 0.005 >= ? AND received_at >= ? ORDER BY received_at, id`).all(o.amount, since);
   const rank = { 'الرقم المرجعي': 0, 'رقم المحوِّل': 1, 'اسم المحوِّل': 2 };
   let best = null;
   for (const m of mails) {

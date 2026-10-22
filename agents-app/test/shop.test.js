@@ -421,6 +421,20 @@ test('5-minute reservation auto-cancel, 5-minute 1st check, and 3-minute retry (
   const autoVerified = await ok(call(null, 'GET', `/api/shop/orders/${waitOrd.code}?check=1`));
   assert.equal(autoVerified.status, 'paid', 'visiting Orders page automatically re-verifies and activates the order');
   assert.equal(autoVerified.stage, 'done');
+
+  // 4) Amount check: sending less than the order amount is rejected; sending more is accepted
+  const amtOrd = await ok(call(null, 'POST', '/api/shop/orders', { packageId: pkg.id, number: '0594445566' }));
+  const tNow = Date.now();
+  q(`INSERT INTO payment_mails (uid_validity, uid, message_id, trusted, from_addr, subject, received_at, amount, reference, sender_phone, sender_name, body, created_at)
+     VALUES (1, 9993, '<less@jp>', 1, 'noreply@jawwalpay.ps', 'Jawwal Pay', ?, 30, '2922947777777', '', 'Sami Tareq', 'incoming', ?)`).run(tNow, tNow);
+  const lessTry = await ok(call(null, 'POST', `/api/shop/orders/${amtOrd.code}/proof`, { payName: 'سامي طارق' }));
+  assert.equal(lessTry.status, 'verifying', 'less than required amount (30 < 33) is not accepted');
+
+  q(`INSERT INTO payment_mails (uid_validity, uid, message_id, trusted, from_addr, subject, received_at, amount, reference, sender_phone, sender_name, body, created_at)
+     VALUES (1, 9994, '<more@jp>', 1, 'noreply@jawwalpay.ps', 'Jawwal Pay', ?, 35, '2922946666666', '', 'Sami Tareq', 'incoming', ?)`).run(tNow, tNow);
+  const moreTry = await ok(call(null, 'POST', `/api/shop/orders/${amtOrd.code}/proof`, { payName: 'سامي طارق' }));
+  assert.equal(moreTry.status, 'paid', 'more than required amount (35 >= 33) is accepted');
+  assert.equal(moreTry.stage, 'done');
 });
 
 
