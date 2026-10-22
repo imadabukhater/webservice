@@ -1261,38 +1261,7 @@ function viewCatalog() {
       </div>
     </section>
 
-    <!-- 2. Pelephone-Style Sticky Sub-Navigation Bar (.adv_feature_wrap / .adv_feature) -->
-    <div class="pele-adv-wrap">
-      <div class="pele-adv-feature">
-        <div class="pele-adv-link">
-          <a href="#sec-packs" data-act="nav-esim">
-            <span class="txt">باقات eSIM</span>
-          </a>
-        </div>
-        <div class="pele-adv-link">
-          <a href="#sec-packs" data-act="nav-card">
-            <span class="txt">شحن رصيد</span>
-          </a>
-        </div>
-        <div class="pele-adv-link">
-          <a href="#sec-compat" data-jump="sec-compat">
-            <span class="txt">الأجهزة المتوافقة</span>
-          </a>
-        </div>
-        <div class="pele-adv-link">
-          <a href="#sec-info" data-jump="sec-info">
-            <span class="txt">معلومات ودعم</span>
-          </a>
-        </div>
-        <div class="pele-btn-special-adv">
-          <a href="#/track">
-            رصيدي وطلباتي${S.myCodes.length ? ` (${fmtNum(S.myCodes.length)})` : ''} &gt;
-          </a>
-        </div>
-      </div>
-    </div>
-
-    <!-- 3. Packages Section (#sec-packs -> .packs) -->
+    <!-- 2. Packages Section (#sec-packs -> .packs) -->
     <section id="sec-packs" class="pele-content-section">
       ${packages.length > 0 ? `
         <div class="pele-filter-bar">
