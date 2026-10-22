@@ -291,6 +291,7 @@ function shell(body, { sub = '' } = {}) {
               <a href="#/esim-policy" class="${hash === 'esim-policy' ? 'active' : ''}">سياسة كود eSIM QR</a>
               <a href="#/guarantee" class="${hash === 'guarantee' ? 'active' : ''}">ضمان المتجر واسترجاع المبلغ</a>
               ${wa ? `<a href="${esc(wa)}" target="_blank" rel="noopener">تواصل معنا عبر واتساب</a>` : ''}
+              <a href="/portal" style="opacity:0.75;display:inline-flex;align-items:center;gap:6px;margin-top:6px">${icon('key')}بوابة الوكلاء والإدارة</a>
             </div>
           </div>
         </div>

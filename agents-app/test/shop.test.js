@@ -263,6 +263,16 @@ test('customer shop: order, JawwalPay proof, automatic match from Gmail, fulfilm
   // The shop page.
   const page = await call(null, 'GET', '/shop');
   assert.match(page.body, /js\/shop\.js/);
+
+  // Root '/' serves the customer shop as the main landing page.
+  const rootPage = await call(null, 'GET', '/');
+  assert.match(rootPage.body, /js\/shop\.js/);
+
+  // Portal '/portal' and '/admin' serve the agents & manager portal (index.html).
+  const portalPage = await call(null, 'GET', '/portal');
+  assert.match(portalPage.body, /js\/main\.js/);
+  const adminPage = await call(null, 'GET', '/admin');
+  assert.match(adminPage.body, /js\/main\.js/);
 });
 
 test('connected sites: catalog, orders and balance with an API key; invoices', async () => {

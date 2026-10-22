@@ -69,7 +69,7 @@ function openSettings() {
   const s = V.settings;
   sheet({
     title: 'إعدادات متجر الزبائن',
-    subtitle: `رابط المتجر: ${location.origin}/shop`,
+    subtitle: `رابط المتجر: ${location.origin}/`,
     body: `
       <label class="switch-row"><span class="grow"><b>المتجر مفتوح للزبائن</b><small>الباقات التي لها «سعر الزبون» في الشركات والرزم تظهر فيه</small></span><input class="switch" type="checkbox" name="shopEnabled" ${s.shopEnabled ? 'checked' : ''}></label>
       <label class="switch-row"><span class="grow"><b>وضع التفعيل التجريبي بدون انتظار الدفع</b><small>إتاحة تفعيل الطلبات وإظهار كود QR مباشرة عبر واجهة البرمجة دون انتظار التحقق من الدفع (أبقِه مغلقاً في الوضع الفعلي)</small></span><input class="switch" type="checkbox" name="shopInstant" ${s.shopInstant ? 'checked' : ''}></label>
@@ -208,7 +208,7 @@ export default {
         ${syncDocs()}`;
     }
     return `
-      <div class="page-head"><div><h2 class="dot-title">متجر الزبائن</h2><p>رابط المتجر: <a class="ltr" href="/shop" target="_blank" rel="noopener">${esc(location.origin)}/shop</a></p></div>
+      <div class="page-head"><div><h2 class="dot-title">متجر الزبائن</h2><p>رابط المتجر: <a class="ltr" href="/" target="_blank" rel="noopener">${esc(location.origin)}/</a></p></div>
         <div class="btn-row">${V.tab === 'sites' ? `<button class="btn btn-primary" data-action="add-key">${icon('plus')}مفتاح جديد</button>` : ''}
           <button class="btn" data-action="check-mail">${icon('refresh')}فحص البريد</button><button class="btn" data-action="settings">${icon('sliders')}الإعدادات</button></div></div>
       ${setupNote()}

@@ -1,7 +1,7 @@
 // App shell cache: pages and code load instantly and work offline; API calls always go to the network.
-const CACHE = 'agents-shell-v26';
+const CACHE = 'agents-shell-v27';
 const SHELL = [
-  '/',
+  '/portal',
   '/css/app.css',
   '/icon-192.png',
   '/icon-512.png',
@@ -39,11 +39,11 @@ self.addEventListener('activate', (e) => {
 });
 self.addEventListener('fetch', (e) => {
   const url = new URL(e.request.url);
-  if (e.request.method !== 'GET' || url.origin !== location.origin || url.pathname.startsWith('/api/') || /^\/shop(\/|$)/.test(url.pathname)) return;
+  if (e.request.method !== 'GET' || url.origin !== location.origin || url.pathname.startsWith('/api/') || url.pathname === '/' || /^\/shop(\/|$)/.test(url.pathname)) return;
   // Network first so updates show up at once; the cache answers when offline.
   e.respondWith(
     fetch(e.request)
       .then((res) => { if (res.ok) { const copy = res.clone(); caches.open(CACHE).then((c) => c.put(e.request, copy)); } return res; })
-      .catch(() => caches.match(e.request).then((r) => r || caches.match('/index.html'))),
+      .catch(() => caches.match(e.request).then((r) => r || caches.match('/portal') || caches.match('/index.html'))),
   );
 });

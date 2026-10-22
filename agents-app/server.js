@@ -64,15 +64,20 @@ function serveStatic(req, res, pathname) {
     res.writeHead(403);
     return res.end();
   }
-  // The customer shop is its own page: /shop and anything under it.
-  const page = pathname === '/' ? 'index.html' : /^\/shop(\/|$)/.test(pathname) ? 'shop.html' : pathname;
+  // Main site / root ('/') is the customer shop (Hot eSIM storefront).
+  // The agents and manager portal is served on /portal, /admin, /agent, /agents, or /index.html.
+  const isPortal = /^\/(portal|admin|agent|agents)(\/|$)/i.test(pathname) || pathname === '/index.html';
+  const isShop = pathname === '/' || /^\/shop(\/|$)/i.test(pathname) || pathname === '/shop.html';
+  const page = isPortal ? 'index.html' : isShop ? 'shop.html' : pathname;
   let file = path.normalize(path.join(PUBLIC_DIR, page));
   // Inside public/ only (with the separator, so a sibling folder whose name starts with "public" is not inside).
   if (!file.startsWith(PUBLIC_DIR + path.sep)) {
     res.writeHead(403);
     return res.end();
   }
-  if (!fs.existsSync(file) || fs.statSync(file).isDirectory()) file = path.join(PUBLIC_DIR, 'index.html');
+  if (!fs.existsSync(file) || fs.statSync(file).isDirectory()) {
+    file = path.join(PUBLIC_DIR, isPortal ? 'index.html' : 'shop.html');
+  }
   const ext = path.extname(file);
   const shell = ext === '.html' || file.endsWith('sw.js');
   res.writeHead(200, {
