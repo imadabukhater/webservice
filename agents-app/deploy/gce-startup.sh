@@ -75,7 +75,11 @@ WantedBy=multi-user.target
 EOF
 
 cat > /etc/caddy/Caddyfile <<EOF
-$DOMAIN {
+hotesim.shop {
+  redir https://www.hotesim.shop{uri} permanent
+}
+
+www.hotesim.shop, 34-56-162-217.sslip.io {
   encode gzip
   reverse_proxy 127.0.0.1:3000
 }
