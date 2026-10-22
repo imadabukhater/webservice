@@ -1,61 +1,43 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240">
   <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#181514"/>
-      <stop offset="55%" stop-color="#231c1b"/>
-      <stop offset="100%" stop-color="#2c181b"/>
-    </linearGradient>
-    <radialGradient id="glowCyan" cx="0.82" cy="0.18" r="0.7">
-      <stop offset="0%" stop-color="#e11d48" stop-opacity="0.24"/>
-      <stop offset="100%" stop-color="#e11d48" stop-opacity="0"/>
-    </radialGradient>
-    <radialGradient id="glowGold" cx="0.2" cy="0.85" r="0.65">
-      <stop offset="0%" stop-color="#f59e0b" stop-opacity="0.22"/>
-      <stop offset="100%" stop-color="#f59e0b" stop-opacity="0"/>
-    </radialGradient>
-    <linearGradient id="simBody" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#fb7185"/>
-      <stop offset="50%" stop-color="#e11d48"/>
-      <stop offset="100%" stop-color="#9f1239"/>
-    </linearGradient>
-    <linearGradient id="hChip" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#fef08a"/>
-      <stop offset="45%" stop-color="#fbbf24"/>
-      <stop offset="100%" stop-color="#d97706"/>
+    <linearGradient id="h-heat" gradientUnits="userSpaceOnUse" x1="0" y1="216" x2="0" y2="20">
+      <stop offset="0" stop-color="#E0123E"/>
+      <stop offset="0.55" stop-color="#FF4A1F"/>
+      <stop offset="1" stop-color="#FFB21E"/>
     </linearGradient>
   </defs>
-
-  <!-- App Icon Squircle Background -->
-  <rect width="512" height="512" rx="116" fill="url(#bg)"/>
-  <rect width="512" height="512" rx="116" fill="url(#glowCyan)"/>
-  <rect width="512" height="512" rx="116" fill="url(#glowGold)"/>
-
-  <!-- Outer Chamfered SIM Card Frame -->
-  <path d="M148 76 H308 L392 160 V396 A40 40 0 0 1 352 436 H148 A40 40 0 0 1 108 396 V116 A40 40 0 0 1 148 76 Z"
-        fill="#1c1917" fill-opacity="0.85" stroke="url(#simBody)" stroke-width="22" stroke-linejoin="round"/>
-
-  <!-- Subtle SIM Corner Notch Accent Line -->
-  <path d="M302 82 V146 A20 20 0 0 0 322 166 H386" fill="none" stroke="#fda4af" stroke-width="10" stroke-opacity="0.45" stroke-linecap="round"/>
-
-  <!-- H-Shaped Metallic SIM Chip Contact Pad -->
-  <g fill="url(#hChip)">
-    <!-- Left Vertical Pillar of H -->
-    <rect x="158" y="156" width="56" height="208" rx="18"/>
-    <!-- Right Vertical Pillar of H (with chamfered top-right SIM cut) -->
-    <path d="M286 156 H318 L342 180 V346 A18 18 0 0 1 324 364 H286 A18 18 0 0 1 268 346 V174 A18 18 0 0 1 286 156 Z"/>
-    <!-- Center Horizontal Bridge of H -->
-    <rect x="204" y="232" width="92" height="56" rx="12"/>
+  <rect width="240" height="240" rx="54" fill="#1A1325"/>
+  <g transform="translate(120 120) scale(0.78) translate(-120 -118)">
+    <!-- H-shaped SIM card body (notched top-right corner) -->
+    <path d="M62 52
+             L80 52 Q88 52 88 60
+             L88 96 Q88 104 96 104
+             L144 104 Q152 104 152 96
+             L152 60 Q152 52 160 52
+             L168 52 L194 78
+             L194 200 Q194 216 178 216
+             L160 216 Q152 216 152 208
+             L152 184 Q152 176 144 176
+             L96 176 Q88 176 88 184
+             L88 208 Q88 216 80 216
+             L62 216 Q46 216 46 200
+             L46 68 Q46 52 62 52 Z" fill="url(#h-heat)"/>
+    <!-- Gold SIM contact chip IS the crossbar of the H -->
+    <rect x="88" y="116" width="64" height="48" rx="10" fill="#FFF1DC"/>
+    <g stroke="#F0302F" stroke-width="4">
+      <line x1="109.3" y1="116" x2="109.3" y2="164"/>
+      <line x1="130.7" y1="116" x2="130.7" y2="164"/>
+      <line x1="88" y1="140" x2="152" y2="140"/>
+    </g>
+    <!-- Flame rising from the top notch of the H -->
+    <path d="M120 98
+             C106.7 98 97.2 87.6 97.2 73.3
+             C97.2 58.1 108.6 48.6 114.3 39.1
+             C118.1 33.4 121 27.7 121.9 20.1
+             C133.3 31.5 142.8 48.6 142.8 69.5
+             C142.8 86.6 133.3 98 120 98 Z" fill="url(#h-heat)"/>
+    <!-- Hot inner core -->
+    <path d="M0 -8 C-8 -8 -12 -14 -12 -23 C-12 -33 -5 -39 1 -50 C7 -41 12 -33 12 -23 C12 -14 8 -8 0 -8 Z"
+          transform="translate(120 98) scale(0.95)" fill="#FFE58A"/>
   </g>
-
-  <!-- Authentic SIM Chip Contact Grooves on the H -->
-  <g stroke="#78350f" stroke-width="8" stroke-opacity="0.55" stroke-linecap="round">
-    <line x1="162" y1="212" x2="210" y2="212"/>
-    <line x1="162" y1="308" x2="210" y2="308"/>
-    <line x1="272" y1="212" x2="338" y2="212"/>
-    <line x1="272" y1="308" x2="338" y2="308"/>
-  </g>
-
-  <!-- Warm eSIM Core Node in the Center of the H -->
-  <circle cx="250" cy="260" r="14" fill="#181514"/>
-  <circle cx="250" cy="260" r="7" fill="#f43f5e"/>
 </svg>

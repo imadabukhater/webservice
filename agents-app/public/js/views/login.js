@@ -12,7 +12,7 @@ export async function renderLogin(onDone) {
   document.getElementById('app').innerHTML = `
   <div class="login">
     <section class="login-art">
-      <div class="brand" style="padding:0"><span class="brand-mark" style="color:#1d68ec">${icon('logo')}</span>
+      <div class="brand" style="padding:0"><span class="brand-mark">${icon('logo')}</span>
         <div><b>${esc(appName)}</b><small>بوابة المبيعات للوكلاء</small></div></div>
       <div>
         <h1>كل خطوطك وأرصدتك في مكان واحد</h1>

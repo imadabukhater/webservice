@@ -113,7 +113,7 @@ function applyTheme(t) {
   localStorage.setItem('agents.theme', t);
   localStorage.setItem('theme', t);
   const meta = document.querySelector('meta[name="theme-color"]');
-  if (meta) meta.content = t === 'dark' ? '#12100e' : '#1c1917';
+  if (meta) meta.content = t === 'dark' ? '#120D18' : '#17111F';
 }
 applyTheme(getTheme());
 
@@ -130,41 +130,27 @@ async function jfetch(path, opts = {}) {
   return data;
 }
 
-// Signature H-SIM Brand Logo: Outer chamfered SIM card silhouette + Bold H-shaped metallic chip contact pad
+// Signature Hot eSIM Brand Logo (#h-mark): Chamfered H-shaped SIM body + Warm cream chip crossbar + Rising flame
 let svgUid = 0;
 function brandLogoSvg(cls = 'hsim-logo-svg') {
   const id = ++svgUid;
-  return `<svg class="${cls}" viewBox="0 0 44 44" fill="none" aria-hidden="true">
+  return `<svg class="${cls}" viewBox="18 16 204 204" fill="none" aria-hidden="true">
     <defs>
-      <linearGradient id="hSimFrame${id}" x1="4" y1="2" x2="40" y2="42" gradientUnits="userSpaceOnUse">
-        <stop offset="0%" stop-color="#fb7185"/>
-        <stop offset="55%" stop-color="#e11d48"/>
-        <stop offset="100%" stop-color="#9f1239"/>
-      </linearGradient>
-      <linearGradient id="hSimGold${id}" x1="10" y1="10" x2="34" y2="34" gradientUnits="userSpaceOnUse">
-        <stop offset="0%" stop-color="#fef08a"/>
-        <stop offset="48%" stop-color="#fbbf24"/>
-        <stop offset="100%" stop-color="#d97706"/>
+      <linearGradient id="hHeat${id}" gradientUnits="userSpaceOnUse" x1="0" y1="216" x2="0" y2="20">
+        <stop offset="0" stop-color="#E0123E"/>
+        <stop offset="0.55" stop-color="#FF4A1F"/>
+        <stop offset="1" stop-color="#FFB21E"/>
       </linearGradient>
     </defs>
-    <!-- Outer SIM Card Body with 45-degree Chamfered Top-Right Corner -->
-    <path d="M11 3.5H26.5L36.5 13.5V35.5A5 5 0 0 1 31.5 40.5H11A5 5 0 0 1 6 35.5V8.5A5 5 0 0 1 11 3.5Z"
-          fill="#1c1917" fill-opacity=".92" stroke="url(#hSimFrame${id})" stroke-width="2.2" stroke-linejoin="round"/>
-    <!-- Chamfered SIM Corner Trace -->
-    <path d="M25.8 4V11.8A2.2 2.2 0 0 0 28 14H35.8" stroke="#fda4af" stroke-width="1.3" stroke-opacity=".55" stroke-linecap="round"/>
-    <!-- Bold Letter 'H' Formed as the Metallic SIM Chip Contact Pad -->
-    <g fill="url(#hSimGold${id})">
-      <rect x="11.5" y="12.5" width="5.6" height="19.5" rx="1.8"/>
-      <path d="M25.4 12.5H28.3L30.5 14.7V30.2A1.8 1.8 0 0 1 28.7 32H25.4A1.8 1.8 0 0 1 23.6 30.2V14.3A1.8 1.8 0 0 1 25.4 12.5Z"/>
-      <rect x="16" y="19.5" width="9" height="5.5" rx="1.2"/>
+    <path d="M62 52 L80 52 Q88 52 88 60 L88 96 Q88 104 96 104 L144 104 Q152 104 152 96 L152 60 Q152 52 160 52 L168 52 L194 78 L194 200 Q194 216 178 216 L160 216 Q152 216 152 208 L152 184 Q152 176 144 176 L96 176 Q88 176 88 184 L88 208 Q88 216 80 216 L62 216 Q46 216 46 200 L46 68 Q46 52 62 52 Z" fill="url(#hHeat${id})"/>
+    <rect x="88" y="116" width="64" height="48" rx="10" fill="#FFF1DC"/>
+    <g stroke="#F0302F" stroke-width="4">
+      <line x1="109.3" y1="116" x2="109.3" y2="164"/>
+      <line x1="130.7" y1="116" x2="130.7" y2="164"/>
+      <line x1="88" y1="140" x2="152" y2="140"/>
     </g>
-    <!-- SIM Chip Contact Grooves on the H Pillars -->
-    <g stroke="#78350f" stroke-width="1.15" stroke-opacity=".6" stroke-linecap="round">
-      <path d="M12 17.6h4.6M12 26.8h4.6M24.1 17.6h5.9M24.1 26.8h5.9"/>
-    </g>
-    <!-- Warm eSIM Core Node in the Center of the H -->
-    <circle cx="21" cy="22.25" r="1.7" fill="#1c1917"/>
-    <circle cx="21" cy="22.25" r=".95" fill="#f43f5e"/>
+    <path d="M120 98 C106.7 98 97.2 87.6 97.2 73.3 C97.2 58.1 108.6 48.6 114.3 39.1 C118.1 33.4 121 27.7 121.9 20.1 C133.3 31.5 142.8 48.6 142.8 69.5 C142.8 86.6 133.3 98 120 98 Z" fill="url(#hHeat${id})"/>
+    <path d="M0 -8 C-8 -8 -12 -14 -12 -23 C-12 -33 -5 -39 1 -50 C7 -41 12 -33 12 -23 C12 -14 8 -8 0 -8 Z" transform="translate(120 98) scale(0.95)" fill="#FFE58A"/>
   </svg>`;
 }
 
@@ -215,14 +201,14 @@ function isFeaturedPkg(pk) {
 function renderBrandWordmark(rawName = '') {
   const clean = String(rawName || '').replace(/^متجر\s+/i, '').trim();
   if (!clean || /^hot\s*e-?sim$/i.test(clean) || /^h-?sim$/i.test(clean)) {
-    return `<span class="brand-lockup" dir="ltr"><span class="brand-word-hot">HOT</span><span class="brand-word-esim"><i>e</i>SIM</span></span>`;
+    return `<span class="brand-lockup" dir="ltr"><span class="brand-word-hot">Hot</span><span class="brand-word-esim">eSIM</span></span>`;
   }
-  return `<span class="brand-lockup"><span class="brand-word-custom">${esc(clean)}</span><span class="brand-word-esim" dir="ltr"><i>e</i>SIM</span></span>`;
+  return `<span class="brand-lockup"><span class="brand-word-custom">${esc(clean)}</span><span class="brand-word-esim" dir="ltr">eSIM</span></span>`;
 }
 
 function shell(body, { sub = '' } = {}) {
-  const rawBrand = S.data?.shopTitle || S.data?.appName || 'Hot Esim';
-  const name = S.data?.shopTitle || (S.data?.appName ? `متجر ${S.data.appName}` : 'HOT eSIM');
+  const rawBrand = S.data?.shopTitle || S.data?.appName || 'Hot eSIM';
+  const name = S.data?.shopTitle || (S.data?.appName ? `متجر ${S.data.appName}` : 'Hot eSIM');
   const subtitle = sub || S.data?.shopSubtitle || 'شرائح وباقات فورية';
   const wa = waHref(S.data?.supportWhatsapp, `مرحباً، أحتاج مساعدة في ${name}`);
   const dark = document.documentElement.dataset.theme === 'dark';
@@ -1236,7 +1222,7 @@ function viewCatalog() {
             <div class="pele-sim-art-mid">
               ${brandLogoSvg('hsim-logo-svg')}
               <div>
-                <strong class="ltr">HOT eSIM</strong>
+                <strong class="ltr">Hot eSIM</strong>
                 <small>كود QR فوري · شحن مباشر</small>
               </div>
             </div>

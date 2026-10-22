@@ -47,7 +47,7 @@ function applyTheme(t) {
   else document.documentElement.dataset.theme = theme;
   try { localStorage.setItem('agents-theme', theme); } catch { /* storage blocked */ }
   const dark = theme === 'dark' || (theme === 'auto' && matchMedia('(prefers-color-scheme: dark)').matches);
-  document.querySelector('meta[name="theme-color"]')?.setAttribute('content', dark ? '#0a101b' : '#f1f4f9');
+  document.querySelector('meta[name="theme-color"]')?.setAttribute('content', dark ? '#120D18' : '#FFF8F4');
   const btn = document.getElementById('theme-btn');
   if (btn) btn.innerHTML = icon(theme === 'auto' ? 'auto' : theme === 'dark' ? 'moon' : 'sun');
 }
@@ -59,7 +59,7 @@ const role = () => (isAdmin() ? 'admin' : 'agent');
 
 function drawerHtml() {
   return `
-    <div class="brand"><span class="brand-mark" style="color:#1d68ec">${icon('logo')}</span>
+    <div class="brand"><span class="brand-mark">${icon('logo')}</span>
       <div><b>${esc(S.settings.appName)}</b><small>${isAdmin() ? 'لوحة المدير' : 'بوابة المبيعات'}</small></div></div>
     <nav class="nav">${NAV[role()].map(([r, label, ic, badge]) => `
       <a href="#/${r}" data-action="nav" data-route="${r}">${icon(ic)}<span>${label}</span>${badge ? `<span class="badge" data-badge="${badge}" hidden></span>` : ''}</a>`).join('')}

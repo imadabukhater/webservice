@@ -1,5 +1,5 @@
 {
-  "name": "بوابة الوكلاء",
+  "name": "بوابة الوكلاء · Hot eSIM",
   "short_name": "الوكلاء",
   "description": "تفعيل الخطوط، الأرصدة، العروض والتقارير للوكلاء",
   "lang": "ar",
@@ -8,8 +8,8 @@
   "scope": "/",
   "display": "standalone",
   "orientation": "portrait",
-  "background_color": "#0b1730",
-  "theme_color": "#0b1730",
+  "background_color": "#17111F",
+  "theme_color": "#17111F",
   "icons": [
     { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png" },
     { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png" },

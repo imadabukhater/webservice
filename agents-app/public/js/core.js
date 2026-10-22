@@ -266,7 +266,14 @@ const P = {
   shield: '<path d="M12 3 4.5 6v5.5c0 4.5 3.2 8 7.5 9.5 4.3-1.5 7.5-5 7.5-9.5V6z"/><path d="m8.5 12 2.5 2.5 4.5-5"/>',
   logo: '<path d="M6.5 2.5h7.8l4.7 4.7v12.3a2 2 0 0 1-2 2h-10.5a2 2 0 0 1-2-2v-15a2 2 0 0 1 2-2z" stroke-width="1.9"/><path d="M8.5 8.5v7.5M14.8 8.5v7.5M8.5 12.2h6.3" stroke-width="2.3"/><path d="M13.8 2.8v3.7a1 1 0 0 0 1 1h3.7" stroke-width="1.4" opacity=".65"/>',
 };
-export const icon = (name, cls = 'i') => `<svg class="${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${P[name] || ''}</svg>`;
+let logoUid = 0;
+export const icon = (name, cls = 'i') => {
+  if (name === 'logo') {
+    const id = ++logoUid;
+    return `<svg class="${cls}" viewBox="18 16 204 204" fill="none" aria-hidden="true"><defs><linearGradient id="h-heat-c${id}" gradientUnits="userSpaceOnUse" x1="0" y1="216" x2="0" y2="20"><stop offset="0" stop-color="#E0123E"/><stop offset="0.55" stop-color="#FF4A1F"/><stop offset="1" stop-color="#FFB21E"/></linearGradient></defs><path d="M62 52 L80 52 Q88 52 88 60 L88 96 Q88 104 96 104 L144 104 Q152 104 152 96 L152 60 Q152 52 160 52 L168 52 L194 78 L194 200 Q194 216 178 216 L160 216 Q152 216 152 208 L152 184 Q152 176 144 176 L96 176 Q88 176 88 184 L88 208 Q88 216 80 216 L62 216 Q46 216 46 200 L46 68 Q46 52 62 52 Z" fill="url(#h-heat-c${id})"/><rect x="88" y="116" width="64" height="48" rx="10" fill="#FFF1DC"/><g stroke="#F0302F" stroke-width="4"><line x1="109.3" y1="116" x2="109.3" y2="164"/><line x1="130.7" y1="116" x2="130.7" y2="164"/><line x1="88" y1="140" x2="152" y2="140"/></g><path d="M120 98 C106.7 98 97.2 87.6 97.2 73.3 C97.2 58.1 108.6 48.6 114.3 39.1 C118.1 33.4 121 27.7 121.9 20.1 C133.3 31.5 142.8 48.6 142.8 69.5 C142.8 86.6 133.3 98 120 98 Z" fill="url(#h-heat-c${id})"/><path d="M0 -8 C-8 -8 -12 -14 -12 -23 C-12 -33 -5 -39 1 -50 C7 -41 12 -33 12 -23 C12 -14 8 -8 0 -8 Z" transform="translate(120 98) scale(0.95)" fill="#FFE58A"/></svg>`;
+  }
+  return `<svg class="${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${P[name] || ''}</svg>`;
+};
 
 // ---------- toast ----------
 let toastTimer;
