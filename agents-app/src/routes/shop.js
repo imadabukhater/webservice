@@ -80,12 +80,15 @@ function orderView(o, { admin = false } = {}) {
   const firstProofAt = o.first_proof_at || o.proof_at || null;
   const retryUntil = o.status === 'verifying' && firstProofAt ? firstProofAt + shop.VERIFY_MS : null;
   const canRetryProof = o.status === 'verifying' && proofTries === 1 && retryUntil !== null && now() < retryUntil;
+  const waitingReview = (o.status === 'verifying' || o.status === 'review') && (proofTries >= 2 || o.status === 'review');
+  const waitUntil = waitingReview && o.proof_at ? o.proof_at + shop.WAIT_REVIEW_MS : null;
+  const needsSupport = Boolean(waitingReview && waitUntil !== null && now() >= waitUntil);
   return {
     // An eSIM's number (given at random) shows to the customer once the order is paid.
     code: o.code, packageLabel: o.package_label, kind: o.kind, number: admin || !o.esim || o.status === 'paid' ? o.number : null, customerName: o.customer_name,
     amount: round(o.amount), esimFee: round(o.esim_fee || 0), packagePrice: round(o.amount - (o.esim_fee || 0)),
     status: o.status, stage: stage(o, line), response: o.response,
-    proofSent: !!o.proof_at, proofTries, firstProofAt, retryUntil, canRetryProof,
+    proofSent: !!o.proof_at, proofTries, firstProofAt, retryUntil, canRetryProof, waitUntil, needsSupport,
     payPhone: o.pay_phone || '', payName: o.pay_name || '', payReference: o.pay_reference || '',
     createdAt: o.created_at, paidAt: o.paid_at, expiresAt: line?.expires_at ?? null,
     // eSIM: the number is held while the customer transfers; the QR code to install it shows once the line is active.
@@ -307,11 +310,18 @@ route('POST', '/api/shop/orders/:code/instant', null, ({ params, ip }) => {
   return orderView(byCode(o.code));
 });
 
-route('GET', '/api/shop/orders/:code', null, ({ params, ip }) => {
+route('GET', '/api/shop/orders/:code', null, async ({ params, query, ip }) => {
   throttle(ip, 'view', 600);
   shop.expireUnconfirmed();
   shop.escalate();
-  return orderView(byCode(params.code, ip));
+  let o = byCode(params.code, ip);
+  if (o.status === 'verifying' || o.status === 'review') {
+    if (!shop.tryMatch(o.id) && (query.check === '1' || Number(o.proof_tries) >= 2)) {
+      try { await shop.checkMail(); } catch (e) { console.error('shop mail', e.message); }
+    }
+    o = byCode(params.code);
+  }
+  return orderView(o);
 });
 
 // The customer's transfer details. At least one way to verify: reference, sender phone, sender name or the receipt.

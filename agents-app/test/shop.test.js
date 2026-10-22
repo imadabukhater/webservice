@@ -399,6 +399,28 @@ test('5-minute reservation auto-cancel, 5-minute 1st check, and 3-minute retry (
   const try2 = await ok(call(null, 'POST', `/api/shop/orders/${retryOrd.code}/proof`, { payName: 'محمد حسين علي سكيك' }));
   assert.equal(try2.status, 'paid', '2nd attempt searches last 8 minutes and matches');
   assert.equal(try2.stage, 'done');
+
+  // 3) After 2nd attempt fails, waitUntil is 15 minutes; visiting Orders page (GET /api/shop/orders/:code?check=1) re-verifies automatically; after 15m needsSupport is true
+  const waitOrd = await ok(call(null, 'POST', '/api/shop/orders', { packageId: pkg.id, number: '0593334455' }));
+  await ok(call(null, 'POST', `/api/shop/orders/${waitOrd.code}/proof`, { payName: 'خالد وليد سعيد' }));
+  const wTry2 = await ok(call(null, 'POST', `/api/shop/orders/${waitOrd.code}/proof`, { payName: 'خالد وليد سعيد' }));
+  assert.equal(wTry2.proofTries, 2);
+  assert.equal(wTry2.canRetryProof, false);
+  assert.ok(wTry2.waitUntil > Date.now());
+  assert.equal(wTry2.needsSupport, false);
+
+  // Simulate 15 minutes passing without a match -> needsSupport becomes true
+  q('UPDATE shop_orders SET proof_at = ? WHERE code = ?').run(Date.now() - 15 * 60_000 - 1000, waitOrd.code);
+  const after15m = await ok(call(null, 'GET', `/api/shop/orders/${waitOrd.code}`));
+  assert.equal(after15m.needsSupport, true, 'prompts customer to contact support after 15 minutes');
+
+  // If the delayed email arrives and customer visits Orders page, GET /api/shop/orders/:code?check=1 matches it automatically
+  const nowTs = Date.now();
+  q(`INSERT INTO payment_mails (uid_validity, uid, message_id, trusted, from_addr, subject, received_at, amount, reference, sender_phone, sender_name, body, created_at)
+     VALUES (1, 9992, '<delayed@jp>', 1, 'noreply@jawwalpay.ps', 'Jawwal Pay', ?, 33, '2922948888888', '', 'Khaled Waleed Saeed', 'incoming', ?)`).run(nowTs, nowTs);
+  const autoVerified = await ok(call(null, 'GET', `/api/shop/orders/${waitOrd.code}?check=1`));
+  assert.equal(autoVerified.status, 'paid', 'visiting Orders page automatically re-verifies and activates the order');
+  assert.equal(autoVerified.stage, 'done');
 });
 
 

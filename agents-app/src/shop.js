@@ -18,6 +18,7 @@ const RESERVE_MS = Number(process.env.SHOP_RESERVE_MS) || 5 * 60_000; // 5 minut
 const FIRST_WINDOW_MS = Number(process.env.SHOP_FIRST_WINDOW_MS) || 5 * 60_000; // 1st check: search emails in last 5 minutes
 const RETRY_WINDOW_MS = Number(process.env.SHOP_RETRY_WINDOW_MS) || 8 * 60_000; // 2nd check (after 3m retry): search last 8 minutes
 const VERIFY_MS = Number(process.env.SHOP_VERIFY_MS) || 3 * 60_000; // 3-minute second chance window before escalating to manager
+const WAIT_REVIEW_MS = Number(process.env.SHOP_WAIT_REVIEW_MS) || 15 * 60_000; // 15-minute max wait after 2nd attempt before prompting support
 const LOOP_MS = Number(process.env.MAIL_LOOP_MS) || 60_000;
 const IMAP = {
   host: process.env.IMAP_HOST || 'imap.gmail.com',
@@ -480,6 +481,6 @@ const timer = setInterval(() => { checkMail().catch((e) => console.error('shop m
 timer.unref();
 
 module.exports = {
-  RESERVE_MS, FIRST_WINDOW_MS, RETRY_WINDOW_MS, VERIFY_MS,
+  RESERVE_MS, FIRST_WINDOW_MS, RETRY_WINDOW_MS, VERIFY_MS, WAIT_REVIEW_MS,
   shopAgent, namesMatch, matchReason, findMail, claim, tryMatch, fulfil, checkMail, escalate, expireUnconfirmed, saveMail, deliverQr, makeEsimQr,
 };

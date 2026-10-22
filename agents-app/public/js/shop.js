@@ -40,32 +40,13 @@ function copyWithFeedback(btn, val) {
   }, 1800);
 }
 
-function renderPaymentSecurityShield({ mode = 'checkout', amount = 0 } = {}) {
-  if (mode === 'pay') {
-    return `
-      <div class="shop-sec-shield is-pay">
-        <div class="shop-sec-shield-head">
-          <span class="shop-sec-shield-ic">${icon('shield')}</span>
-          <div>
-            <b>حماية وتوثيق الدفع الآلي</b>
-            <small>مطابقة مشفّرة عبر إشعارات Jawwal Pay الرسمية الموقّعة رقمياً</small>
-          </div>
-        </div>
-        <ul class="shop-sec-shield-list">
-          <li>حوّل <b>المبلغ المطابق تماماً (${fmtMoney(amount)})</b> لضمان المطابقة الفورية التلقائية.</li>
-          <li>كل رقم حركة (<b>Reference</b>) يُربط بطلب واحد فقط ويُرفض أي تكرار تلقائياً.</li>
-          <li>يظل رقم الخط وكود <b>eSIM QR</b> محجوبين بأمان حتى اكتمال توثيق الدفع.</li>
-        </ul>
-      </div>
-    `;
-  }
+function renderPaymentSecurityShield() {
   return `
     <div class="shop-sec-shield">
       <div class="shop-sec-shield-head">
-        <span class="shop-sec-shield-ic">${icon('shield')}</span>
+        <span class="shop-sec-shield-ic">${icon('bolt')}</span>
         <div>
-          <b>دفع آمن ومضمون 100% عبر Jawwal Pay</b>
-          <small>توثيق آلي للتحويل · حماية كود الـ QR · ضمان استرجاع المبلغ</small>
+          <b>التحقق والتفعيل يتم تلقائياً وخلال ثوانٍ</b>
         </div>
       </div>
     </div>
@@ -858,19 +839,22 @@ function openTrackSheet() {
 async function viewTrackPage() {
   clearInterval(S.pollTimer);
   const codes = S.myCodes;
-  if (codes.length && !S.myOrders) {
-    const results = await Promise.all(codes.map((c) => jfetch(`/api/shop/orders/${encodeURIComponent(c)}`).catch(() => null)));
+  if (codes.length) {
+    const results = await Promise.all(codes.map((c) => jfetch(`/api/shop/orders/${encodeURIComponent(c)}?check=1`).catch(() => null)));
     S.myOrders = results.filter(Boolean);
+  } else {
+    S.myOrders = [];
   }
   const ordersList = S.myOrders || [];
+  const wa = waHref(S.data?.supportWhatsapp, 'مرحباً، أحتاج مساعدة بخصوص طلبي');
 
   shell(`
     <section class="esim-page-wrap">
       <div class="esim-page-head">
         <div>
           <span class="esim-hero-kicker">${icon('search')}<span>متابعة الطلبات</span></span>
-          <h1>تتبّع حالة طلب</h1>
-          <p class="muted">أدخل رمز الطلب لتأكيد الدفع أو استلام كود eSIM QR.</p>
+          <h1>طلباتي ومتابعة التفعيل</h1>
+          <p class="muted">يتم التحقق من حالة الدفع وتحديث الطلبات تلقائياً فور دخولك لهذه الصفحة.</p>
         </div>
         <a href="#/" class="btn ghost btn-sm">← المتجر</a>
       </div>
@@ -882,7 +866,7 @@ async function viewTrackPage() {
             <input id="track-code-input" name="code" class="input ltr big" required placeholder="مثال: AB12CD34" autocomplete="off">
           </div>
           <button type="submit" class="btn primary lg">
-            ${icon('search')}<span>عرض الطلب</span>
+            ${icon('search')}<span>تحقق وعرض الطلب</span>
           </button>
         </form>
         <div id="track-inline-error"></div>
@@ -898,6 +882,10 @@ async function viewTrackPage() {
             ${ordersList.map((o) => {
               const st = STAGES_AR[o.stage] || STAGES_AR[o.status] || STAGES_AR.awaiting_payment;
               const hasQr = Boolean(o.esimQr && /^data:image\//.test(o.esimQr));
+              const supportNeeded = Boolean(o.needsSupport || (o.waitUntil && Date.now() >= Number(o.waitUntil) && (o.status === 'verifying' || o.status === 'review')));
+              const isWaiting15 = !supportNeeded && (o.status === 'verifying' || o.status === 'review') && (Number(o.proofTries) >= 2 || o.status === 'review');
+              const pillCls = supportNeeded ? 's-bad' : st.cls;
+              const pillLabel = supportNeeded ? 'يرجى التحدث مع الدعم' : (isWaiting15 ? 'بانتظار التحقق (حتى 15 د)' : st.label);
               return `
                 <a href="#/order/${esc(o.code)}" class="item clickable" style="text-decoration:none;color:inherit">
                   <div class="item-top" style="justify-content:space-between;flex-wrap:wrap;gap:10px">
@@ -914,11 +902,12 @@ async function viewTrackPage() {
                           ${o.number ? `<span>· <b class="ltr mono">${esc(fmtPhone(o.number))}</b></span>` : ''}
                           <span>· ${fmtDateTime(o.createdAt)}</span>
                         </div>
+                        ${supportNeeded ? `<small style="display:block;color:var(--danger,#dc2626);margin-top:4px;font-weight:700">مضت 15 دقيقة ولم يُعثر على المعاملة — اضغط للتحدث مع الدعم</small>` : ''}
                       </div>
                     </div>
                     <div style="text-align:end;display:grid;gap:4px;justify-items:end">
                       <b class="mono">${fmtMoney(o.amount)}</b>
-                      <span class="pill ${st.cls}">${esc(st.label)}</span>
+                      <span class="pill ${pillCls}">${esc(pillLabel)}</span>
                     </div>
                   </div>
                 </a>`;
@@ -928,12 +917,17 @@ async function viewTrackPage() {
           <div class="empty" style="padding:20px 14px">
             ${icon('list')}
             <b>لا توجد طلبات محفوظة على هذا الجهاز</b>
-            <span>أدخل رمز الطلب في الحقل أعلاه لعرضه.</span>
+            <span>أدخل رمز الطلب في الحقل أعلاه لعرضه والتحقق منه تلقائياً.</span>
           </div>
         `}
+        ${wa && ordersList.some((o) => o.needsSupport) ? `
+          <div class="row" style="justify-content:center;margin-top:12px">
+            <a class="btn primary" href="${esc(wa)}" target="_blank" rel="noopener">${icon('whatsapp')}<span>التحدث مع الدعم</span></a>
+          </div>
+        ` : ''}
       </div>
     </section>
-  `, { sub: 'تتبّع حالة طلب' });
+  `, { sub: 'طلباتي' });
 
   const form = document.getElementById('track-page-form');
   const errBox = document.getElementById('track-inline-error');
@@ -946,7 +940,7 @@ async function viewTrackPage() {
       btn.disabled = true;
       errBox.innerHTML = '';
       try {
-        const order = await jfetch(`/api/shop/orders/${encodeURIComponent(raw)}`);
+        const order = await jfetch(`/api/shop/orders/${encodeURIComponent(raw)}?check=1`);
         rememberOrderCode(order.code);
         S.myCodes = savedOrderCodes();
         S.myOrders = null;
@@ -1908,7 +1902,7 @@ async function esimForm(pk, co, canSwitchToCard = false) {
           ${icon('qr')}
           <div class="grow">
             <b>الشريحة متوفرة وجاهزة للإصدار</b>
-            <small class="muted" style="display:block">يُحجز الرقم لمدة 5 دقائق فقط لإرسال المبلغ وتأكيد التحويل، وإلا تُلغى الطلبية تلقائياً.</small>
+            <small class="muted" style="display:block">يتم التحقق والتفعيل تلقائياً وخلال ثوانٍ فور تأكيد الدفع.</small>
           </div>
         </div>
       ` : `
@@ -1995,9 +1989,9 @@ async function esimForm(pk, co, canSwitchToCard = false) {
 }
 
 const STAGES_AR = {
-  awaiting_payment: { label: 'بانتظار إرسال الدفع (مهلة 5 دقائق)', cls: 's-open', step: 1, desc: 'أرسل المبلغ عبر Jawwal Pay ثم أكّد الإرسال خلال 5 دقائق قبل إلغاء الحجز تلقائياً.' },
-  verifying: { label: 'جارٍ التحقق من التحويل…', cls: 's-open', step: 2, desc: 'يبحث النظام في إشعارات Jawwal Pay الموثّقة لمطابقة حوالتك.' },
-  review: { label: 'قيد المراجعة', cls: 's-open', step: 2, desc: 'انتهت مهلة المطابقة الفورية ويراجع الفريق إشعار التحويل لتفعيل الطلب.' },
+  awaiting_payment: { label: 'بانتظار الدفع', cls: 's-open', step: 1, desc: 'أرسل المبلغ عبر Jawwal Pay ثم أكّد الإرسال — يتم التحقق تلقائياً وخلال ثوانٍ.' },
+  verifying: { label: 'جارٍ التحقق التلقائي…', cls: 's-open', step: 2, desc: 'يتم التحقق من التحويل تلقائياً وخلال ثوانٍ.' },
+  review: { label: 'بانتظار التحقق التلقائي', cls: 's-open', step: 2, desc: '' },
   processing: { label: 'تم الدفع — جارٍ التفعيل…', cls: 's-open', step: 2, desc: 'يتم الآن تفعيل الباقة وإصدار كود الـ QR.' },
   paid_issue: { label: 'تم الدفع — قيد المعالجة', cls: 's-open', step: 2, desc: 'يتابع الفريق إتمام التفعيل.' },
   done: { label: 'مفعّل وجاهز', cls: 's-done', step: 3, desc: 'تم تفعيل طلبك بنجاح.' },
@@ -2012,7 +2006,7 @@ async function viewOrder(code) {
   clearInterval(S.pollTimer);
   clearInterval(S.countdownTimer);
   try {
-    S.order = await jfetch(`/api/shop/orders/${encodeURIComponent(code)}`);
+    S.order = await jfetch(`/api/shop/orders/${encodeURIComponent(code)}?check=1`);
     rememberOrderCode(S.order.code);
     S.myCodes = savedOrderCodes();
   } catch (err) {
@@ -2039,6 +2033,7 @@ async function viewOrder(code) {
           next.proofSent !== S.order.proofSent ||
           next.proofTries !== S.order.proofTries ||
           next.canRetryProof !== S.order.canRetryProof ||
+          next.needsSupport !== S.order.needsSupport ||
           next.esimQr !== S.order.esimQr
         ) {
           S.order = next;
@@ -2068,6 +2063,9 @@ function renderOrder() {
   const isInitialConfirm = o.status === 'awaiting_payment';
   const isRetryChance = Boolean(o.status === 'verifying' && o.canRetryProof);
   const canShowForm = isInitialConfirm || isRetryChance;
+  const isSupportNeeded = Boolean(!canShowForm && payable && (o.needsSupport || (o.waitUntil && Date.now() >= Number(o.waitUntil))));
+  const statusPillCls = isSupportNeeded ? 's-bad' : st.cls;
+  const statusPillLabel = isSupportNeeded ? 'يرجى التحدث مع الدعم' : (!canShowForm && payable ? 'بانتظار التحقق (حتى 15 دقيقة)' : st.label);
   const wa = waHref(S.data?.supportWhatsapp, `مرحباً، بخصوص الطلب ${o.code}`);
   const appleInstallHref = o.esimCode && /^LPA:1\$/i.test(String(o.esimCode).trim())
     ? `https://esimsetup.apple.com/esim_qrcode_provisioning?carddata=${encodeURIComponent(String(o.esimCode).trim())}`
@@ -2096,7 +2094,7 @@ function renderOrder() {
           <div class="grow">
             <span class="esim-carrier-label">طلب #<b class="ltr mono">${esc(o.code)}</b></span>
             <h3 style="margin:2px 0;word-break:break-word">${esc(o.packageLabel)}${isEsim ? ' · eSIM' : ''}</h3>
-            <small class="muted">${o.customerName && o.customerName !== 'زبون المتجر' ? `${esc(o.customerName)} · ` : ''}${o.number ? `<span class="ltr">${esc(fmtPhone(o.number))}</span>` : 'يظهر الرقم فور توثيق الدفع'}</small>
+            <small class="muted">${o.customerName && o.customerName !== 'زبون المتجر' ? `${esc(o.customerName)} · ` : ''}${o.number ? `<span class="ltr">${esc(fmtPhone(o.number))}</span>` : 'يظهر الرقم فور تفعيل الطلب'}</small>
           </div>
         </div>
         <b class="mono shop-amount">${fmtMoney(o.amount)}</b>
@@ -2116,16 +2114,21 @@ function renderOrder() {
       ` : ''}
 
       <div class="row between" style="flex-wrap:wrap;gap:8px">
-        <span class="pill ${st.cls}">${esc(st.label)}</span>
+        <span class="pill ${statusPillCls}">${esc(statusPillLabel)}</span>
         ${o.reservedUntil && o.status === 'awaiting_payment' ? `
-          <span class="shop-reserve-pill" title="مهلة حجز الرقم وتأكيد التحويل (5 دقائق)">
+          <span class="shop-reserve-pill" title="مهلة حجز الرقم (5 دقائق)">
             ${icon('clock')}
             <span>حجز الرقم: <b id="reserve-countdown" class="ltr mono">${fmtRemaining(o.reservedUntil)}</b></span>
           </span>
         ` : isRetryChance && o.retryUntil ? `
-          <span class="shop-reserve-pill" title="مهلة تصحيح البيانات (3 دقائق)">
+          <span class="shop-reserve-pill" title="مهلة المحاولة الثانية">
             ${icon('clock')}
-            <span>فرصة التصحيح: <b id="retry-countdown" class="ltr mono">${fmtRemaining(o.retryUntil)}</b></span>
+            <span>المحاولة الثانية: <b id="retry-countdown" class="ltr mono">${fmtRemaining(o.retryUntil)}</b></span>
+          </span>
+        ` : !canShowForm && payable && !isSupportNeeded && o.waitUntil ? `
+          <span class="shop-reserve-pill" title="مهلة الانتظار القصوى (15 دقيقة)">
+            ${icon('clock')}
+            <span>مهلة الانتظار: <b id="wait-countdown" class="ltr mono">${fmtRemaining(o.waitUntil)}</b></span>
           </span>
         ` : `<small class="muted">${fmtDateTime(o.createdAt)}</small>`}
       </div>
@@ -2145,26 +2148,26 @@ function renderOrder() {
           <div class="esim-ready-notice" style="background:rgba(245,158,11,.10);border-color:rgba(245,158,11,.35)">
             ${icon('alert')}
             <div class="grow">
-              <b style="display:block;color:#b45309">لم يُعثر على حوالة مطابقة في آخر 5 دقائق — لديك فرصة ثانية (3 دقائق)</b>
+              <b style="display:block;color:#b45309">لم يتم العثور على المعاملة بعد — يرجى التأكد من البيانات والمحاولة مرة ثانية</b>
               <small style="display:block;line-height:1.55">
-                يرجى التأكد من <b>الاسم الثلاثي/الرباعي لصاحب محفظة جوال باي</b> (بالعربية أو الإنجليزية كما في التطبيق) أو <b>رقم المحفظة المحوَّل منها</b> أو <b>الرقم المرجعي</b>، وعند الإرسال سيتم البحث في إشعارات <b>آخر 8 دقائق</b>.
+                تأكد من كتابة اسم المرسل أو رقم المحفظة بشكل صحيح ثم اضغط تأكيد ليتم التحقق تلقائياً خلال ثوانٍ.
               </small>
             </div>
           </div>
         ` : `
           <div class="row between" style="flex-wrap:wrap;gap:8px">
-            <h3 style="margin:0">١. أرسل المبلغ عبر Jawwal Pay أولاً</h3>
-            <span class="shop-sec-tag">${icon('shield')}<span>حجز لمدة 5 دقائق</span></span>
+            <h3 style="margin:0">الدفع عبر Jawwal Pay</h3>
+            <span class="shop-sec-tag">${icon('bolt')}<span>التحقق تلقائي وخلال ثوانٍ</span></span>
           </div>
           <p class="muted" style="margin:0;font-size:.85rem">
-            أرسل المبلغ المطلوب بالضبط من تطبيق <b>Jawwal Pay</b> إلى المحفظة أدناه، ثم أكّد عملية الإرسال خلال <b>5 دقائق</b> (وإلا يتم إلغاء الطلبية تلقائياً).
+            أرسل المبلغ المطلوب من تطبيق <b>Jawwal Pay</b> إلى المحفظة أدناه ثم أكّد الإرسال:
           </p>
         `}
 
         <div class="shop-pay-kvs">
           <div class="shop-kv shop-copy-card">
             <div class="shop-kv-meta">
-              <span>المبلغ المطلوب بالضبط</span>
+              <span>المبلغ المطلوب</span>
               <b class="ltr mono shop-kv-val">${fmtMoney(o.amount)}</b>
             </div>
             <button type="button" class="btn ghost btn-sm shop-copy-btn" data-copy="${esc(String(o.amount))}">${icon('copy')}<span>نسخ المبلغ</span></button>
@@ -2186,20 +2189,15 @@ function renderOrder() {
           ` : ''}
         </div>
 
-        ${renderPaymentSecurityShield({ mode: 'pay', amount: o.amount })}
+        ${renderPaymentSecurityShield()}
 
         <hr style="border:0;border-top:1px solid var(--line);margin:4px 0">
 
-        <h3>${isRetryChance ? '٢. تصحيح بيانات المرسل وإعادة الفحص (آخر 8 دقائق)' : '٢. أكّد إرسال الحوالة الآن (فحص آخر 5 دقائق)'}</h3>
-        <p class="muted" style="margin:0;font-size:.84rem">
-          ${isRetryChance
-            ? 'عدّل الاسم أو رقم محفظة جوال باي أو الرقم المرجعي أدناه ليتم فحص إشعارات البريد خلال آخر 8 دقائق فوراً:'
-            : 'بعد إتمام التحويل في تطبيق جوال باي، أدخل اسم صاحب المحفظة أو رقم المحفظة أو رقم الحركة المرجعي لتفعيل الطلب تلقائياً:'}
-        </p>
+        <h3>${isRetryChance ? 'تأكيد البيانات للمحاولة الثانية' : 'تأكيد الإرسال'}</h3>
 
-        <form id="proof-f" class="form" style="margin-top:6px">
+        <form id="proof-f" class="form" style="margin-top:4px">
           <div class="field">
-            <label for="f-pname">اسم صاحب المحفظة المحوِّل (ثلاثي أو رباعي) <span class="shop-rec-pill">مهم للمطابقة</span></label>
+            <label for="f-pname">اسم صاحب المحفظة المحوِّل</label>
             <input id="f-pname" name="payName" class="input" autocomplete="name" value="${esc(o.payName || '')}" placeholder="مثال: محمد حسين علي سكيك">
           </div>
           <div class="field">
@@ -2207,11 +2205,11 @@ function renderOrder() {
             <input id="f-payer" name="payPhone" class="input ltr" inputmode="tel" value="${esc(o.payPhone || '')}" placeholder="059XXXXXXX">
           </div>
           <div class="field">
-            <label for="f-ref">الرقم المرجعي للحركة (أو آخر 5 أرقام منه) <span class="muted">(اختياري)</span></label>
-            <input id="f-ref" name="payReference" class="input ltr" inputmode="numeric" autocomplete="off" value="${esc(o.payReference || '')}" placeholder="مثال: 2922947585749 أو 85749">
+            <label for="f-ref">الرقم المرجعي للحركة <span class="muted">(اختياري)</span></label>
+            <input id="f-ref" name="payReference" class="input ltr" inputmode="numeric" autocomplete="off" value="${esc(o.payReference || '')}" placeholder="اختياري">
           </div>
           <div class="field">
-            <label>صورة إشعار التحويل من الهاتف <span class="muted">(اختياري)</span></label>
+            <label>صورة إشعار التحويل <span class="muted">(اختياري)</span></label>
             <label class="upload-box" id="proof-box">
               <input id="f-proof" type="file" accept="image/*" hidden>
               <img id="proof-preview" class="shop-proof-thumb" alt="معاينة الإشعار" hidden>
@@ -2219,18 +2217,34 @@ function renderOrder() {
               <span id="proof-label">${o.proofSent ? 'تم إرسال الإشعار — اضغط للتغيير' : 'اضغط لاختيار لقطة شاشة الإشعار'}</span>
             </label>
           </div>
-          <button class="btn primary lg" type="submit">${icon('checkCircle')}<span>${isRetryChance ? 'تأكيد التصحيح والبحث في آخر 8 دقائق' : 'أرسلت المبلغ — تأكيد وفحص فوري'}</span></button>
+          <button class="btn primary lg" type="submit">${icon('checkCircle')}<span>${isRetryChance ? 'تأكيد البيانات وإعادة التحقق' : 'أرسلت المبلغ — تأكيد الآن'}</span></button>
         </form>
       </div>
     ` : payable ? `
       <div class="card shop-pay no-print">
-        <div class="row between" style="flex-wrap:wrap;gap:8px">
-          <h3 style="margin:0">تم استلام تأكيد التحويل</h3>
-          <span class="shop-sec-tag">${icon('shield')}<span>قيد المتابعة</span></span>
-        </div>
-        <p class="muted" style="margin:0;font-size:.86rem">
-          تم استلام بيانات التحويل الخاصة بك ويتم التحقق منها لتفعيل الطلب:
-        </p>
+        ${isSupportNeeded ? `
+          <div class="esim-ready-notice" style="background:rgba(220,38,38,.09);border-color:rgba(220,38,38,.35)">
+            ${icon('alert')}
+            <div class="grow">
+              <b style="display:block;color:var(--danger,#dc2626)">مضت 15 دقيقة ولم يعثر النظام على المعاملة تلقائياً</b>
+              <small style="display:block;line-height:1.55">
+                يرجى التحدث مع الدعم الآن لتأكيد عملية التحويل وتفعيل طلبك فوراً.
+              </small>
+            </div>
+          </div>
+          ${wa ? `<a class="btn primary lg" href="${esc(wa)}" target="_blank" rel="noopener">${icon('whatsapp')}<span>التحدث مع الدعم الآن</span></a>` : ''}
+        ` : `
+          <div class="row between" style="flex-wrap:wrap;gap:8px">
+            <h3 style="margin:0">يرجى الانتظار حتى 15 دقيقة كحد أقصى</h3>
+            <span class="shop-sec-tag">${icon('clock')}<span>تحقق تلقائي</span></span>
+          </div>
+          <p class="muted" style="margin:0;font-size:.88rem;line-height:1.6">
+            لم يتم العثور على المعاملة بعد. يرجى الانتظار <b>ربع ساعة (15 دقيقة) كحد أقصى</b> ومراجعة <b>صفحة الطلبات</b>، حيث يتم التحقق تلقائياً مرة أخرى فور دخولك لصفحة الطلبات.
+          </p>
+          <div class="row" style="gap:10px;flex-wrap:wrap;margin-top:4px">
+            <a href="#/orders" class="btn primary lg grow">${icon('list')}<span>مراجعة صفحة الطلبات</span></a>
+          </div>
+        `}
         <div class="shop-breakdown-box">
           ${o.payName ? `<div class="shop-bd-row"><span>اسم المحوِّل</span><b>${esc(o.payName)}</b></div>` : ''}
           ${o.payPhone ? `<div class="shop-bd-row"><span>رقم المحفظة</span><b class="ltr mono">${esc(fmtPhone(o.payPhone))}</b></div>` : ''}
@@ -2355,6 +2369,19 @@ function renderOrder() {
         } catch {}
       }
     }, 1000);
+  } else if (!canShowForm && payable && !isSupportNeeded && o.waitUntil) {
+    S.countdownTimer = setInterval(async () => {
+      const el = document.getElementById('wait-countdown');
+      if (!el) { clearInterval(S.countdownTimer); return; }
+      el.textContent = fmtRemaining(o.waitUntil);
+      if (Date.now() >= Number(o.waitUntil)) {
+        clearInterval(S.countdownTimer);
+        try {
+          S.order = await jfetch(`/api/shop/orders/${encodeURIComponent(o.code)}?check=1`);
+          renderOrder();
+        } catch {}
+      }
+    }, 1000);
   }
 
   const copyCode = document.getElementById('copy-code');
@@ -2422,9 +2449,9 @@ function renderOrder() {
         if (S.order.status === 'paid') {
           notify('تم التحقق من الدفع وتفعيل الطلب بنجاح');
         } else if (S.order.canRetryProof) {
-          notify('لم يُعثر على تطابق في آخر 5 دقائق — لديك فرصة 3 دقائق لتصحيح البيانات', true);
+          notify('لم يتم العثور على المعاملة — يرجى التأكد من البيانات والمحاولة مرة ثانية', true);
         } else {
-          notify('تم استلام البيانات — جارٍ التحقّق والمراجعة');
+          notify('لم يتم العثور على المعاملة بعد — يرجى الانتظار حتى 15 دقيقة كحد أقصى ومراجعة صفحة الطلبات', true);
         }
         renderOrder();
       } catch (err) {
