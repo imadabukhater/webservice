@@ -1676,7 +1676,7 @@ body.shop {
 /* Action Buttons inside Card (.pele-pack-btns) */
 .pele-pack-btns {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr;
   gap: 8px;
   width: 100%;
   margin-top: auto;
@@ -1697,12 +1697,15 @@ body.shop {
   box-sizing: border-box;
   white-space: nowrap;
 }
-.pele-btn-b.order-b {
+.pele-btn-b.order-b,
+.pele-pack-btns.is-single .pele-btn-b.order-c {
   background: linear-gradient(135deg, var(--primary) 0%, var(--primary-2) 100%);
   color: #fff;
+  border: 0;
   box-shadow: 0 5px 12px -4px color-mix(in srgb, var(--primary) 55%, transparent);
 }
-.pele-btn-b.order-b:hover {
+.pele-btn-b.order-b:hover,
+.pele-pack-btns.is-single .pele-btn-b.order-c:hover {
   transform: translateY(-1px);
   filter: brightness(1.05);
 }
@@ -2436,7 +2439,7 @@ body.shop {
     margin-bottom: 12px;
   }
   .pele-filter-bar .esim-type-tabs {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 6px;
   }
   .pele-filter-bar .esim-type-tab {

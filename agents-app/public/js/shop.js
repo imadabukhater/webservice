@@ -67,7 +67,7 @@ function notify(msg, isErr = false) {
 const S = {
   data: null,
   companyId: 'all',
-  kindFilter: 'all', // 'all' | 'esim' | 'card' | 'line'
+  kindFilter: 'esim', // 'esim' | 'card'
   q: '',
   compatBrand: 'apple',
   compatSearch: '',
@@ -187,7 +187,7 @@ function simCardSvg(cls = 'esim-sim-svg') {
 }
 
 function isEsimPkg(pk) {
-  return Boolean(pk && (pk.esim || pk.kind === 'esim'));
+  return Boolean(pk && pk.kind !== 'card' && (pk.esim || pk.kind === 'esim'));
 }
 
 function pkgGb(pk) {
@@ -219,7 +219,7 @@ function shell(body, { sub = '' } = {}) {
   root.innerHTML = `
     <header class="shop-top">
       <div class="shop-top-inner">
-        <a href="#/" class="shop-brand" data-act="nav-all" aria-label="${esc(name)}">
+        <a href="#/" class="shop-brand" data-act="nav-esim" aria-label="${esc(name)}">
           <span class="shop-brand-mark">${brandLogoSvg('hsim-logo-svg')}</span>
           <span class="shop-brand-text">
             <span class="shop-brand-title-row">
@@ -230,11 +230,11 @@ function shell(body, { sub = '' } = {}) {
         </a>
 
         <nav class="shop-nav" aria-label="التنقّل في المتجر">
-          <a href="#/" class="shop-nav-link ${onHome && S.kindFilter !== 'esim' ? 'active' : ''}" data-act="nav-all">
-            ${icon('sim')}<span>الباقات</span>
-          </a>
-          <button type="button" class="shop-nav-link ${onHome && S.kindFilter === 'esim' ? 'active' : ''}" data-act="nav-esim">
+          <button type="button" class="shop-nav-link ${onHome && S.kindFilter !== 'card' ? 'active' : ''}" data-act="nav-esim">
             ${icon('qr')}<span>شرائح eSIM</span>
+          </button>
+          <button type="button" class="shop-nav-link ${onHome && S.kindFilter === 'card' ? 'active' : ''}" data-act="nav-card">
+            ${icon('refresh')}<span>شحن رصيد</span>
           </button>
           <a href="#/compat" class="shop-nav-link ${hash === 'compat' ? 'active' : ''}">
             ${icon('chip')}<span>فحص التوافق</span>
@@ -280,8 +280,8 @@ function shell(body, { sub = '' } = {}) {
           <div class="pele-lnks">
             <div>
               <h3 class="ttl">عام والخدمات</h3>
-              <a href="#/" data-act="nav-all">جميع الباقات والشرائح</a>
               <a href="#/" data-act="nav-esim">باقات شرائح eSIM</a>
+              <a href="#/" data-act="nav-card">شحن رصيد لخطك</a>
               <a href="#/compat" class="${hash === 'compat' ? 'active' : ''}">فحص توافق الهاتف مع eSIM</a>
               <a href="#/track" class="${hash === 'track' ? 'active' : ''}">تتبّع حالة طلب / فحص الرصيد</a>
             </div>
@@ -300,13 +300,13 @@ function shell(body, { sub = '' } = {}) {
 
     <!-- Mobile Thumb-Friendly Bottom Navigation Dock -->
     <nav class="shop-bottom-nav no-print" aria-label="التنقّل السريع للهاتف">
-      <a href="#/" class="shop-bnav-item ${onHome && S.kindFilter !== 'esim' ? 'active' : ''}" data-act="nav-all">
-        ${icon('sim')}
-        <span>الباقات</span>
-      </a>
-      <button type="button" class="shop-bnav-item ${onHome && S.kindFilter === 'esim' ? 'active' : ''}" data-act="nav-esim">
+      <button type="button" class="shop-bnav-item ${onHome && S.kindFilter !== 'card' ? 'active' : ''}" data-act="nav-esim">
         ${icon('qr')}
-        <span>eSIM</span>
+        <span>شرائح eSIM</span>
+      </button>
+      <button type="button" class="shop-bnav-item ${onHome && S.kindFilter === 'card' ? 'active' : ''}" data-act="nav-card">
+        ${icon('refresh')}
+        <span>شحن رصيد</span>
       </button>
       <a href="#/compat" class="shop-bnav-item ${hash === 'compat' ? 'active' : ''}">
         ${icon('chip')}
@@ -327,6 +327,21 @@ function shell(body, { sub = '' } = {}) {
   `;
 
   bindGlobalTriggers(root);
+}
+
+function switchCatalogTab(kind, { scroll = false } = {}) {
+  S.kindFilter = kind === 'card' ? 'card' : 'esim';
+  const packages = S.data?.packages || [];
+  const inTab = packages.filter((p) => (S.kindFilter === 'card' ? p.kind === 'card' : p.kind !== 'card'));
+  if (S.companyId !== 'all' && !inTab.some((p) => String(p.companyId) === String(S.companyId))) {
+    S.companyId = 'all';
+  }
+  if (location.hash && location.hash !== '#/') {
+    location.hash = '#/';
+  } else {
+    viewCatalog();
+    if (scroll) document.getElementById('sec-packs')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
 }
 
 function bindGlobalTriggers(scope) {
@@ -357,21 +372,16 @@ function bindGlobalTriggers(scope) {
       openLegalSheet(b.dataset.tab || 'terms');
     };
   });
-  scope.querySelectorAll('[data-act="nav-all"]').forEach((b) => {
-    b.onclick = () => {
-      S.kindFilter = 'all';
-      if (!location.hash || location.hash === '#/') viewCatalog();
+  scope.querySelectorAll('[data-act="nav-all"], [data-act="nav-esim"]').forEach((b) => {
+    b.onclick = (e) => {
+      e.preventDefault();
+      switchCatalogTab('esim', { scroll: true });
     };
   });
-  scope.querySelectorAll('[data-act="nav-esim"]').forEach((b) => {
-    b.onclick = () => {
-      S.kindFilter = 'esim';
-      if (location.hash && location.hash !== '#/') {
-        location.hash = '#/';
-      } else {
-        viewCatalog();
-        document.getElementById('sec-packs')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      }
+  scope.querySelectorAll('[data-act="nav-card"]').forEach((b) => {
+    b.onclick = (e) => {
+      e.preventDefault();
+      switchCatalogTab('card', { scroll: true });
     };
   });
 }
@@ -1067,7 +1077,7 @@ function renderInfoTabContent(tab) {
           </p>
           <div class="pele-txt3" style="margin-top:16px">إعادة الشحن وتجديد الباقة (Top Up)</div>
           <p>
-            يمكنك <a href="#sec-packs" data-jump="sec-packs">إعادة شحن خطك من هنا</a> باختيار زر <b>«شحن رصيد لخطك»</b> على أي باقة.<br>
+            يمكنك <a href="#sec-packs" data-act="nav-card">إعادة شحن خطك من هنا</a> باختيار تبويب <b>«شحن رصيد لخطك»</b> ثم الضغط على زر <b>«شحن رصيد لخطك»</b>.<br>
             هل قمت بإعادة شحن شريحتك؟ تتفعل باقتك فوراً بعد إتمام عملية الشراء.
           </p>
         </div>
@@ -1103,13 +1113,14 @@ function renderInfoTabContent(tab) {
 }
 
 function openPackDetailsSheet(pk, co) {
-  const hasEsim = isEsimPkg(pk);
+  const isCard = pk.kind === 'card';
+  const hasEsim = !isCard && isEsimPkg(pk);
   const sp = extractPackageSpecs(pk, co);
   const qrFee = Number(pk.esimFee ?? co?.esimFee ?? S.data?.esimFee ?? 0);
 
   sheet({
     title: sp.companyName,
-    subtitle: `${sp.mainCap} · تفاصيل الباقة`,
+    subtitle: `${sp.mainCap} · ${isCard ? 'تفاصيل باقة الشحن' : 'تفاصيل الباقة'}`,
     body: `
       <div class="shop-breakdown-box">
         <div class="shop-bd-row">
@@ -1146,8 +1157,9 @@ function openPackDetailsSheet(pk, co) {
         ` : ''}
       </div>
       <div class="row" style="gap:10px;margin-top:16px;flex-wrap:wrap">
-        ${hasEsim ? `<a class="btn primary grow" href="#/buy/${pk.id}?esim=1" data-close>${icon('qr')}<span>شراء شريحة eSIM</span></a>` : ''}
-        <a class="btn ${hasEsim ? 'ghost' : 'primary'} grow" href="#/buy/${pk.id}" data-close>${icon('refresh')}<span>شحن رصيد لخطك</span></a>
+        ${isCard
+          ? `<a class="btn primary grow" href="#/buy/${pk.id}" data-close>${icon('refresh')}<span>شحن رصيد لخطك</span></a>`
+          : `<a class="btn primary grow" href="#/buy/${pk.id}${hasEsim ? '?esim=1' : ''}" data-close>${icon(hasEsim ? 'qr' : 'sim')}<span>${hasEsim ? 'شراء شريحة eSIM' : 'شراء الآن'}</span></a>`}
       </div>
     `,
     footer: `<button type="button" class="btn ghost" data-close>إغلاق</button>`,
@@ -1171,21 +1183,24 @@ function viewCatalog() {
   const rawBrand = S.data?.shopTitle || S.data?.appName || 'Hot Esim';
   const wa = waHref(S.data?.supportWhatsapp, 'مرحباً، أحتاج مساعدة في المتجر');
 
-  // Counts per service type
-  const totalCount = packages.length;
-  const esimCount = packages.filter((p) => isEsimPkg(p)).length;
+  // Counts per dedicated tab (eSIM/new-line packages vs Recharge packages)
+  const esimCount = packages.filter((p) => p.kind !== 'card').length;
   const cardCount = packages.filter((p) => p.kind === 'card').length;
+
+  if (S.kindFilter !== 'esim' && S.kindFilter !== 'card') {
+    S.kindFilter = 'esim';
+  }
 
   // Filtered packages
   const q = S.q.trim().toLowerCase();
   const shown = packages.filter((p) => {
     if (S.companyId !== 'all' && String(p.companyId) !== String(S.companyId)) return false;
-    if (S.kindFilter === 'esim' && !isEsimPkg(p)) return false;
+    if (S.kindFilter === 'esim' && p.kind === 'card') return false;
     if (S.kindFilter === 'card' && p.kind !== 'card') return false;
     if (q) {
       const coName = coMap.get(p.companyId)?.name || p.companyName || '';
       const isEsim = isEsimPkg(p);
-      const hay = `${p.name} ${p.description || ''} ${p.tag || ''} ${coName} ${pkgGb(p) || ''} ${p.days || ''} ${isEsim ? 'esim إلكترونية الكترونية شريحة' : 'شريحة كرت sim'} باقة حزمة نت ${p.price || ''}`.toLowerCase();
+      const hay = `${p.name} ${p.description || ''} ${p.tag || ''} ${coName} ${pkgGb(p) || ''} ${p.days || ''} ${isEsim ? 'esim إلكترونية الكترونية شريحة' : 'شريحة كرت sim شحن'} باقة حزمة نت ${p.price || ''}`.toLowerCase();
       if (!hay.includes(q)) return false;
     }
     return true;
@@ -1250,8 +1265,13 @@ function viewCatalog() {
     <div class="pele-adv-wrap">
       <div class="pele-adv-feature">
         <div class="pele-adv-link">
-          <a href="#sec-packs" data-jump="sec-packs">
+          <a href="#sec-packs" data-act="nav-esim">
             <span class="txt">باقات eSIM</span>
+          </a>
+        </div>
+        <div class="pele-adv-link">
+          <a href="#sec-packs" data-act="nav-card">
+            <span class="txt">شحن رصيد</span>
           </a>
         </div>
         <div class="pele-adv-link">
@@ -1284,19 +1304,14 @@ function viewCatalog() {
             </div>
           </div>
           <div class="esim-type-tabs" role="tablist" aria-label="نوع الخدمة">
-            <button type="button" role="tab" class="esim-type-tab" aria-selected="${S.kindFilter === 'all'}" data-kind="all">
-              <span>كل الباقات</span>
-              <small>${fmtNum(totalCount)}</small>
-            </button>
             <button type="button" role="tab" class="esim-type-tab" aria-selected="${S.kindFilter === 'esim'}" data-kind="esim">
-              <span>شرائح eSIM</span>
+              <span>باقات شرائح eSIM</span>
               <small>${fmtNum(esimCount)}</small>
             </button>
-            ${cardCount ? `
-              <button type="button" role="tab" class="esim-type-tab" aria-selected="${S.kindFilter === 'card'}" data-kind="card">
-                <span>شحن رصيد</span>
-                <small>${fmtNum(cardCount)}</small>
-              </button>` : ''}
+            <button type="button" role="tab" class="esim-type-tab" aria-selected="${S.kindFilter === 'card'}" data-kind="card">
+              <span>شحن رصيد لخطك</span>
+              <small>${fmtNum(cardCount)}</small>
+            </button>
           </div>
 
           ${companies.length > 1 ? `
@@ -1319,8 +1334,8 @@ function viewCatalog() {
       ` : `
         <div class="card empty">
           ${icon('sim')}
-          <p>لا توجد باقات مطابقة</p>
-          <button type="button" class="btn ghost btn-sm" id="reset-filters">عرض كل الباقات</button>
+          <p>${S.kindFilter === 'card' ? 'لا توجد باقات شحن مطابقة حالياً' : 'لا توجد باقات eSIM مطابقة حالياً'}</p>
+          <button type="button" class="btn ghost btn-sm" id="reset-filters">إعادة ضبط البحث والشبكات</button>
         </div>
       `}
     </section>
@@ -1436,7 +1451,7 @@ function viewCatalog() {
   // Bind filter & interactive events
   const resetBtn = document.getElementById('reset-filters');
   if (resetBtn) {
-    resetBtn.onclick = () => { S.companyId = 'all'; S.kindFilter = 'all'; S.q = ''; viewCatalog(); };
+    resetBtn.onclick = () => { S.companyId = 'all'; S.q = ''; viewCatalog(); };
   }
   const packsQ = document.getElementById('packs-search-input');
   if (packsQ) {
@@ -1637,7 +1652,8 @@ function renderExtractedSpecsChips(sp) {
 
 function renderPlanCard(pk, co) {
   const coColor = co?.color || '#1f6ff2';
-  const hasEsim = isEsimPkg(pk);
+  const isCard = pk.kind === 'card';
+  const hasEsim = !isCard && isEsimPkg(pk);
   const featured = isFeaturedPkg(pk);
   const sp = extractPackageSpecs(pk, co);
 
@@ -1694,13 +1710,16 @@ function renderPlanCard(pk, co) {
         </div>
       </div>
 
-      <div class="pele-pack-btns">
-        <a class="pele-btn-b order-b" href="#/buy/${pk.id}${hasEsim ? '?esim=1' : ''}">
-          ${hasEsim ? 'شراء شريحة eSIM' : 'شراء الآن'}
-        </a>
-        <a class="pele-btn-b order-c" href="#/buy/${pk.id}">
-          شحن رصيد لخطك
-        </a>
+      <div class="pele-pack-btns is-single">
+        ${isCard ? `
+          <a class="pele-btn-b order-c" href="#/buy/${pk.id}">
+            شحن رصيد لخطك
+          </a>
+        ` : `
+          <a class="pele-btn-b order-b" href="#/buy/${pk.id}${hasEsim ? '?esim=1' : ''}">
+            ${hasEsim ? 'شراء شريحة eSIM' : 'شراء الآن'}
+          </a>
+        `}
       </div>
       <button type="button" class="pele-lnk-inc" data-pack-info="${esc(String(pk.id))}">
         تفاصيل إضافية
@@ -1755,25 +1774,20 @@ function viewBuy(id) {
   const pk = (S.data?.packages || []).find((p) => String(p.id) === String(id));
   if (!pk) { location.hash = '#/'; return; }
   const co = (S.data?.companies || []).find((c) => c.id === pk.companyId) || { name: pk.companyName };
-  const sp = extractPackageSpecs(pk, co);
   const isCard = pk.kind === 'card';
-  const canEsim = Boolean(pk.esim);
-  const wantEsim = canEsim && (S.wantEsim || !isCard);
+  const canEsim = !isCard && Boolean(pk.esim);
+  const wantEsim = canEsim;
   const qrFee = Number(pk.esimFee ?? co?.esimFee ?? S.data?.esimFee ?? 0);
   const total = Number(pk.price || 0) + (wantEsim ? qrFee : 0);
 
   if (wantEsim) {
-    return esimForm(pk, co, isCard);
+    return esimForm(pk, co, false);
   }
 
   shell(`
     <form id="buy-f" class="card shop-form" style="--co:${esc(co?.color || '#2563eb')}">
       <div class="shop-card-topbar">
         <a href="#/" class="btn ghost btn-sm">→ الباقات</a>
-        ${canEsim ? `
-          <button type="button" class="btn ghost btn-sm" data-act="compat-sheet">
-            ${icon('chip')}<span>فحص توافق الجهاز</span>
-          </button>` : ''}
       </div>
 
       <div class="shop-steps no-print" aria-label="مراحل الطلب">
@@ -1783,30 +1797,6 @@ function viewBuy(id) {
       </div>
 
       ${renderCheckoutPackageSummary(pk, co, { isEsim: false, isCard })}
-
-      ${canEsim && isCard ? `
-        <div class="field">
-          <label>نوع الطلب</label>
-          <div class="shop-mode-cards" role="radiogroup" aria-label="نوع الطلب">
-            <button type="button" class="shop-mode-card" data-esim="0" aria-pressed="true">
-              <div class="row between">
-                ${icon('refresh')}
-                <span class="mono">${fmtMoney(pk.price)}</span>
-              </div>
-              <b>شحن رقمي الحالي</b>
-              <small>تجديد الباقة على شريحتك الحالية</small>
-            </button>
-            <button type="button" class="shop-mode-card" data-esim="1" aria-pressed="false">
-              <div class="row between">
-                ${icon('qr')}
-                <span class="mono">${fmtMoney(pk.price + qrFee)}</span>
-              </div>
-              <b>شريحة eSIM جديدة (QR)</b>
-              <small>${qrFee > 0 ? `شامل رسوم QR (${fmtMoney(qrFee)})` : 'كود QR مجاني'}</small>
-            </button>
-          </div>
-        </div>
-      ` : ''}
 
       <div class="field">
         <label for="f-phone">${isCard ? 'رقم الهاتف المراد شحنه' : 'رقم الهاتف'}</label>
