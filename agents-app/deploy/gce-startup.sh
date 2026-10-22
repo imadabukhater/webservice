@@ -75,7 +75,7 @@ WantedBy=multi-user.target
 EOF
 
 cat > /etc/caddy/Caddyfile <<EOF
-hotesim.shop {
+http://34.56.162.217, hotesim.shop {
   redir https://www.hotesim.shop{uri} permanent
 }
 
