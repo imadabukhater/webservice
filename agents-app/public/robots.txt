@@ -1,0 +1,20 @@
+# robots.txt for https://www.hotesim.shop/
+User-agent: *
+Allow: /
+Allow: /shop
+Allow: /shop.html
+Allow: /css/
+Allow: /js/
+Allow: /icon.svg
+Allow: /icon-512.png
+Allow: /icon-192.png
+
+# Disallow internal agent management portals and sensitive APIs
+Disallow: /portal
+Disallow: /admin
+Disallow: /agent
+Disallow: /agents
+Disallow: /api/
+
+# Sitemap location
+Sitemap: https://www.hotesim.shop/sitemap.xml
