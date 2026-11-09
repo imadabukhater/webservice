@@ -320,7 +320,7 @@ test('connected sites: catalog, orders and balance with an API key; invoices', a
   assert.equal(paid.amount, 160);
 });
 
-test('custom company eSIM QR fee, direct eSIM instant QR activation, and bulk package operations', async () => {
+test('custom company eSIM QR fee, direct eSIM: paid first, real QR from the manager, and bulk package operations', async () => {
   const admin = (await ok(call(null, 'POST', '/api/login', { username: 'admin', password: 'admin-pass' }))).token;
   await ok(call(admin, 'PUT', '/api/settings', { shopEnabled: true, shopInstant: true, esimFee: 10 }));
 
@@ -349,17 +349,36 @@ test('custom company eSIM QR fee, direct eSIM instant QR activation, and bulk pa
   assert.equal(unpaidAttempt.esimQr, null);
   assert.equal((await call(null, 'POST', `/api/shop/orders/${unpaidAttempt.code}/instant`, {})).status, 403);
 
-  // Re-enable shopInstant explicitly and verify instant endpoint works when admin opts in
+  // Even with the old "instant" setting on, nothing skips payment and no QR or code is made up.
   await ok(call(admin, 'PUT', '/api/settings', { shopInstant: true }));
+  assert.equal((await ok(call(null, 'GET', '/api/shop'))).instant, false);
   const ord = await ok(call(null, 'POST', '/api/shop/orders', {
-    packageId: p1.id, kind: 'new', esim: true, number: '0591234567', customerName: 'أحمد', contactPhone: '0591234567',
+    packageId: p1.id, kind: 'new', esim: true, instant: true, number: '0591234567', customerName: 'أحمد', contactPhone: '0591234567',
   }));
   assert.equal(ord.amount, 85);
   assert.equal(ord.esimFee, 25);
+  assert.equal(ord.status, 'awaiting_payment');
+  assert.equal(ord.esimQr, null);
+  assert.equal((await call(null, 'POST', `/api/shop/orders/${ord.code}/instant`, {})).status, 403);
 
-  const inst = await ok(call(null, 'POST', `/api/shop/orders/${ord.code}/instant`, {}));
-  assert.match(inst.esimQr, /^data:image\/svg\+xml;base64,/);
-  assert.match(inst.esimCode, /^LPA:1\$/);
+  // Paid and verified from the JawwalPay e-mail: the line waits for the manager, still without a QR.
+  const { q } = require('../src/db');
+  q(`INSERT INTO payment_mails (uid_validity, uid, message_id, trusted, from_addr, subject, received_at, amount, reference, sender_phone, sender_name, body, created_at)
+     VALUES (1, 9981, '<direct@jp>', 1, 'noreply@jawwalpay.ps', 'Jawwal Pay', ?, 85, '2922940000001', '', 'احمد محمود يوسف', 'incoming', ?)`).run(Date.now(), Date.now());
+  const paid = await ok(call(null, 'POST', `/api/shop/orders/${ord.code}/proof`, { payReference: '2922940000001' }));
+  assert.equal(paid.status, 'paid');
+  assert.equal(paid.esimQr, null);
+  assert.equal(paid.esimCode, '');
+
+  // The manager carries it out with the supplier's real code: the customer then sees that QR and code.
+  const realCode = 'LPA:1$smdp.example$DIRECT-REAL-1';
+  const realQr = require('../src/qr').dataUrl(realCode);
+  const task = (await ok(call(admin, 'GET', '/api/tasks'))).find((t) => t.lineNumber === '0591234567' && t.status === 'open');
+  await ok(call(admin, 'POST', `/api/tasks/${task.id}/resolve`, { status: 'done', attachment: realQr, esimCode: realCode }));
+  const done = await ok(call(null, 'GET', `/api/shop/orders/${ord.code}`));
+  assert.equal(done.stage, 'done');
+  assert.equal(done.esimQr, realQr);
+  assert.equal(done.esimCode, realCode);
 
   // Bulk hide, show, esim-enable, and delete
   await ok(call(admin, 'POST', '/api/packages/bulk', { action: 'hide', ids: [p1.id, p2.id] }));

@@ -159,7 +159,9 @@ function createLine(user, body) {
   const t = now();
   const label = D.packageLabel(pkg);
   const customerName = str(body.customerName, 80);
-  const initialQr = esim ? (qlJob?.qr || (pkg.esim_enabled && !viaQl ? require('../shop').makeEsimQr(`LPA:1$rsp.esim.portal$ESIM-${number}-${t}`, number) : '')) : '';
+  // Only QuickLine hands the eSIM's QR code over with the number; otherwise the real code comes when the line is
+  // activated (by the supplier, or attached by the manager). A QR is never made up.
+  const initialQr = esim ? (qlJob?.qr || '') : '';
   const lineId = Number(q(`INSERT INTO lines (number, sim, company_id, package_id, package_label, agent_id, kind, esim, port, direct, months, days, price, cost,
                                               offer_id, status, customer_name, customer_price, note, activated_at, expires_at, updated_at, esim_qr)
                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)

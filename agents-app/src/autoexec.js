@@ -285,7 +285,7 @@ async function sendTcEsim(taskId, j) {
   try { qr = await tc.qrImage(esim.code); } catch (e) { console.error('telecom esim qr', e.message); }
   setAuto(taskId, 'sent', `telecom: خط جديد #${r.leadId || ''}`, { ref: before });
   const note = `telecom: تم تفعيل eSIM — مشترك #${r.leadId || '؟'} (${pkg.cost} ₪)`;
-  if (qr) { finish(taskId, note, 'تم التفعيل', TC_ACTOR, { attachment: qr }); return undefined; }
+  if (qr) { finish(taskId, note, 'تم التفعيل', TC_ACTOR, { attachment: qr, esimCode: esim.code }); return undefined; }
   setAuto(taskId, 'unknown', `${note}، لكن تعذّر رسم رمز QR — رمز التفعيل: ${esim.code.slice(0, 200)}. أرفق رمز QR عند تنفيذ الطلب.`);
   tellManager('eSIM مفعّل بلا رمز QR', `${number}: أرفق رمز QR`);
   return undefined;

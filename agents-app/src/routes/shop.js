@@ -74,8 +74,12 @@ function stage(o, line) {
 }
 
 function orderView(o, { admin = false } = {}) {
-  const line = o.line_id ? q('SELECT id, status, expires_at, esim_qr FROM lines WHERE id = ?').get(o.line_id) : null;
-  const qr = (line?.status === 'active' && line.esim_qr) ? line.esim_qr : (o.status === 'paid' && o.esim_qr ? o.esim_qr : null);
+  const line = o.line_id ? q('SELECT id, status, expires_at, esim_qr, esim_code FROM lines WHERE id = ?').get(o.line_id) : null;
+  // Only a real code and QR (from the supplier, or attached by the manager) ever reaches the customer.
+  const lineQr = shop.realQr(line?.esim_qr);
+  const orderQr = shop.realQr(o.esim_qr);
+  const qr = (line?.status === 'active' && lineQr) ? lineQr : (o.status === 'paid' && orderQr ? orderQr : null);
+  const esimCode = shop.realCode(line?.esim_code) || shop.realCode(o.esim_code);
   const proofTries = Number(o.proof_tries) || 0;
   const firstProofAt = o.first_proof_at || o.proof_at || null;
   const retryUntil = o.status === 'verifying' && firstProofAt ? firstProofAt + shop.VERIFY_MS : null;
@@ -95,7 +99,7 @@ function orderView(o, { admin = false } = {}) {
     esim: !!o.esim, email: o.email, qrMailed: !!o.qr_mailed_at,
     reservedUntil: o.status === 'awaiting_payment' ? o.created_at + RESERVE_MS : null,
     esimQr: o.esim && qr ? qr : null,
-    esimCode: o.esim && (admin || o.status === 'paid') ? (o.esim_code || '') : null,
+    esimCode: o.esim && (admin || o.status === 'paid') ? esimCode : null,
     ...(admin ? {
       id: o.id, sim: o.sim, contactPhone: o.contact_phone,
       hasReceipt: !!o.receipt, proofAt: o.proof_at, mailId: o.mail_id, verifiedBy: o.verified_by, lineId: o.line_id, error: o.error,
@@ -130,7 +134,8 @@ function shopCatalogResponse() {
       WHERE p.active = 1 AND p.shop_price > 0 ORDER BY c.sort, c.id, p.sort, p.id`).all() : [];
   const ids = new Set(packages.map((p) => p.company_id));
   return {
-    enabled: s.shopEnabled, instant: s.shopInstant, appName: s.appName,
+    // Every order is paid and verified before it is carried out: there is no instant (unpaid) activation.
+    enabled: s.shopEnabled, instant: false, appName: s.appName,
     shopName: s.shopTitle || (s.appName ? `متجر ${s.appName}` : 'متجر الباقات'),
     shopTitle: s.shopTitle || '', shopSubtitle: s.shopSubtitle || '',
     supportWhatsapp: s.supportWhatsapp, esimFee: s.esimFee,
@@ -254,10 +259,6 @@ route('POST', '/api/shop/orders', null, ({ body, ip, req }) => {
   const row = q(`INSERT INTO shop_orders (code, package_id, package_label, kind, number, sim, customer_name, contact_phone, amount, ip, client_id, created_at, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
     .run(code, p.id, D.packageLabel(p), kind, number, sim, str(body.customerName, 80), contact, round(p.shop_price), ip, clientId, t, t);
-  if (body.instant && s.shopInstant) {
-    const orderId = Number(row.lastInsertRowid);
-    if (shop.claim(orderId, null, 'تفعيل فوري مباشر')) shop.fulfil(orderId);
-  }
   return orderView(byCode(code));
 });
 
@@ -289,47 +290,23 @@ async function esimOrder(body, ip, clientId = '') {
   const compFee = hasCompanyFee ? round(pk.p.company_esim_fee) : s.esimFee;
   const esimFee = (hasCompanyFee || body.includeEsimFee) ? round(compFee) : 0;
   const totalAmount = round(pk.p.shop_price + esimFee);
-  const esimCode = `LPA:1$rsp.${String(pk.p.company_name || 'esim').toLowerCase().replace(/[^a-z0-9]/g, '') || 'telecom'}.portal$ESIM-${code}-${picked.phone}`;
-  const qrData = picked.qr || ((!pk.ref && pk.direct) || (body.instant && s.shopInstant) ? shop.makeEsimQr(esimCode, picked.phone) : '');
+  // The eSIM's code and QR come only from the supplier (QuickLine gives them with the number; Layan and telecom when
+  // the line is activated after payment) or from the manager who carries the order out. Nothing is made up here.
+  const esimCode = '';
+  const qrData = shop.realQr(picked.qr || '');
   const row = q(`INSERT INTO shop_orders (code, package_id, package_label, kind, number, sim, customer_name, contact_phone, amount, esim_fee, esim_code, ip, client_id, created_at, updated_at,
        esim, number_id, esim_qr, email) VALUES (?, ?, ?, 'new', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)`)
     .run(code, pk.p.id, D.packageLabel(pk.p), picked.phone, String(picked.sim || '').replace(/\D/g, ''), customerName, contact, totalAmount, esimFee, esimCode, ip, clientId, t, t,
       picked.id, qrData, email);
-  if (body.instant && s.shopInstant) {
-    const orderId = Number(row.lastInsertRowid);
-    if (shop.claim(orderId, null, 'تفعيل فوري مباشر')) {
-      shop.fulfil(orderId);
-      const ord = byCode(code);
-      if (ord.line_id && qrData) {
-        q("UPDATE lines SET esim_qr = COALESCE(NULLIF(esim_qr, ''), ?), status = 'active', activated_at = COALESCE(activated_at, ?), updated_at = ? WHERE id = ?")
-          .run(qrData, now(), now(), ord.line_id);
-      }
-    }
-  }
   return orderView(byCode(code));
 }
 
+// There is no unpaid ("instant") activation: an order is carried out only once its payment is verified.
 route('POST', '/api/shop/orders/:code/instant', null, ({ params, ip }) => {
-  const s = enabled();
+  enabled();
   throttle(ip, 'proof', 30);
-  if (!s.shopInstant) fail(403, 'التفعيل الفوري غير مفعّل حالياً');
-  const o = byCode(params.code, ip);
-  if (o.status === 'paid') return orderView(o);
-  if (!['awaiting_payment', 'verifying', 'review'].includes(o.status)) fail(400, 'تم التعامل مع هذا الطلب');
-  const esimCode = o.esim_code || `LPA:1$rsp.esim.portal$ESIM-${o.code}-${o.number}`;
-  const qrData = o.esim ? (o.esim_qr || shop.makeEsimQr(esimCode, o.number)) : '';
-  if (o.esim && !o.esim_qr) {
-    q('UPDATE shop_orders SET esim_qr = ?, esim_code = ? WHERE id = ?').run(qrData, esimCode, o.id);
-  }
-  if (shop.claim(o.id, null, 'تفعيل فوري مباشر')) {
-    shop.fulfil(o.id);
-    const fresh = byCode(o.code);
-    if (fresh.line_id && qrData) {
-      q("UPDATE lines SET esim_qr = COALESCE(NULLIF(esim_qr, ''), ?), status = 'active', activated_at = COALESCE(activated_at, ?), updated_at = ? WHERE id = ?")
-        .run(qrData, now(), now(), fresh.line_id);
-    }
-  }
-  return orderView(byCode(o.code));
+  byCode(params.code, ip);
+  fail(403, 'يتم التفعيل وإظهار الكود بعد التحقق من الدفع فقط. أرسل إثبات التحويل من صفحة الطلب.');
 });
 
 route('GET', '/api/shop/orders/:code', null, async ({ params, query, ip }) => {

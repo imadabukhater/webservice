@@ -16,6 +16,7 @@ const http = require('node:http');
 const net = require('node:net');
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { decodeQrDataUrl } = require('./qr-decode');
 
 // ---------- QuickLine, with three free eSIM numbers ----------
 const JWT = 'header.payload.signature';
@@ -175,7 +176,7 @@ const tcSite = http.createServer((req, res) => {
     const u = new URL(req.url, 'http://x');
     const sid = /PHPSESSID=(\w+)/.exec(req.headers.cookie || '')?.[1];
     const json = (v) => { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(v)); };
-    if (u.pathname === '/v1/create-qr-code/') { res.writeHead(200, { 'Content-Type': 'image/png' }); return res.end(PNG); }
+    if (u.pathname === '/v1/create-qr-code/') { tcFake.qrServiceCalls = (tcFake.qrServiceCalls || 0) + 1; res.writeHead(200, { 'Content-Type': 'image/png' }); return res.end(PNG); }
     if (u.pathname === '/login') { res.writeHead(200, { 'Set-Cookie': `PHPSESSID=t${Date.now()}; path=/` }); return res.end(''); }
     if (u.pathname === '/login/verifyLogin') { tcFake.code = '12345'; res.writeHead(200, { Refresh: `0;url=${process.env.TC_BASE}/VVC` }); return res.end(); }
     if (u.pathname === '/VVC') { res.writeHead(200); return res.end(''); }
@@ -212,7 +213,6 @@ test.before(async () => {
   await new Promise((r) => lyApi.listen(0, '127.0.0.1', r));
   await new Promise((r) => tcSite.listen(0, '127.0.0.1', r));
   process.env.TC_BASE = `http://127.0.0.1:${tcSite.address().port}`;
-  process.env.TC_QR_BASE = process.env.TC_BASE;
   const tcClient = require('../src/telecom');
   tcClient._deps.mailMark = async () => ({ uid: 1, at: Date.now() });
   tcClient._deps.waitForCode = async () => tcFake.code;
@@ -355,7 +355,11 @@ test('eSIM shop with telecom (ALOHA): a free number, an eSIM taken and registere
   assert.equal((await ok(call(null, 'POST', `/api/shop/orders/${o.code}/proof`, { payName: 'Mona Hasaballah' }))).status, 'paid');
   const done = await until(async () => { const v = await ok(call(null, 'GET', `/api/shop/orders/${o.code}`)); return v.stage === 'done' && v; });
   assert.equal(done.number, num);
-  assert.equal(done.esimQr, `data:image/png;base64,${PNG.toString('base64')}`);
+  // The QR is drawn here from the activation code telecom returned, and scans back to it; nothing is sent to an
+  // outside QR service, and the code itself is shown too.
+  assert.equal(decodeQrDataUrl(done.esimQr), 'LPA:1$smdp.example$ACT-77');
+  assert.equal(done.esimCode, 'LPA:1$smdp.example$ACT-77');
+  assert.equal(tcFake.qrServiceCalls || 0, 0);
   const lead = tcFake.leads[0];
   assert.deepEqual([lead.phone, lead.campaignId, lead.sim, lead.sim_h, lead.sim_data, lead.firstname, lead.lastname, lead.email, lead.temp_phone, lead.address, lead.city, lead.zipCode],
     [num, '840', '899721233', '8997212330000000077', '77', 'منى', 'حسب الله', 'mona@example.com', '0599123456', 'הרחוב 1', 'ירושלים', '9100000']);

@@ -277,14 +277,11 @@ async function newEsimLine(creds, { packageId, number, esim, months = 1, custome
   }
   throw new TelecomError(`telecom: رد غير مفهوم على الخط الجديد (${r.status})`);
 }
-// The eSIM's QR code as an image (the site draws it with this same service from the activation code).
-const QR_BASE = process.env.TC_QR_BASE || 'https://api.qrserver.com';
+// The eSIM's QR code as an image, drawn here from its activation code (the activation code is never sent to an
+// outside image service).
 async function qrImage(code) {
   if (!code) return '';
-  const res = await fetch(`${QR_BASE}/v1/create-qr-code/?size=400x400&data=${encodeURIComponent(code)}`, { signal: AbortSignal.timeout(TIMEOUT_MS) });
-  const type = (res.headers.get('content-type') || '').split(';')[0].trim();
-  if (!res.ok || !/^image\//.test(type)) throw new TelecomError(`telecom: تعذّر رسم رمز QR (${res.status})`);
-  return `data:${type};base64,${Buffer.from(await res.arrayBuffer()).toString('base64')}`;
+  return require('./qr').dataUrl(code);
 }
 
 const parseRef = (ref) => {

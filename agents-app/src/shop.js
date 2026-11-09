@@ -12,6 +12,7 @@ const D = require('./domain');
 const mail = require('./mail');
 const smtp = require('./smtp');
 const ql = require('./quickline');
+const qr = require('./qr');
 const { createLine } = require('./routes/lines');
 
 const RESERVE_MS = Number(process.env.SHOP_RESERVE_MS) || 5 * 60_000; // 5 minutes to confirm sending payment or order is cancelled
@@ -262,51 +263,26 @@ function tryMatch(orderId) {
 // ---------- fulfilment ----------
 const ACTOR_NAME = 'موقع الزبائن';
 
-function makeEsimQr(code, label = '') {
-  const s = String(code || 'LPA:1$rsp.esim.local$ACTIVATE');
-  const hash = crypto.createHash('sha256').update(s).digest();
-  const N = 29;
-  const grid = Array.from({ length: N }, () => Array(N).fill(0));
-  const finder = (r0, c0) => {
-    for (let r = -1; r <= 7; r++) for (let c = -1; c <= 7; c++) {
-      const rr = r0 + r, cc = c0 + c;
-      if (rr < 0 || rr >= N || cc < 0 || cc >= N) continue;
-      const on = (r >= 0 && r <= 6 && (c === 0 || c === 6)) ||
-                 (c >= 0 && c <= 6 && (r === 0 || r === 6)) ||
-                 (r >= 2 && r <= 4 && c >= 2 && c <= 4);
-      grid[rr][cc] = on ? 1 : 2;
-    }
-  };
-  finder(0, 0); finder(0, N - 7); finder(N - 7, 0);
-  for (let i = 8; i < N - 8; i++) {
-    grid[6][i] = i % 2 === 0 ? 1 : 2;
-    grid[i][6] = i % 2 === 0 ? 1 : 2;
-  }
-  for (let r = 20; r <= 24; r++) for (let c = 20; c <= 24; c++) {
-    const on = r === 20 || r === 24 || c === 20 || c === 24 || (r === 22 && c === 22);
-    grid[r][c] = on ? 1 : 2;
-  }
-  let bitIdx = 0;
-  for (let r = 0; r < N; r++) for (let c = 0; c < N; c++) {
-    if (grid[r][c] !== 0) continue;
-    const byte = hash[Math.floor(bitIdx / 8) % hash.length];
-    const bit = (byte >> (bitIdx % 8)) & 1;
-    grid[r][c] = ((bit ^ ((r * 3 + c * 5) & 1)) & 1) ? 1 : 2;
-    bitIdx++;
-  }
-  const cell = 7, pad = 21, size = N * cell + pad * 2;
-  let rects = '';
-  for (let r = 0; r < N; r++) for (let c = 0; c < N; c++) {
-    if (grid[r][c] === 1) rects += `<rect x="${pad + c * cell}" y="${pad + r * cell}" width="${cell}" height="${cell}" rx="1.2"/>`;
-  }
-  const safeLabel = String(label || '').replace(/[<>&"]/g, '');
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${size} ${size + (safeLabel ? 22 : 0)}" width="280" height="280">` +
-    `<rect width="100%" height="100%" rx="16" fill="#ffffff"/>` +
-    `<g fill="#0f172a">${rects}</g>` +
-    (safeLabel ? `<text x="${size / 2}" y="${size + 14}" text-anchor="middle" font-family="monospace" font-size="11" font-weight="bold" fill="#334155">${safeLabel}</text>` : '') +
-    `</svg>`;
-  return `data:image/svg+xml;base64,${Buffer.from(svg).toString('base64')}`;
+// The eSIM's QR code, drawn from its real activation code (LPA:1$…) as a PNG. No real code, no QR: an eSIM's code
+// comes only from its supplier (QuickLine, Layan, telecom) or from the manager when they carry the order out.
+function makeEsimQr(code) {
+  return code ? qr.dataUrl(code) : '';
 }
+
+// Earlier versions made up an activation code ("LPA:1$rsp.<company>.portal$ESIM-…") and drew a QR-like picture from
+// its hash, which no phone can install. Those are never shown or e-mailed: the customer waits for the real code.
+const MADE_UP_CODE = /^LPA:1\$rsp\.[a-z0-9-]*\.(?:portal|local)\$/i;
+function isMadeUpCode(code) {
+  return MADE_UP_CODE.test(String(code || '').trim());
+}
+function isMadeUpQr(dataUrl) {
+  const m = /^data:image\/svg\+xml;base64,(.+)$/.exec(String(dataUrl || ''));
+  if (!m) return false;
+  const svg = Buffer.from(m[1], 'base64').toString('utf8');
+  return svg.includes('<g fill="#0f172a">') && svg.includes('rx="16" fill="#ffffff"');
+}
+const realCode = (code) => (code && !isMadeUpCode(code) ? code : '');
+const realQr = (dataUrl) => (dataUrl && !isMadeUpQr(dataUrl) ? dataUrl : '');
 
 // Credits the shop account with the customer's payment and sells the package from it, in one transaction.
 // A refusal (e.g. the number belongs to another agent) leaves the order paid with the reason, for the manager.
@@ -385,7 +361,8 @@ async function deliverQr() {
     const tries = mailTries.get(o.id) || 0;
     if (tries >= MAIL_TRIES) continue;
     const img = /^data:(image\/[a-z0-9.+-]+);base64,(.+)$/i.exec(o.line_qr);
-    if (!img) continue;
+    // A made-up picture from an earlier version is never sent: the manager attaches the real QR code.
+    if (!img || isMadeUpQr(o.line_qr)) continue;
     const creds = gmailCredentials();
     try {
       await smtp.sendMail({
@@ -508,5 +485,5 @@ timer.unref();
 
 module.exports = {
   RESERVE_MS, FIRST_WINDOW_MS, RETRY_WINDOW_MS, VERIFY_MS, WAIT_REVIEW_MS, CHECK_COOLDOWN_MS,
-  shopAgent, namesMatch, matchReason, findMail, claim, tryMatch, fulfil, checkMail, escalate, expireUnconfirmed, saveMail, deliverQr, makeEsimQr,
+  shopAgent, namesMatch, matchReason, findMail, claim, tryMatch, fulfil, checkMail, escalate, expireUnconfirmed, saveMail, deliverQr, makeEsimQr, isMadeUpCode, isMadeUpQr, realCode, realQr,
 };
