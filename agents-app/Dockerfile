@@ -1,5 +1,7 @@
 FROM node:22-alpine
 WORKDIR /app
+# Aylol Telecom is reached through curl (HTTP/2).
+RUN apk add --no-cache curl
 COPY package.json server.js ./
 COPY src ./src
 COPY public ./public
