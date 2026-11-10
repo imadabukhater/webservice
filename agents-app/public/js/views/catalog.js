@@ -17,6 +17,8 @@ const TABS = {
   tccard: { label: 'تمديد telecom', short: 'التمديد', icon: 'refresh', color: 'green', supplier: 'tc', kind: 'card', note: 'تمديد مشترك فعّال للوكالة في telecom على رزمته. يُنفَّذ تلقائياً بعد فحص السعر.' },
   tcinvoice: { label: 'خطوط telecom', short: 'الخط الجديد', icon: 'sim', color: '', supplier: 'tc', kind: 'invoice', note: 'تفعيل خط جديد في telecom (شريحة أو تحويل رقم). يصلك كطلب تنفّذه على موقع telecom.' },
   lyinvoice: { label: 'خطوط ليان', short: 'الخط الجديد', icon: 'sim', color: '', supplier: 'ly', kind: 'invoice', note: 'تفعيل رقم موقوف من أرقام الوكالة في ليان (مع شريحته أو eSIM). يُنفَّذ تلقائياً.' },
+aycard: { label: 'كروت أيلول', short: 'الكروت', icon: 'refresh', color: 'green', supplier: 'ay', kind: 'card', note: 'شحن كروت وحزم رصيد مباشر وفوري من أيلول تيليكوم. يُنفَّذ تلقائياً.' },
+ayinvoice: { label: 'خطوط أيلول', short: 'الخط الجديد', icon: 'sim', color: '', supplier: 'ay', kind: 'invoice', note: 'تفعيل خط فاتورة جديد واسترداد رقم فوري وإصدار كود eSIM من أيلول تيليكوم (جميع باقات الفواتير تدعم eSIM).' },
 };
 // What the manager sees: art-topup's two systems each in its own tab, and each other supplier's two together in one.
 const VIEWS = {
@@ -34,12 +36,16 @@ const VIEWS = {
     label: 'telecom', icon: 'refresh', systems: ['tccard', 'tcinvoice'],
     note: 'تمديد مشتركي الوكالة في telecom تلقائياً بعد فحص السعر؛ الخطوط الجديدة تصلك كطلبات.',
   },
+  ay: {
+    label: 'أيلول', icon: 'refresh', systems: ['aycard', 'ayinvoice'],
+    note: 'مزامنة حية وتفعيل مباشر واسترداد رقم فوري مع إظهار الرقم الجديد وكود eSIM من أيلول تيليكوم.',
+  },
 };
-const viewKey = () => (VIEWS[V.tab] ? V.tab : /^ql/.test(V.tab) ? 'ql' : /^ly/.test(V.tab) ? 'ly' : /^tc/.test(V.tab) ? 'tc' : 'invoice');
+const viewKey = () => (VIEWS[V.tab] ? V.tab : /^ql/.test(V.tab) ? 'ql' : /^ly/.test(V.tab) ? 'ly' : /^tc/.test(V.tab) ? 'tc' : /^ay/.test(V.tab) ? 'ay' : 'invoice');
 // The tab a system's messages show in.
-const viewOf = (systemKey) => (/^ql/.test(systemKey) ? 'ql' : /^ly/.test(systemKey) ? 'ly' : /^tc/.test(systemKey) ? 'tc' : systemKey);
+const viewOf = (systemKey) => (/^ql/.test(systemKey) ? 'ql' : /^ly/.test(systemKey) ? 'ly' : /^tc/.test(systemKey) ? 'tc' : /^ay/.test(systemKey) ? 'ay' : systemKey);
 // Tabs that show one supplier's two systems together.
-const isSupplierView = (vk) => ['ql', 'ly', 'tc'].includes(vk);
+const isSupplierView = (vk) => ['ql', 'ly', 'tc', 'ay'].includes(vk);
 const SUPPLIERS = {
   art: {
     name: 'art-topup', api: 'art', configured: () => S.settings.artConfigured,
@@ -64,6 +70,12 @@ const SUPPLIERS = {
     markup: (k) => (k === 'card' ? S.settings.qlMarkupCard : S.settings.qlMarkupInvoice) ?? 0,
     synced: (k) => (k === 'card' ? S.settings.qlSyncedCard : S.settings.qlSyncedInvoice),
     markupField: (k) => (k === 'card' ? 'qlMarkupCard' : 'qlMarkupInvoice'),
+  },
+  ay: {
+    name: 'أيلول', api: 'aylol', configured: () => !!S.settings.aylolConfigured,
+    markup: (k) => (k === 'card' ? S.settings.aylolMarkupCard : S.settings.aylolMarkupInvoice) ?? 0,
+    synced: (k) => (k === 'card' ? S.settings.aylolSyncedCard : S.settings.aylolSyncedInvoice),
+    markupField: (k) => (k === 'card' ? 'aylolMarkupCard' : 'aylolMarkupInvoice'),
   },
 };
 // Not connected yet: a plain way to the supplier's account settings, instead of a button that does nothing.
@@ -341,13 +353,15 @@ const SOURCE_GROUPS = [
   ['telecom — تمديد', (p) => p.supplier === 'tc' && p.kind === 'card'],
   ['art-topup — فواتير', (p) => p.supplier === 'art' && p.kind === 'invoice'],
   ['art-topup — كروت', (p) => p.supplier === 'art' && p.kind === 'card'],
+  ['أيلول — خط جديد', (p) => p.supplier === 'ay' && p.kind === 'invoice'],
+  ['أيلول — كروت', (p) => p.supplier === 'ay' && p.kind === 'card'],
   ['يدوية', (p) => !p.supplier],
 ];
 // How many of a company's packages come from where, for its card.
 function sourceCounts(companyId) {
   const pk = S.catalog.packages.filter((p) => p.companyId === companyId);
   const n = (test) => pk.filter(test).length;
-  return [['QuickLine', n((p) => p.supplier === 'ql')], ['ليان', n((p) => p.supplier === 'ly')], ['telecom', n((p) => p.supplier === 'tc')], ['art-topup', n((p) => p.supplier === 'art')], ['يدوية', n((p) => !p.supplier)]]
+  return [['QuickLine', n((p) => p.supplier === 'ql')], ['ليان', n((p) => p.supplier === 'ly')], ['telecom', n((p) => p.supplier === 'tc')], ['art-topup', n((p) => p.supplier === 'art')], ['أيلول', n((p) => p.supplier === 'ay')], ['يدوية', n((p) => !p.supplier)]]
     .filter(([, k]) => k).map(([label, k]) => `${label} ${k}`).join(' · ');
 }
 function companyPackagesHtml(c, offers) {

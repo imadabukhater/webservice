@@ -67,7 +67,22 @@ export default {
             <a class="btn" href="#/catalog">${icon('box')}الشركات والرزم</a>
           </div>
         </form>
-        <form class="card card-pad form" id="ql-form" novalidate autocomplete="off">
+                  <form class="card card-pad form" id="aylol-form" novalidate autocomplete="off">
+            <h2 class="dot-title">البيع والشحن التلقائي عبر أيلول تيليكوم (Aylol)</h2>
+            <p class="muted small">يشحن السيرفر كروت الشركات ويفعّل خطوط الفواتير الجديدة وشرائح eSIM من حسابك في أيلول تيليكوم تلقائياً. جميع باقات الفواتير تدعم eSIM.</p>
+            <div class="row2 stack-xs">
+              <div class="field"><label for="aylol-user">البريد في أيلول</label><input class="input ltr" id="aylol-user" name="aylolUser" type="email" value="${esc(s.aylolUser || '')}" autocomplete="off"></div>
+              <div class="field"><label for="aylol-pass">كلمة المرور</label><input class="input ltr" id="aylol-pass" name="aylolPass" type="password" autocomplete="new-password" placeholder="${s.aylolConfigured ? 'محفوظة — اتركها فارغة للإبقاء' : ''}"></div>
+            </div>
+            <div class="msg info">${icon('info')}<span>المزامنة ونسبة الربح منفصلتان لكل نظام: افتح «الشركات والرزم» ← تبويب «أيلول».</span></div>
+            <div id="aylol-msg"></div>
+            <div class="btn-row">
+              <button class="btn btn-primary" type="submit">${icon('check')}حفظ</button>
+              <button class="btn" type="button" data-action="aylol-check" ${s.aylolConfigured ? '' : 'disabled'}>${icon('wallet')}اختبار الاتصال</button>
+              <a class="btn" href="#/catalog">${icon('box')}الشركات والرزم</a>
+            </div>
+          </form>
+          <form class="card card-pad form" id="ql-form" novalidate autocomplete="off">
           <h2 class="dot-title">البيع التلقائي عبر QuickLine</h2>
           <p class="muted small">يمدّد السيرفر خطوط الشركات المضبوطة على «تلقائي» من حسابك في QuickLine، ويُكمل الطلب بنفسه. ويفعّل الخطوط الجديدة هناك (رقم من أرقامهم المتاحة، eSIM، أو تحويل رقم). التمديد يحتاج أن يكون الرقم موجوداً في QuickLine تحت وكالتك.</p>
           <div class="row2 stack-xs">
@@ -183,6 +198,18 @@ export default {
         msg.innerHTML = `<div class="msg">${icon('alert')}<span>${esc(err.message)}</span></div>`;
       }
     });
+    root.querySelector('#aylol-form')?.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const form = e.currentTarget;
+      const msg = root.querySelector('#aylol-msg');
+      try {
+        S.settings = await api.put('/api/settings', { aylolUser: field(form, 'aylolUser'), aylolPass: form.elements.aylolPass.value });
+        toast('تم حفظ إعدادات أيلول');
+        changed();
+      } catch (err) {
+        msg.innerHTML = `<div class="msg">${icon('alert')}<span>${esc(err.message)}</span></div>`;
+      }
+    });
     root.querySelector('#ql-form')?.addEventListener('submit', async (e) => {
       e.preventDefault();
       const form = e.currentTarget;
@@ -221,6 +248,16 @@ export default {
       try {
         const r = await api.post('/api/art/check');
         box.innerHTML = `<div class="msg info">${icon('checkCircle')}<span>تم الاتصال بـ art-topup. الرصيد: ${r.balance === null ? 'غير معروف' : `${r.balance} ₪`}</span></div>`;
+      } catch (err) {
+        box.innerHTML = `<div class="msg">${icon('alert')}<span>${esc(err.message)}</span></div>`;
+      } finally { btn.disabled = false; }
+    },
+    async 'aylol-check'(btn) {
+      const box = document.getElementById('aylol-msg');
+      btn.disabled = true;
+      try {
+        const r = await api.post('/api/aylol/check');
+        box.innerHTML = `<div class="msg info">${icon('checkCircle')}<span>تم الاتصال بـ أيلول تيليكوم بنجاح (${esc(r.user || '')}).</span></div>`;
       } catch (err) {
         box.innerHTML = `<div class="msg">${icon('alert')}<span>${esc(err.message)}</span></div>`;
       } finally { btn.disabled = false; }

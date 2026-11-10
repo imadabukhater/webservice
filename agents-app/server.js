@@ -18,6 +18,7 @@ require('./src/routes/art');
 require('./src/routes/quickline');
 require('./src/routes/layan');
 require('./src/routes/telecom');
+require('./src/routes/aylol');
 require('./src/routes/invoices');
 require('./src/routes/shop');
 require('./src/routes/sync');

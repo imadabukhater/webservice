@@ -6,7 +6,8 @@
 //   telecom    — extending a subscriber the dealer already has (refs tc:), the result read back from its end date.
 // Money safety: a request is sent at most once (claimed with auto_status). Anything unclear (no answer, rejected,
 // no sign it took effect) leaves the task open for the manager, who checks the supplier before acting.
-const { q, tx, getSettings, artCredentials, qlCredentials, lyCredentials, tcCredentials } = require('./db');
+const { q, tx, getSettings, artCredentials, qlCredentials, aylolCredentials, lyCredentials, tcCredentials } = require('./db');
+const aylol = require('./aylol');
 const { now } = require('./util');
 const D = require('./domain');
 const art = require('./art');
@@ -19,6 +20,7 @@ const ACTOR = { id: null, name: 'art-topup (تلقائي)', role: 'admin' };
 const QL_ACTOR = { id: null, name: 'QuickLine (تلقائي)', role: 'admin' };
 const LY_ACTOR = { id: null, name: 'ليان (تلقائي)', role: 'admin' };
 const TC_ACTOR = { id: null, name: 'telecom (تلقائي)', role: 'admin' };
+const AY_ACTOR = { id: null, name: 'أيلول (تلقائي)', role: 'admin' };
 const CHECK_MS = Number(process.env.ART_CHECK_MS) || 15_000; // first look at the operations list after sending
 const GIVE_UP_MS = 30 * 60_000; // still not finished after this: hand over to the manager
 const LOOP_MS = Number(process.env.ART_LOOP_MS) || 30_000;
@@ -53,8 +55,8 @@ function job(taskId) {
   // number): QuickLine new lines only — art-topup's invoices (inv:) stay requests for the manager.
   const ref = p.art_card_id;
   const supplier = ['recharge', 'renew'].includes(t.type)
-    ? (/^(ic|pb|pc):/.test(ref) ? 'art' : /^ql:/.test(ref) ? 'ql' : /^ly:/.test(ref) ? 'ly' : /^tc:/.test(ref) ? 'tc' : null)
-    : (/^qln:/.test(ref) ? 'qln' : /^lyn:/.test(ref) && t.type === 'activate' ? 'lyn' : /^lyn:/.test(ref) && t.type === 'esim' ? 'lye' : /^tcn:/.test(ref) && t.type === 'esim' ? 'tce' : null);
+    ? (/^(ic|pb|pc):/.test(ref) ? 'art' : /^ql:/.test(ref) ? 'ql' : /^ly:/.test(ref) ? 'ly' : /^tc:/.test(ref) ? 'tc' : /^ay:/.test(ref) ? 'ay' : null)
+    : (/^qln:/.test(ref) ? 'qln' : /^lyn:/.test(ref) && t.type === 'activate' ? 'lyn' : /^lyn:/.test(ref) && t.type === 'esim' ? 'lye' : /^tcn:/.test(ref) && t.type === 'esim' ? 'tce' : /^ay:/.test(ref) ? 'ay' : null);
   if (!supplier) return null;
   // The supplier is paid its own current price, never the cost the manager may have typed.
   return { t, supplier, line, number: line.number, ref, price: p.art_price ?? p.cost };
@@ -76,7 +78,7 @@ async function send(taskId) {
   const j = job(taskId);
   if (!j) return;
   const s = getSettings();
-  const ready = { art: s.artConfigured, ly: s.lyConfigured, lyn: s.lyConfigured, lye: s.lyConfigured, tc: s.tcReady, tce: s.tcReady }[j.supplier] ?? s.qlConfigured;
+  const ready = { art: s.artConfigured, ly: s.lyConfigured, lyn: s.lyConfigured, lye: s.lyConfigured, tc: s.tcReady, tce: s.tcReady, ay: s.aylolConfigured }[j.supplier] ?? s.qlConfigured;
   if (!ready) return;
   // Claim it: only one sender, only once.
   if (!q("UPDATE tasks SET auto_status = 'sending', auto_at = ? WHERE id = ? AND status = 'open' AND auto_status = ''").run(now(), taskId).changes) return;
@@ -86,6 +88,7 @@ async function send(taskId) {
   if (j.supplier === 'tc') return sendTc(taskId, j);
   if (j.supplier === 'lye') return sendLyEsim(taskId, j);
   if (j.supplier === 'tce') return sendTcEsim(taskId, j);
+  if (j.supplier === 'ay') return sendAy(taskId, j);
   return sendArt(taskId, j);
 }
 
@@ -725,7 +728,7 @@ D.events.on('sale-task', (id) => setImmediate(() => send(id).catch((e) => consol
 let busy = false;
 async function sweep() {
   const s = getSettings();
-  if (busy || !(s.artConfigured || s.qlConfigured || s.lyConfigured || s.tcReady)) return;
+  if (busy || ((s.artConfigured || s.qlConfigured || s.lyConfigured || s.tcReady || s.aylolConfigured) ? false : true)) return;
   busy = true;
   try {
     // A send interrupted midway (e.g. the server restarted) may or may not have reached the supplier: never resend it,
@@ -748,5 +751,47 @@ async function sweep() {
   }
 }
 setInterval(() => { sweep().catch((e) => console.error('auto sweep', e)); }, LOOP_MS).unref();
+
+
+// ---------- Aylol: a top-up card, a new bill line or an eSIM ----------
+// The order goes to aylol-telecom.com once the agent's balance has been charged. A new line without a number gets
+// one of the site's ready numbers there. An eSIM's QR code is drawn from its real activation code; without one the
+// task stays with the manager, who attaches it.
+async function sendAy(taskId, j) {
+  const isEsim = j.t.type === 'esim';
+  const number = String(j.number || '').replace(/\D/g, '');
+  const retrieveNewNumber = !number || /^050{7,8}$/.test(number);
+  let r;
+  try {
+    r = await aylol.executeOrder({
+      ref: j.ref, phoneNumber: retrieveNewNumber ? '' : number, price: j.price, simNumber: j.line?.sim || '',
+      useEsim: isEsim, retrieveNewNumber, note: j.t.note || '',
+    }, aylolCredentials());
+  } catch (e) {
+    if (e.refused) {
+      setAuto(taskId, 'failed', `رفض أيلول: ${e.message}`);
+      tellManager('رفض أيلول التنفيذ', `${j.number}: ${e.message}`);
+      return undefined;
+    }
+    setAuto(taskId, 'unknown', `انقطع الاتصال مع أيلول (${e.message}). افحص أيلول قبل أي تنفيذ يدوي.`);
+    tellManager('تنفيذ أيلول غير مؤكد', `${j.number}: ${e.message}`);
+    return undefined;
+  }
+  if (j.t.line_id) {
+    if (r.phoneNumber && /^05\d{8}$/.test(r.phoneNumber)) q('UPDATE lines SET number = ? WHERE id = ?').run(r.phoneNumber, j.t.line_id);
+    if (r.simNumber) q('UPDATE lines SET sim = ? WHERE id = ?').run(String(r.simNumber).replace(/\D/g, ''), j.t.line_id);
+  }
+  const parts = [`أيلول: ${r.message || 'تم التنفيذ'}`];
+  if (r.phoneNumber) parts.push(`الرقم: ${r.phoneNumber}`);
+  if (r.simNumber) parts.push(`شريحة: ${r.simNumber}`);
+  if (isEsim && !r.qr) {
+    setAuto(taskId, 'unknown', `${parts.join(' | ')} — لكن أيلول لم يُرجع كود eSIM. أرفق رمز QR عند تنفيذ الطلب.`);
+    tellManager('eSIM من أيلول بلا كود', `${r.phoneNumber || j.number}: أرفق رمز QR`);
+    return undefined;
+  }
+  const extra = isEsim ? { attachment: r.qr, esimCode: r.esimCode } : {};
+  finish(taskId, parts.join(' | '), isEsim || j.t.type === 'activate' ? 'تم التفعيل' : 'تم الشحن', AY_ACTOR, extra);
+  return undefined;
+}
 
 module.exports = { send, check, sweep, mirrorLine, mirrorSim };

@@ -3,7 +3,7 @@
 // manager pressing a button: once a day, and sooner (after half an hour) while a sync hid packages within the last day,
 // which may be listed again. The manager is told when prices changed and wait for approval, and when a sync fails (once, until it
 // works again). Each sync is the same one as the buttons in «الشركات والرزم».
-const { q, getSettings, setSetting, qlCredentials, artCredentials, lyCredentials, tcCredentials } = require('./db');
+const { q, getSettings, setSetting, qlCredentials, aylolCredentials, artCredentials, lyCredentials, tcCredentials } = require('./db');
 const { now } = require('./util');
 const D = require('./domain');
 
@@ -12,6 +12,10 @@ const SOON_MS = 30 * 60_000;
 const CHECK_MS = Number(process.env.AUTOSYNC_CHECK_MS) || 60 * 60_000;
 
 const SUPPLIERS = [
+{
+key: 'ay', name: 'أيلول', configured: (s) => s.aylolConfigured, synced: (s) => [s.aylolSyncedCard, s.aylolSyncedInvoice],
+refs: "art_card_id LIKE 'ay:%'", sync: (kind) => require('./routes/aylol').syncKind(aylolCredentials(), kind),
+},
   {
     key: 'ql', name: 'QuickLine', configured: (s) => s.qlConfigured, synced: (s) => [s.qlSyncedCard, s.qlSyncedInvoice],
     refs: "art_card_id LIKE 'ql%'", sync: (kind) => require('./routes/quickline').syncKind(qlCredentials(), kind),

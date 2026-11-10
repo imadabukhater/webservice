@@ -7,6 +7,7 @@
 // The supplier behind a package ref, as the manager sees it.
 function sourceOf(ref) {
   const r = String(ref || '');
+  if (/^ay:/.test(r)) return 'أيلول';
   if (/^qln?:/.test(r)) return 'QuickLine';
   if (/^lyn?:/.test(r)) return 'ليان';
   if (/^tcn?:/.test(r)) return 'telecom';
@@ -15,7 +16,7 @@ function sourceOf(ref) {
 }
 
 // Free text for an agent, without any supplier's name.
-const NAMES = '(?:QuickLine|art-topup|Layan|LayanT|ليان|telecom(?:\\.co\\.il)?)';
+const NAMES = '(?:QuickLine|Aylol|أيلول|art-topup|Layan|LayanT|ليان|telecom(?:\\.co\\.il)?)';
 function forAgent(text) {
   if (text === null || text === undefined) return text;
   return String(text)

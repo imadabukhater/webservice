@@ -209,6 +209,9 @@ route('GET', '/api/numbers/free', ANY, ({ query }) => {
   // A Layan new line picks one of the dealer's suspended numbers (or Layan's free eSIM numbers when esim=1).
   const lyRef = require('../layan').parseRef(q('SELECT art_card_id FROM packages WHERE id = ? AND active = 1').get(Number(query.packageId))?.art_card_id);
   if (lyRef?.system === 'lyn') return require('./layan').freeNumbers(lyRef, query.esim === '1');
+  // An Aylol eSIM picks one of the site's ready eSIM numbers.
+  const ayRef = q('SELECT art_card_id FROM packages WHERE id = ? AND active = 1').get(Number(query.packageId))?.art_card_id || '';
+  if (/^ay:esim:/.test(ayRef)) return require('./aylol').freeNumbers(ayRef);
   const ref = newLinePackage(query.packageId);
   const esim = query.esim === '1';
   const exclude = String(query.exclude || '').split(',').map(Number).filter(Boolean).slice(0, 500);

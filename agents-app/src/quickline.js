@@ -306,6 +306,7 @@ function localNumber(n) {
 // Who supplies a package, from its ref: art-topup (ic:/pb:/pc:/inv:), QuickLine (ql:/qln:, with its package id there),
 // or nobody (typed by the manager).
 function supplierOfRef(ref) {
+  if (/^ay:/i.test(String(ref || ''))) return { supplier: 'ay', qlPackage: null };
   const r = String(ref || '');
   if (/^(ic|pb|pc|inv):/.test(r)) return { supplier: 'art', qlPackage: null };
   // Layan: its package id (a GUID) plays the part of QuickLine's package number.

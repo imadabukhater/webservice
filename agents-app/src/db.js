@@ -117,7 +117,7 @@ CREATE TABLE IF NOT EXISTS agent_hidden (
 -- The manager's profit percentage for one agent on one pricing system (see domain.SYSTEM_SQL).
 CREATE TABLE IF NOT EXISTS agent_markups (
   agent_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  system TEXT NOT NULL CHECK (system IN ('invoice','card','qlinvoice','qlcard','lyinvoice','lycard','tcinvoice','tccard')),
+  system TEXT NOT NULL CHECK (system IN ('invoice','card','qlinvoice','qlcard','lyinvoice','lycard','tcinvoice','tccard','ayinvoice','aycard')),
   markup REAL NOT NULL,
   PRIMARY KEY (agent_id, system)
 );
@@ -361,13 +361,14 @@ db.exec("UPDATE settings SET value = 'jawwalpay.ps' WHERE key = 'mail_from' AND 
 ensureColumn('lines', 'ql_pending', "ql_pending TEXT NOT NULL DEFAULT ''");
 // QuickLine lines: a new SIM put on the line here, still to be put on it there.
 ensureColumn('lines', 'ql_sim', "ql_sim TEXT NOT NULL DEFAULT ''");
-// Layan's and telecom's systems came after agent_markups; SQLite cannot change a CHECK, so rebuild that table once.
-if (!/tcinvoice/.test(tableSql('agent_markups') || '')) {
+// Layan's, telecom's and Aylol's systems came after agent_markups; SQLite cannot change a CHECK, so rebuild that
+// table once (again when a newer supplier's systems are missing).
+if (!/ayinvoice/.test(tableSql('agent_markups') || '')) {
   db.exec(`BEGIN;
     ALTER TABLE agent_markups RENAME TO agent_markups_v1;
     CREATE TABLE agent_markups (
       agent_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-      system TEXT NOT NULL CHECK (system IN ('invoice','card','qlinvoice','qlcard','lyinvoice','lycard','tcinvoice','tccard')),
+      system TEXT NOT NULL CHECK (system IN ('invoice','card','qlinvoice','qlcard','lyinvoice','lycard','tcinvoice','tccard','ayinvoice','aycard')),
       markup REAL NOT NULL,
       PRIMARY KEY (agent_id, system)
     );
@@ -425,6 +426,7 @@ const DEFAULT_SETTINGS = {
   ql_user: '', ql_pass: '', ql_markup: '15',
   ly_user: '', ly_pass: '', ly_secret: '', ly_markup: '15',
   tc_user: '', tc_pass: '', tc_mail_user: '', tc_mail_pass: '', tc_markup: '15', tc_reg_address: '', tc_reg_city: '', tc_reg_zip: '',
+  aylol_user: '', aylol_pass: '', aylol_markup: '15',
 };
 function getSettings() {
   const out = { ...DEFAULT_SETTINGS };
@@ -474,6 +476,13 @@ function getSettings() {
     tcSyncedInvoice: Number(out.tc_synced_invoice) || null,
     // telecom asks a new line's address, city and postcode: the shop registers its eSIMs with these.
     tcRegAddress: out.tc_reg_address, tcRegCity: out.tc_reg_city, tcRegZip: out.tc_reg_zip,
+    // Aylol Telecom (aylol-telecom.com) sign-in: the password never leaves the server (see aylolCredentials).
+    aylolUser: out.aylol_user,
+    aylolConfigured: !!(out.aylol_user && out.aylol_pass),
+    aylolMarkupCard: Math.max(0, Number(out.aylol_markup_card ?? out.aylol_markup) || 0),
+    aylolMarkupInvoice: Math.max(0, Number(out.aylol_markup_invoice ?? out.aylol_markup) || 0),
+    aylolSyncedCard: Number(out.aylol_synced_card) || null,
+    aylolSyncedInvoice: Number(out.aylol_synced_invoice) || null,
     tcRegReady: !!(out.tc_reg_address && out.tc_reg_city && out.tc_reg_zip),
     // The daily copy in Google Cloud Storage (see cloudbackup.js): where, the last good one, and the last failure.
     backupBucket: out.backup_bucket || '',
@@ -511,6 +520,10 @@ function tcCredentials() {
   const get = (k) => q('SELECT value FROM settings WHERE key = ?').get(k)?.value || '';
   return { user: get('tc_user'), pass: get('tc_pass'), mail: { user: get('tc_mail_user'), pass: get('tc_mail_pass') } };
 }
+function aylolCredentials() {
+  const get = (k) => q('SELECT value FROM settings WHERE key = ?').get(k)?.value || '';
+  return { user: get('aylol_user'), pass: get('aylol_pass') };
+}
 function qlCredentials() {
   const get = (k) => q('SELECT value FROM settings WHERE key = ?').get(k)?.value || '';
   return { user: get('ql_user'), pass: get('ql_pass') };
@@ -547,4 +560,4 @@ function bootstrap() {
 }
 bootstrap();
 
-module.exports = { db, q, tx, getSettings, setSetting, artCredentials, qlCredentials, lyCredentials, tcCredentials, gmailCredentials, DB_FILE };
+module.exports = { db, q, tx, getSettings, setSetting, artCredentials, qlCredentials, aylolCredentials, lyCredentials, tcCredentials, gmailCredentials, DB_FILE };

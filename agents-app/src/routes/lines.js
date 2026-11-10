@@ -132,6 +132,13 @@ function createLine(user, body) {
     if (!require('./telecom').servedEsim(tcRef.packageId, number)) fail(400, 'اختر رقم الهاتف من قائمة الأرقام المتاحة');
     tcJob = { esim: true, email: str(body.customerEmail, 120), phone: str(body.customerPhone, 20) };
   }
+  // An Aylol eSIM on one of the site's ready numbers: carried out there automatically once the sale is made.
+  const ayRef = kind === 'new' && /^ay:esim:/.test(pkg.art_card_id || '') ? pkg.art_card_id : '';
+  if (ayRef) {
+    if (!esim) fail(400, 'هذه الرزمة شريحة eSIM: اختر eSIM');
+    if (port) fail(400, 'هذه الرزمة لا تدعم تحويل الرقم مع eSIM');
+    if (!require('./aylol').servedEsim(ayRef, number)) fail(400, 'اختر رقم الهاتف من قائمة الأرقام المتاحة');
+  }
   if (kind === 'new' && !esim && !lyRef) {
     if (isBlank(body.sim) && !body.simId) fail(400, 'أدخل رقم الشريحة أو اخترها من المخزون');
     sim = D.takeSim({ iccid: body.sim, simId: body.simId }, { agentId: agent.id, isAdmin, companyId: pkg.company_id, companyName: pkg.company_name });
