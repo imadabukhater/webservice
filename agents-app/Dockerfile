@@ -4,7 +4,7 @@ WORKDIR /app
 RUN apk add --no-cache curl
 COPY package.json package-lock.json ./
 # The WhatsApp library (the app itself has no other dependency).
-RUN npm ci --omit=dev --no-audit --no-fund
+RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund
 COPY server.js ./
 COPY src ./src
 COPY public ./public

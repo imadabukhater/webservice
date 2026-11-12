@@ -117,6 +117,7 @@ test('WhatsApp: agents sell as in the portal, results and real QR come back, cus
   const saved = await ok(call(admin, 'PUT', '/api/whatsapp', { admins: '0599000111', shopUrl: 'https://shop.example.com/shop', aiKey: 'secret-ai-key' }));
   assert.deepEqual([saved.config.admins, saved.config.shopUrl, saved.config.hasAiKey], ['0599000111', 'https://shop.example.com/shop', true]);
   assert.equal(JSON.stringify(saved).includes('secret-ai-key'), false);
+  assert.equal(JSON.stringify(await ok(call(admin, 'GET', '/api/settings'))).includes('secret-ai-key'), false);
   await ok(call(admin, 'PUT', '/api/whatsapp', { aiKeyClear: true }));
   const agentTok = await ok(call(admin, 'POST', '/api/agents', { name: 'وكيل واتساب', username: 'wa-agent', password: 'secret1', phone: '0599111222', balance: 500 }));
   assert.ok(agentTok);
@@ -190,6 +191,9 @@ test('WhatsApp: agents sell as in the portal, results and real QR come back, cus
   await wa._test.onRaw({ key: { remoteJid: '123@g.us', fromMe: false }, message: { conversation: 'الباقات' } });
   await wa._test.onRaw({ key: { remoteJid: AG, fromMe: true }, message: { conversation: 'الباقات' } });
   await wa._test.onRaw({ key: { remoteJid: AG, fromMe: false }, message: { conversation: 'الباقات' }, messageTimestamp: Math.floor(Date.now() / 1000) - 3600 });
+  // …also when WhatsApp gives the time as a 64-bit object.
+  const old = Math.floor(Date.now() / 1000) - 3600;
+  await wa._test.onRaw({ key: { remoteJid: AG, fromMe: false }, message: { conversation: 'الباقات' }, messageTimestamp: { low: old, high: 0, toNumber: () => old } });
   assert.equal(sent.length, n);
   await wa._test.onRaw({ key: { remoteJid: '1555@lid', remoteJidAlt: '970599111222@s.whatsapp.net', fromMe: false }, message: { conversation: 'رصيدي' }, messageTimestamp: Math.floor(Date.now() / 1000) });
   assert.equal(sent.at(-1).jid, '1555@lid');

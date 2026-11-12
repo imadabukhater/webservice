@@ -1,6 +1,6 @@
 'use strict';
 // Syncs each supplier's catalog by itself, so new packages, packages listed again and price changes arrive without the
-// manager pressing a button: once a day, and sooner (after half an hour) while a sync hid packages within the last day,
+// manager pressing a button: every six hours or once a day (see OFTEN_MS), when its account is saved, and sooner (after half an hour) while a sync hid packages within the last day,
 // which may be listed again. The manager is told when prices changed and wait for approval, and when a sync fails (once, until it
 // works again). Each sync is the same one as the buttons in «الشركات والرزم».
 const { q, getSettings, setSetting, qlCredentials, aylolCredentials, artCredentials, lyCredentials, tcCredentials } = require('./db');
@@ -8,20 +8,23 @@ const { now } = require('./util');
 const D = require('./domain');
 
 const DAY_MS = 24 * 60 * 60_000;
+// Aylol, QuickLine and Layan sign in by themselves, so their catalogs are refreshed four times a day. telecom's
+// sign-in waits for a code by e-mail and art-topup's catalog is large: once a day.
+const OFTEN_MS = 6 * 60 * 60_000;
 const SOON_MS = 30 * 60_000;
 const CHECK_MS = Number(process.env.AUTOSYNC_CHECK_MS) || 60 * 60_000;
 
 const SUPPLIERS = [
   {
-    key: 'ay', name: 'أيلول', configured: (s) => s.aylolConfigured, synced: (s) => [s.aylolSyncedCard, s.aylolSyncedInvoice],
+    key: 'ay', name: 'أيلول', every: OFTEN_MS, configured: (s) => s.aylolConfigured, synced: (s) => [s.aylolSyncedCard, s.aylolSyncedInvoice],
     refs: "art_card_id LIKE 'ay:%'", sync: (kind) => require('./routes/aylol').syncKind(aylolCredentials(), kind),
   },
   {
-    key: 'ql', name: 'QuickLine', configured: (s) => s.qlConfigured, synced: (s) => [s.qlSyncedCard, s.qlSyncedInvoice],
+    key: 'ql', name: 'QuickLine', every: OFTEN_MS, configured: (s) => s.qlConfigured, synced: (s) => [s.qlSyncedCard, s.qlSyncedInvoice],
     refs: "art_card_id LIKE 'ql%'", sync: (kind) => require('./routes/quickline').syncKind(qlCredentials(), kind),
   },
   {
-    key: 'ly', name: 'ليان', configured: (s) => s.lyConfigured, synced: (s) => [s.lySyncedCard, s.lySyncedInvoice],
+    key: 'ly', name: 'ليان', every: OFTEN_MS, configured: (s) => s.lyConfigured, synced: (s) => [s.lySyncedCard, s.lySyncedInvoice],
     refs: "art_card_id LIKE 'ly%'", sync: (kind) => require('./routes/layan').syncKind(lyCredentials(), kind),
   },
   {
@@ -37,12 +40,12 @@ const SUPPLIERS = [
 
 const tell = (title, body) => D.notify({ role: 'admin', kind: 'task', title, body, link: '#/catalog' });
 
-// Due when either system has never synced or is a day old; or half an hour old while some packages are hidden by a sync.
+// Due when either system has never synced or is older than the supplier's period; or half an hour old while some packages are hidden by a sync.
 function due(sup, s) {
   const times = sup.synced(s);
   if (times.some((t) => !t)) return true;
   const oldest = Math.min(...times);
-  if (now() - oldest >= DAY_MS) return true;
+  if (now() - oldest >= (sup.every || DAY_MS)) return true;
   // Only packages hidden within the last day: one gone for longer is most likely gone for good.
   const gone = q(`SELECT COUNT(*) AS n FROM packages WHERE gone_at > ? AND ${sup.refs}`).get(now() - DAY_MS).n;
   return gone > 0 && now() - oldest >= SOON_MS;

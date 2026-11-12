@@ -17,7 +17,7 @@ cat > /usr/local/bin/agents-update <<EOS
 set -e
 git -C $APP_DIR fetch --depth 1 origin $BRANCH
 git -C $APP_DIR reset --hard FETCH_HEAD
-(cd $APP_DIR/agents-app && npm ci --omit=dev --no-audit --no-fund) || echo "⚠ npm ci failed: the site is updated, WhatsApp may stay off"
+(cd $APP_DIR/agents-app && npm ci --omit=dev --ignore-scripts --no-audit --no-fund) || echo "⚠ npm ci failed: the site is updated, WhatsApp may stay off"
 systemctl restart agents-app
 echo "Updated to \$(git -C $APP_DIR log -1 --format='%h %s')"
 EOS

@@ -223,7 +223,8 @@ async function onRaw(m) {
   // Private chats only: no groups, statuses or channels.
   if (!/@(s\.whatsapp\.net|lid)$/.test(jid)) return;
   // Old messages delivered after a reconnect are not answered (a «نعم» from yesterday must not sell anything).
-  const ts = Number(m.messageTimestamp || 0);
+  const raw = m.messageTimestamp;
+  const ts = raw && typeof raw === 'object' ? (typeof raw.toNumber === 'function' ? raw.toNumber() : Number(raw.low) || 0) : Number(raw || 0);
   if (ts && Date.now() / 1000 - ts > 600) return;
   const pn = [jid, m.key.remoteJidAlt, m.key.senderPn, m.key.participantPn].find((j) => /@s\.whatsapp\.net$/.test(j || ''));
   const text = textOf(m.message);
@@ -549,9 +550,16 @@ async function customerSays(jid, t, raw) {
 }
 
 // ---------- optional: free text understood by Gemini (it only chooses among the actions above) ----------
+// At most 200 questions an hour go to it (strangers cannot run the key's bill up), and what it writes carries no link.
+const aiCalls = [];
+const noLinks = (text) => String(text || '').replace(/(?:https?:\/\/|www\.)\S+/gi, '').replace(/\b[\w-]+\.(?:com|net|org|io|me|co|shop|xyz|info)\b\S*/gi, '').trim();
 async function understand(t, raw, kind) {
   const cfg = config();
   if (!cfg.aiKey || !raw) return null;
+  const hourAgo = Date.now() - 60 * 60_000;
+  while (aiCalls.length && aiCalls[0] < hourAgo) aiCalls.shift();
+  if (aiCalls.length >= 200) return null;
+  aiCalls.push(Date.now());
   const actions = kind === 'agent'
     ? '"balance" | "recharge" (needs number and packageId) | "esim" (needs packageId) | "packages" (company, kind: card|esim|"") | "answer"'
     : '"packages" (company) | "package" (packageId) | "answer"';
@@ -569,7 +577,9 @@ async function understand(t, raw, kind) {
     if (!res.ok) return null;
     const data = await res.json();
     const v = JSON.parse(data?.candidates?.[0]?.content?.parts?.[0]?.text || 'null');
-    return v && typeof v.action === 'string' ? v : null;
+    if (!v || typeof v.action !== 'string') return null;
+    if (v.reply) v.reply = noLinks(v.reply);
+    return v;
   } catch {
     return null;
   }
