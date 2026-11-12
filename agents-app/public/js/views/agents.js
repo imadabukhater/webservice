@@ -19,7 +19,8 @@ export function openAgentForm(a, onDone) {
         <div class="field"><label for="ag-pass">${a ? 'كلمة مرور جديدة' : 'كلمة المرور'}</label><input class="input ltr" id="ag-pass" name="password" autocomplete="new-password" placeholder="${a ? 'اتركها فارغة دون تغيير' : '6 أحرف على الأقل'}"></div>
       </div>
       <div class="row2 stack-xs">
-        <div class="field"><label for="ag-phone">الهاتف</label><input class="input ltr" id="ag-phone" name="phone" inputmode="tel" value="${esc(a?.phone || '')}"></div>
+        <div class="field"><label for="ag-phone">الهاتف (واتساب)</label><input class="input ltr" id="ag-phone" name="phone" inputmode="tel" value="${esc(a?.phone || '')}">
+          <span class="hint">من هذا الرقم يبيع الوكيل ويشحن عبر واتساب المتجر.</span></div>
         <div class="field"><label for="ag-credit">سقف الدين (₪)</label><input class="input ltr" id="ag-credit" name="creditLimit" type="number" min="0" step="1" inputmode="numeric" value="${a?.creditLimit ?? 0}">
           <span class="hint">يسمح بالتفعيل حتى لو نزل الرصيد تحت الصفر بهذا المبلغ.</span></div>
       </div>

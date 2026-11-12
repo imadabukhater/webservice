@@ -41,6 +41,9 @@ chown agents:agents "$DATA_DIR" && chmod 700 "$DATA_DIR"
 if [ ! -d "$APP_DIR/.git" ]; then
   git clone --branch "$BRANCH" --depth 1 "$REPO" "$APP_DIR"
 fi
+# The app's libraries (the WhatsApp library); the app runs without them, WhatsApp does not.
+command -v npm >/dev/null || apt-get install -y npm
+(cd "$APP_DIR/agents-app" && npm ci --omit=dev --no-audit --no-fund) || echo "npm ci failed: WhatsApp stays off until agents-update"
 
 # The admin password is read once, when the database does not exist yet.
 if [ ! -f "$DATA_DIR/agents.db" ]; then
@@ -91,6 +94,7 @@ cat > /usr/local/bin/agents-update <<EOF
 set -e
 git -C $APP_DIR fetch --depth 1 origin $BRANCH
 git -C $APP_DIR reset --hard FETCH_HEAD
+(cd $APP_DIR/agents-app && npm ci --omit=dev --no-audit --no-fund) || echo "⚠ npm ci failed: the site is updated, WhatsApp may stay off"
 systemctl restart agents-app
 echo "Updated to \$(git -C $APP_DIR log -1 --format='%h %s')"
 EOF

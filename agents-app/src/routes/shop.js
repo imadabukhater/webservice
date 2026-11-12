@@ -457,3 +457,5 @@ route('GET', '/api/shop/admin/summary', ADMIN, () => ({
   open: q("SELECT COUNT(*) AS n FROM shop_orders WHERE status IN ('verifying','review') OR (status = 'paid' AND line_id IS NULL)").get().n,
   agentId: shop.shopAgent().id,
 }));
+
+module.exports = { shopCatalogResponse };
