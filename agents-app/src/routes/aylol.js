@@ -20,11 +20,10 @@ const REF = {
 };
 const PENDING = 'art_price IS NOT NULL AND ROUND(art_price, 2) != ROUND(cost, 2) AND (art_ack IS NULL OR ROUND(art_ack, 2) != ROUND(art_price, 2))';
 const pendingCount = (kind) => q(`SELECT COUNT(*) AS n FROM packages WHERE ${REF[kind]} AND ${PENDING}`).get().n;
-// The site's eSIM categories.
-const ESIM_CATS = [
-  { id: 1, name: 'بارتنر' }, { id: 2, name: 'بيلفون' }, { id: 3, name: 'سلكوم' },
-  { id: 4, name: '012' }, { id: 10, name: 'هوت موبايل' }, { id: 28, name: '019' },
-];
+// The site's eSIM categories whose purchase names the package bought (Hot Mobile and 019). Its other categories
+// (Partner, Pelephone, Cellcom, 012) are bought there without naming a package, so selling one could buy an empty
+// eSIM: they are not listed until that purchase is known.
+const ESIM_CATS = [{ id: 10, name: 'هوت موبايل' }, { id: 28, name: '019' }];
 
 const wrap = async (fn) => {
   if (!getSettings().aylolConfigured) fail(400, 'أدخل بريد وكلمة مرور أيلول في الإعدادات أولاً');
@@ -77,7 +76,7 @@ async function collectItems(creds, kind) {
   const synced = await ay.syncAll(creds, [kind === 'card' ? 'credit' : 'bill']);
   const items = synced.items.map((x) => ({
     ref: x.ref, name: x.name, company: x.company, cost: Number(x.price) || 0, dataGb: x.dataGb || null, minutes: x.minutes || null,
-    sms: x.sms || null, days: x.days || 30, description: String(x.description || '').slice(0, 400), esim: kind === 'card' ? 0 : 1,
+    sms: x.sms || null, days: x.days || 30, description: String(x.description || '').slice(0, 400), esim: 0,
   }));
   if (kind === 'invoice') {
     for (const cat of ESIM_CATS) {
@@ -143,6 +142,8 @@ async function syncKind(creds, kind) {
       if (!used) { q('DELETE FROM packages WHERE id = ?').run(g.id); removed++; }
     }
     for (const id of companyIds) if (!known.has(id)) q("UPDATE companies SET activation = 'auto' WHERE id = ? AND activation = 'manual'").run(id);
+    // A bill line is activated on a SIM card; only the eSIM packages are eSIMs.
+    if (kind === 'invoice') q("UPDATE packages SET esim_enabled = 0 WHERE art_card_id LIKE 'ay:bill:%' AND esim_enabled != 0").run();
     setSetting(`aylol_synced_${kind}`, now());
     return { kind, total: items.length, added, updated, restored, switchedOff: off, removed, pending: pendingCount(kind), markup: markupFor(kind) };
   });

@@ -156,6 +156,8 @@ function resolveTask(t, user, body) {
 
   q('UPDATE tasks SET status = ?, response = ?, amount = ?, resolved_at = ?, resolved_by = ? WHERE id = ?')
     .run(status, response, amount, ts, user.name, t.id);
+  // A sale made over WhatsApp gets its result (and the eSIM's QR code) in the same chat, once this is committed.
+  setImmediate(() => require('../whatsapp').taskResolved(t.id).catch((e) => console.error('whatsapp result', e.message)));
   if (agent) {
     const label = TYPE_LABEL[t.type];
     D.notify({

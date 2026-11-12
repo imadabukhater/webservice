@@ -761,12 +761,24 @@ async function sendAy(taskId, j) {
   const isEsim = j.t.type === 'esim';
   const number = String(j.number || '').replace(/\D/g, '');
   const retrieveNewNumber = !number || /^050{7,8}$/.test(number);
+  const creds = aylolCredentials();
+  // The site's price now, before anything is bought: never above the approved price (the agent paid by it), and
+  // never a package the site no longer lists.
+  let live;
+  try {
+    live = await aylol.currentPrice(j.ref, creds);
+  } catch (e) {
+    return notSentYet({ ...j.t, number }, taskId, e, 'تعذّر التنفيذ التلقائي عبر أيلول');
+  }
+  const stop = (note) => { setAuto(taskId, 'failed', note); tellManager('لم يُرسَل إلى أيلول', `${number}: ${note}`); };
+  if (live === null) return stop('الرزمة غير معروضة في أيلول الآن — زامن أيلول، ثم نفّذه يدوياً أو ارفضه');
+  if (live > Number(j.price) + 0.01) return stop(`سعر أيلول الآن ${live} ₪ وهو أعلى من المعتمد ${j.price} ₪ — زامن أيلول وراجع السعر، ثم نفّذه يدوياً أو ارفضه`);
   let r;
   try {
     r = await aylol.executeOrder({
       ref: j.ref, phoneNumber: retrieveNewNumber ? '' : number, price: j.price, simNumber: j.line?.sim || '',
       useEsim: isEsim, retrieveNewNumber, note: j.t.note || '',
-    }, aylolCredentials());
+    }, creds);
   } catch (e) {
     if (e.refused) {
       setAuto(taskId, 'failed', `رفض أيلول: ${e.message}`);
@@ -777,8 +789,11 @@ async function sendAy(taskId, j) {
     tellManager('تنفيذ أيلول غير مؤكد', `${j.number}: ${e.message}`);
     return undefined;
   }
+  // The site may give another number than the one picked: the line carries the real one, and the agent is told.
+  const realNumber = r.phoneNumber && /^05\d{8}$/.test(r.phoneNumber) ? r.phoneNumber : '';
+  const moved = realNumber && realNumber !== number ? ` — الرقم المفعّل: ${realNumber}` : '';
   if (j.t.line_id) {
-    if (r.phoneNumber && /^05\d{8}$/.test(r.phoneNumber)) q('UPDATE lines SET number = ? WHERE id = ?').run(r.phoneNumber, j.t.line_id);
+    if (realNumber) q('UPDATE lines SET number = ? WHERE id = ?').run(realNumber, j.t.line_id);
     if (r.simNumber) q('UPDATE lines SET sim = ? WHERE id = ?').run(String(r.simNumber).replace(/\D/g, ''), j.t.line_id);
   }
   const parts = [`أيلول: ${r.message || 'تم التنفيذ'}`];
@@ -790,7 +805,7 @@ async function sendAy(taskId, j) {
     return undefined;
   }
   const extra = isEsim ? { attachment: r.qr, esimCode: r.esimCode } : {};
-  finish(taskId, parts.join(' | '), isEsim || j.t.type === 'activate' ? 'تم التفعيل' : 'تم الشحن', AY_ACTOR, extra);
+  finish(taskId, parts.join(' | '), `${isEsim || j.t.type === 'activate' ? 'تم التفعيل' : 'تم الشحن'}${moved}`, AY_ACTOR, extra);
   return undefined;
 }
 

@@ -11,9 +11,54 @@ function cloudBackupHtml(s) {
     ${s.backupError ? `<div class="msg">${icon('alert')}<span>فشلت آخر محاولة: ${esc(s.backupError)}</span></div>` : ''}`;
 }
 
-// Three tabs, so each part is short: the app itself, the suppliers' accounts, and the backups.
-const V = { tab: 'general' };
-const TABS = [['general', 'عام', 'sliders'], ['suppliers', 'المورّدون', 'refresh'], ['backup', 'النسخ الاحتياطي', 'download']];
+// Four tabs, so each part is short: the app itself, the suppliers' accounts, WhatsApp, and the backups.
+const V = { tab: 'general', wa: null, waTimer: null };
+const TABS = [['general', 'عام', 'sliders'], ['suppliers', 'المورّدون', 'refresh'], ['whatsapp', 'واتساب', 'whatsapp'], ['backup', 'النسخ الاحتياطي', 'download']];
+
+// ---------- WhatsApp: the link (QR code), and who it answers ----------
+const WA_LABEL = { off: 'غير مربوط', missing: 'مكتبة واتساب غير مثبتة على السيرفر', connecting: 'جارٍ الاتصال…', qr: 'امسح رمز QR من هاتف المتجر', connected: 'مربوط ويعمل' };
+function waStatusHtml(w) {
+  if (!w) return `<div class="msg">${icon('alert')}<span>تعذّر جلب حالة واتساب.</span></div>`;
+  const busy = w.status === 'connecting' || w.status === 'qr';
+  return `<div class="msg ${w.status === 'connected' ? 'info' : ''}">${icon(w.status === 'connected' ? 'checkCircle' : w.status === 'qr' ? 'qr' : 'whatsapp')}
+      <span><b>${WA_LABEL[w.status] || WA_LABEL.off}</b>${w.phone ? ` · <span class="ltr">${esc(w.phone)}</span>` : ''}</span></div>
+    ${w.status === 'qr' && w.qr ? `<div style="text-align:center;margin:12px 0">
+      <img src="${w.qr}" alt="رمز QR لربط واتساب" style="width:260px;max-width:100%;background:#fff;padding:8px;border-radius:12px">
+      <p class="muted small">في هاتف المتجر: واتساب ← الإعدادات ← الأجهزة المرتبطة ← ربط جهاز، ثم امسح الرمز. يتجدّد الرمز كل نحو 20 ثانية.</p></div>` : ''}
+    ${w.error ? `<div class="msg">${icon('alert')}<span>${esc(w.error)}</span></div>` : ''}
+    <div class="btn-row">
+      ${w.status === 'connected'
+        ? `<button class="btn" type="button" data-action="wa-test">${icon('send')}رسالة تجريبية</button>
+           <button class="btn" type="button" data-action="wa-logout">${icon('logout')}إلغاء الربط</button>`
+        : `<button class="btn btn-primary" type="button" data-action="wa-connect" ${busy ? 'disabled' : ''}>${icon('qr')}ربط واتساب</button>
+           ${busy ? `<button class="btn" type="button" data-action="wa-connect" data-fresh="1">${icon('refresh')}رمز جديد</button>` : ''}`}
+    </div>`;
+}
+function waHtml(w) {
+  const c = w?.config || {};
+  return `
+        <section class="card card-pad form">
+          <h2 class="dot-title">واتساب المتجر</h2>
+          <p class="muted small">يربط رقم واتساب المتجر بالسيرفر (مثل واتساب ويب). بعدها يرد تلقائياً: <b>الوكيل</b> (رقمه المحفوظ في حسابه) يرى رزمه وأسعاره ورصيده، ويشحن ويفعّل eSIM من رصيده بعد أن يرسل «نعم»، وتصله النتيجة ورمز QR الحقيقي في المحادثة. <b>الزبون</b> يرى باقات المتجر وأسعاره، ويأخذ رابط الطلب والدفع في المتجر — لا يُفعَّل له شيء قبل التحقق من الدفع.</p>
+          <div id="wa-status">${waStatusHtml(w)}</div>
+        </section>
+        <form class="card card-pad form" id="wa-form" novalidate autocomplete="off">
+          <h2 class="dot-title">الرد التلقائي</h2>
+          <label class="switch-row"><span class="grow"><b>الرد على الرسائل</b><small>أوقفه ليبقى واتساب مربوطاً دون رد تلقائي</small></span><input class="switch" type="checkbox" name="enabled" ${c.enabled !== false ? 'checked' : ''}></label>
+          <label class="switch-row"><span class="grow"><b>الرد على الزبائن</b><small>غير الوكلاء: باقات المتجر وأسعاره ورابط الطلب والدفع</small></span><input class="switch" type="checkbox" name="customers" ${c.customers !== false ? 'checked' : ''}></label>
+          <div class="field"><label for="wa-admins">أرقام المدير</label><input class="input ltr" id="wa-admins" name="admins" inputmode="tel" placeholder="0599123456, 0521234567" value="${esc(c.admins || '')}">
+            <span class="hint">من هذه الأرقام: الطلبات المفتوحة وحالة أي رقم. الوكيل يُعرف من رقم الهاتف في حسابه (الوكلاء ← تعديل).</span></div>
+          <div class="field"><label for="wa-shop">رابط المتجر</label><input class="input ltr" id="wa-shop" name="shopUrl" placeholder="https://www.example.com/shop" value="${esc(c.shopUrl || '')}">
+            <span class="hint">يُرسَل للزبون مع كل باقة ليطلبها ويدفع.</span></div>
+          <div class="field"><label for="wa-welcome">رسالة الترحيب</label><input class="input" id="wa-welcome" name="welcome" maxlength="300" value="${esc(c.welcome || '')}" placeholder="أهلاً بك في متجرنا 👋"></div>
+          <div class="field"><label for="wa-ai">مفتاح Gemini (اختياري)</label><input class="input ltr" id="wa-ai" name="aiKey" type="password" autocomplete="new-password" placeholder="${c.hasAiKey ? 'محفوظ — اتركه فارغاً للإبقاء' : 'بدونه يفهم الأوامر المكتوبة فقط'}">
+            <span class="hint">لفهم الرسائل الحرة. يُرسَل نص الرسالة إلى Google لفهمها، ولا يُنفَّذ شيء بدون «نعم».</span></div>
+          ${c.hasAiKey ? '<label class="switch-row"><span class="grow"><b>حذف مفتاح Gemini المحفوظ</b></span><input class="switch" type="checkbox" name="aiKeyClear"></label>' : ''}
+          <div id="wa-msg"></div>
+          <button class="btn btn-primary" type="submit">${icon('check')}حفظ</button>
+        </form>
+`;
+}
 
 export default {
   admin: true,
@@ -21,6 +66,7 @@ export default {
   async load(ctx) {
     if (TABS.some(([k]) => k === ctx?.query?.tab)) V.tab = ctx.query.tab;
     S.settings = await api.get('/api/settings');
+    if (V.tab === 'whatsapp') V.wa = await api.get('/api/whatsapp').catch(() => null);
   },
   render() {
     const s = S.settings;
@@ -69,12 +115,12 @@ export default {
         </form>
                   <form class="card card-pad form" id="aylol-form" novalidate autocomplete="off">
             <h2 class="dot-title">البيع والشحن التلقائي عبر أيلول تيليكوم (Aylol)</h2>
-            <p class="muted small">يشحن السيرفر كروت الشركات ويفعّل خطوط الفواتير الجديدة وشرائح eSIM من حسابك في أيلول تيليكوم تلقائياً. جميع باقات الفواتير تدعم eSIM.</p>
+            <p class="muted small">يشحن السيرفر كروت الشركات ويفعّل خطوط الفواتير الجديدة وشرائح eSIM (هوت موبايل و019) من حسابك في أيلول تيليكوم تلقائياً. قبل كل عملية يتأكد من سعر أيلول الحالي: إن ارتفع عن المعتمد لا يشتري، ويصلك تنبيه.</p>
             <div class="row2 stack-xs">
               <div class="field"><label for="aylol-user">البريد في أيلول</label><input class="input ltr" id="aylol-user" name="aylolUser" type="email" value="${esc(s.aylolUser || '')}" autocomplete="off"></div>
               <div class="field"><label for="aylol-pass">كلمة المرور</label><input class="input ltr" id="aylol-pass" name="aylolPass" type="password" autocomplete="new-password" placeholder="${s.aylolConfigured ? 'محفوظة — اتركها فارغة للإبقاء' : ''}"></div>
             </div>
-            <div class="msg info">${icon('info')}<span>المزامنة ونسبة الربح منفصلتان لكل نظام: افتح «الشركات والرزم» ← تبويب «أيلول».</span></div>
+            <div class="msg info">${icon('info')}<span>بعد الحفظ تُزامَن رزم أيلول فوراً، ثم كل يوم تلقائياً. نسبة الربح لكل نظام في «الشركات والرزم» ← تبويب «أيلول».</span></div>
             <div id="aylol-msg"></div>
             <div class="btn-row">
               <button class="btn btn-primary" type="submit">${icon('check')}حفظ</button>
@@ -142,6 +188,7 @@ export default {
           </div>
         </form>
 `,
+      whatsapp: waHtml(V.wa),
       backup: `
         <section class="card card-pad form">
           <h2 class="dot-title">النسخ الاحتياطي</h2>
@@ -158,6 +205,39 @@ export default {
       <div class="two-col">${parts[tab]}</div>`;
   },
   mount(root) {
+    clearInterval(V.waTimer);
+    if (V.tab === 'whatsapp') {
+      // The QR code changes every ~20 seconds, and the link comes up once it is scanned.
+      V.waTimer = setInterval(async () => {
+        const box = document.getElementById('wa-status');
+        if (!box) { clearInterval(V.waTimer); return; }
+        try {
+          const w = await api.get('/api/whatsapp');
+          if (!document.getElementById('wa-status')) return;
+          if (JSON.stringify([w.status, w.qr, w.phone, w.error]) !== JSON.stringify([V.wa?.status, V.wa?.qr, V.wa?.phone, V.wa?.error])) {
+            V.wa = w;
+            box.innerHTML = waStatusHtml(w);
+          }
+        } catch {}
+      }, 3000);
+    }
+    root.querySelector('#wa-form')?.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const form = e.currentTarget;
+      const msg = root.querySelector('#wa-msg');
+      try {
+        V.wa = await api.put('/api/whatsapp', {
+          enabled: form.elements.enabled.checked, customers: form.elements.customers.checked,
+          admins: field(form, 'admins'), shopUrl: field(form, 'shopUrl'), welcome: field(form, 'welcome'),
+          aiKey: form.elements.aiKey.value, aiKeyClear: !!form.elements.aiKeyClear?.checked,
+        });
+        form.elements.aiKey.value = '';
+        msg.innerHTML = '';
+        toast('تم حفظ إعدادات واتساب');
+      } catch (err) {
+        msg.innerHTML = `<div class="msg">${icon('alert')}<span>${esc(err.message)}</span></div>`;
+      }
+    });
     root.querySelector('#art-form')?.addEventListener('submit', async (e) => {
       e.preventDefault();
       const form = e.currentTarget;
@@ -241,7 +321,38 @@ export default {
     });
   },
   actions: {
-    tab(btn, e, ctx) { V.tab = btn.dataset.tab; ctx.rerender(); },
+    async tab(btn, e, ctx) {
+      V.tab = btn.dataset.tab;
+      if (V.tab === 'whatsapp') V.wa = await api.get('/api/whatsapp').catch(() => null);
+      ctx.rerender();
+    },
+    async 'wa-connect'(btn) {
+      const box = document.getElementById('wa-status');
+      btn.disabled = true;
+      box.insertAdjacentHTML('afterbegin', `<div class="msg info">${icon('clock')}<span>جارٍ تجهيز رمز QR…</span></div>`);
+      try {
+        V.wa = await api.post('/api/whatsapp/connect', { fresh: btn.dataset.fresh === '1' });
+      } catch (err) {
+        V.wa = { ...(V.wa || {}), status: 'off', error: err.message };
+      }
+      box.innerHTML = waStatusHtml(V.wa);
+    },
+    async 'wa-logout'(btn) {
+      if (!confirm('إلغاء ربط واتساب المتجر بالسيرفر؟ يتوقف الرد التلقائي حتى تربطه من جديد.')) return;
+      btn.disabled = true;
+      try { V.wa = await api.post('/api/whatsapp/logout'); } catch (err) { toast(err.message, { error: true }); }
+      document.getElementById('wa-status').innerHTML = waStatusHtml(V.wa);
+    },
+    async 'wa-test'() {
+      const phone = prompt('رقم الهاتف الذي تصله الرسالة التجريبية (مثل 0599123456):');
+      if (!phone) return;
+      try {
+        await api.post('/api/whatsapp/test', { phone });
+        toast('أُرسلت الرسالة');
+      } catch (err) {
+        toast(err.message, { error: true });
+      }
+    },
     async 'art-check'(btn) {
       const box = document.getElementById('art-msg');
       btn.disabled = true;

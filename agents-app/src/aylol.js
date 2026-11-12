@@ -50,31 +50,37 @@ function serial(fn) {
   return run;
 }
 
-function curl(args) {
+// body: sent as the request's body through curl's stdin, so the password, tokens and customers' details never show
+// in the server's process list. -g: the site's values are never read as curl's URL patterns.
+function curl(args, body = null) {
   return serial(() => new Promise((resolve, reject) => {
     const out = path.join(dataDir(), `res-${crypto.randomBytes(6).toString('hex')}.tmp`);
-    execFile(CURL(), ['--http2', '-sS', '--max-time', String(TIMEOUT_S), '-A', UA, '-b', cookieJar(), '-c', cookieJar(), ...args, '-o', out],
+    const child = execFile(CURL(), ['--http2', '-g', '-sS', '--max-time', String(TIMEOUT_S), '-A', UA, '-b', cookieJar(), '-c', cookieJar(), ...args,
+      ...(body === null ? [] : ['--data-binary', '@-']), '-o', out],
       { timeout: (TIMEOUT_S + 5) * 1000 }, (err) => {
-        let body = '';
-        try { body = fs.readFileSync(out, 'utf8'); } catch {}
+        let text = '';
+        try { text = fs.readFileSync(out, 'utf8'); } catch {}
         try { fs.unlinkSync(out); } catch {}
         if (err) {
           if (err.code === 'ENOENT') return reject(new AylolError('أيلول: برنامج curl غير مثبت على الخادم'));
           return reject(new AylolError(`أيلول: تعذّر الاتصال (${String(err.message).split('\n')[0].slice(0, 120)})`));
         }
-        resolve(body);
+        resolve(text);
       });
+    child.stdin.on('error', () => {});
+    child.stdin.end(body === null ? '' : body);
   }));
 }
+const formBody = (fields) => new URLSearchParams(Object.entries(fields).map(([k, v]) => [k, String(v ?? '')])).toString();
 
-function page(url, ref, extra = []) {
+function page(url, ref, extra = [], body = null) {
   return curl([
     '-H', 'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
     '-H', 'Accept-Language: ar,en;q=0.9',
     ...(ref ? ['-H', `Referer: ${ref}`] : []),
     '-H', 'Sec-Fetch-Dest: document', '-H', 'Sec-Fetch-Mode: navigate', '-H', `Sec-Fetch-Site: ${ref ? 'same-origin' : 'none'}`,
     ...extra, url,
-  ]);
+  ], body);
 }
 
 const state = { seed: '', csrf: '', user: '', loggedAt: 0, chargeHtml: '', balance: null };
@@ -89,7 +95,7 @@ function signedHeaders(p) {
   return { ts, nonce, sign };
 }
 
-function ajax(p, { ref = '/dashboard/charge-system', signed = true, csrf = state.csrf, extra = [] } = {}) {
+function ajax(p, { ref = '/dashboard/charge-system', signed = true, csrf = state.csrf, extra = [], body = null } = {}) {
   const h = signed ? signedHeaders(p) : null;
   return curl([
     '-H', 'Accept: application/json, text/javascript, */*; q=0.01',
@@ -100,7 +106,7 @@ function ajax(p, { ref = '/dashboard/charge-system', signed = true, csrf = state
     '-H', `Referer: ${BASE()}${ref}`, '-H', `Origin: ${BASE()}`,
     '-H', 'Sec-Fetch-Dest: empty', '-H', 'Sec-Fetch-Mode: cors', '-H', 'Sec-Fetch-Site: same-origin',
     ...extra, BASE() + p,
-  ]);
+  ], body);
 }
 const parseJson = (raw) => { try { return JSON.parse(raw); } catch { return null; } };
 
@@ -142,10 +148,8 @@ async function login(creds) {
   const loginHtml = await page(`${BASE()}/login`, '');
   const csrf1 = exCsrf(loginHtml);
   if (!csrf1) throw new AylolError('أيلول: تعذّر قراءة صفحة الدخول');
-  await page(`${BASE()}/login`, `${BASE()}/login`, [
-    '-H', `Origin: ${BASE()}`, '-H', 'Content-Type: application/x-www-form-urlencoded',
-    '--data-urlencode', `email=${c.user}`, '--data-urlencode', `password=${c.pass}`, '--data-urlencode', `_token=${csrf1}`,
-  ]);
+  await page(`${BASE()}/login`, `${BASE()}/login`, ['-H', `Origin: ${BASE()}`, '-H', 'Content-Type: application/x-www-form-urlencoded'],
+    formBody({ email: c.user, password: c.pass, _token: csrf1 }));
   const ch = await page(`${BASE()}/dashboard/charge-system`, `${BASE()}/admin/home`);
   const seed = exSeed(ch);
   if (!seed) throw new AylolError('أيلول رفض الدخول — راجع البريد وكلمة المرور', { refused: true });
@@ -336,7 +340,7 @@ async function purchaseEsim({ categoryId, purchaseType = 'empty_esim', phone = '
     endpoint = '/dashboard/esim/purchase-category-28';
     body = { category_id: 28, purchase_type: purchaseType, phone: String(phone || '').replace(/\D/g, ''), transfer_phone: String(transferPhone || '').replace(/\D/g, ''), package_id: String(packageId || '') };
   }
-  const raw = await ajax(endpoint, { ref: '/dashboard/esim', signed: false, csrf: esimCsrf, extra: ['-H', 'Content-Type: application/json', '-X', 'POST', '-d', JSON.stringify(body)] });
+  const raw = await ajax(endpoint, { ref: '/dashboard/esim', signed: false, csrf: esimCsrf, extra: ['-H', 'Content-Type: application/json'], body: JSON.stringify(body) });
   const res = parseJson(raw);
   if (!res) throw new AylolError(`أيلول: رد غير مفهوم على شراء eSIM (${raw.slice(0, 120)})`);
   if (!res.success) throw new AylolError(res.message || res.error || 'أيلول رفض إصدار شريحة eSIM', { refused: true });
@@ -409,9 +413,7 @@ async function executeOrder({ ref, phoneNumber = '', price = 0, simNumber = '', 
   const payload = (type === 'credit' && !useEsim && !sim)
     ? { _token: state.csrf, package_id: packageId, company_id: companyId, phone, price: String(Number(price) || 0), note, action: 'recharge' }
     : { _token: state.csrf, package_id: packageId, company_id: companyId, category_id: companyId, phone, MobileNumber: phone, price: String(Number(price) || 0), customer_price: String(Number(price) || 0), duration: '1', note, ...(sim ? { sim_number: sim } : {}) };
-  const form = [];
-  for (const [k, v] of Object.entries(payload)) form.push('--data-urlencode', `${k}=${v}`);
-  const raw = await ajax(endpoint, { signed: true, extra: ['-X', 'POST', ...form] });
+  const raw = await ajax(endpoint, { signed: true, extra: ['-H', 'Content-Type: application/x-www-form-urlencoded; charset=UTF-8'], body: formBody(payload) });
   const data = parseJson(raw);
   if (!data) throw new AylolError(`أيلول: رد غير مفهوم (${raw.slice(0, 120)})`);
   if (data.success === true || data.status === 'success' || data.ok === true) {
@@ -426,6 +428,36 @@ async function executeOrder({ ref, phoneNumber = '', price = 0, simNumber = '', 
   throw new AylolError(data.message || data.error || 'أيلول رفض الطلب', { refused: true });
 }
 
+// The site's price for a package right now (read from its own listing), or null when it no longer lists it.
+// Asked before every sale, so nothing is bought above the price the manager approved.
+const listedPrice = (p) => Number(p.price ?? p.cost ?? p.distributor_price ?? p.customer_price ?? 0) || null;
+async function currentPrice(ref, creds) {
+  await ensureSession(creds);
+  const [head, type, cid, pid] = String(ref || '').split(':');
+  if (head !== 'ay' || !cid || !pid) return null;
+  if (type === 'esim') {
+    for (const purchaseType of ['loaded_esim', 'new_esim']) {
+      const r = await fetchEsimPackages({ categoryId: cid, purchaseType }, creds);
+      const p = ((r && r.success && Array.isArray(r.data)) ? r.data : []).find((x) => String(x.id) === pid);
+      if (p) return listedPrice(p);
+    }
+    return null;
+  }
+  if (type !== 'credit' && type !== 'bill') return null;
+  const cats = parseCategoriesFromHtml(state.chargeHtml).filter((c) => c.type === type && [c.id, ...(c.ids || [])].map(String).includes(cid));
+  for (const g of [...new Set([...cats.map((c) => c.group).filter(Boolean), ''])]) {
+    for (let pageNo = 1, last = 1; pageNo <= last && pageNo <= 15; pageNo++) {
+      const r = await fetchPackages({ companyId: cid, type, groupName: g, pageNo }, creds);
+      const rows = (r && r.success && Array.isArray(r.data)) ? r.data : (r && Array.isArray(r.packages) ? r.packages : []);
+      if (!rows.length) break;
+      const p = rows.find((x) => String(x.id) === pid);
+      if (p) return listedPrice(p);
+      last = Number(r.last_page) || 1;
+    }
+  }
+  return null;
+}
+
 async function balance(creds) {
   await ensureSession(creds);
   return state.balance;
@@ -433,5 +465,5 @@ async function balance(creds) {
 
 module.exports = {
   AylolError, login, balance, parseCategoriesFromHtml, fetchPackages, syncAll, fetchEsimPage, fetchEsimPackages, fetchEsimReadyStocks,
-  purchaseEsim, lookupAvailableNumbers, executeOrder, mapToEsimCategoryId, esimCodeAndQr, _state: state,
+  purchaseEsim, lookupAvailableNumbers, executeOrder, currentPrice, mapToEsimCategoryId, esimCodeAndQr, _state: state,
 };

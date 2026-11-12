@@ -134,6 +134,8 @@ function createLine(user, body) {
   }
   // An Aylol eSIM on one of the site's ready numbers: carried out there automatically once the sale is made.
   const ayRef = kind === 'new' && /^ay:esim:/.test(pkg.art_card_id || '') ? pkg.art_card_id : '';
+  // An Aylol bill line is activated on a SIM card: sold as an eSIM it would be paid for there with no eSIM to give.
+  if (kind === 'new' && esim && /^ay:bill:/.test(pkg.art_card_id || '')) fail(400, 'هذه الرزمة تُفعَّل على شريحة عادية. لشريحة eSIM اختر رزمة eSIM');
   if (ayRef) {
     if (!esim) fail(400, 'هذه الرزمة شريحة eSIM: اختر eSIM');
     if (port) fail(400, 'هذه الرزمة لا تدعم تحويل الرقم مع eSIM');

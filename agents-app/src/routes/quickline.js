@@ -205,22 +205,23 @@ function newLinePackage(id) {
 }
 
 // Free numbers of a new-line package that picks its number from a list (esim=1 for eSIM numbers). exclude: ids shown.
-route('GET', '/api/numbers/free', ANY, ({ query }) => {
-  // A Layan new line picks one of the dealer's suspended numbers (or Layan's free eSIM numbers when esim=1).
-  const lyRef = require('../layan').parseRef(q('SELECT art_card_id FROM packages WHERE id = ? AND active = 1').get(Number(query.packageId))?.art_card_id);
-  if (lyRef?.system === 'lyn') return require('./layan').freeNumbers(lyRef, query.esim === '1');
+// Also used by the WhatsApp agent, so it offers exactly the numbers the portal does.
+function freeNumbersFor(packageId, esim = false, exclude = []) {
+  const art = q('SELECT art_card_id FROM packages WHERE id = ? AND active = 1').get(Number(packageId))?.art_card_id || '';
+  // A Layan new line picks one of the dealer's suspended numbers (or Layan's free eSIM numbers when esim).
+  const lyRef = require('../layan').parseRef(art);
+  if (lyRef?.system === 'lyn') return require('./layan').freeNumbers(lyRef, esim);
   // An Aylol eSIM picks one of the site's ready eSIM numbers.
-  const ayRef = q('SELECT art_card_id FROM packages WHERE id = ? AND active = 1').get(Number(query.packageId))?.art_card_id || '';
-  if (/^ay:esim:/.test(ayRef)) return require('./aylol').freeNumbers(ayRef);
-  const ref = newLinePackage(query.packageId);
-  const esim = query.esim === '1';
-  const exclude = String(query.exclude || '').split(',').map(Number).filter(Boolean).slice(0, 500);
+  if (/^ay:esim:/.test(art)) return require('./aylol').freeNumbers(art);
+  const ref = newLinePackage(packageId);
   return agentWrap(async (creds) => {
     const list = await ql.freeNumbers(creds, { packageId: ref.packageId, exclude, esim });
     remember(ref.packageId, esim, list);
     return list.map((n) => ({ id: n.id, phone: n.phone }));
   });
-});
+}
+route('GET', '/api/numbers/free', ANY, ({ query }) => freeNumbersFor(query.packageId, query.esim === '1',
+  String(query.exclude || '').split(',').map(Number).filter(Boolean).slice(0, 500)));
 
 // Companies a number can be ported from.
 route('GET', '/api/numbers/port-companies', ANY, () => agentWrap(async (creds) => (await ql.companies(creds)).map((c) => ({ id: c.id, name: c.name }))));
@@ -233,4 +234,4 @@ route('GET', '/api/quickline/lines', ADMIN, () => wrap(async (creds) => {
 
 // remember: the customer shop keeps the number a customer picked with the order (payment can take longer than this
 // list lasts), and puts it back here before selling it.
-module.exports = { syncKind, REF, simRuleFor, servedNumber, remember, companyFor };
+module.exports = { syncKind, REF, simRuleFor, servedNumber, remember, companyFor, freeNumbersFor };

@@ -153,6 +153,10 @@ route('PUT', '/api/settings', ADMIN, ({ body }) => {
     if (wa && !/^[1-9]\d{7,14}$/.test(wa)) fail(400, 'اكتب رقم واتساب بالصيغة الدولية، مثل 972567725080');
     setSetting('support_whatsapp', wa);
   }
+  // A supplier's account just saved: its packages are synced now, not at the next daily sync.
+  const SYNC_ON = { art: ['artUser', 'artPass'], ql: ['qlUser', 'qlPass'], ay: ['aylolUser', 'aylolPass'], ly: ['lyUser', 'lyPass', 'lySecret'],
+    tc: ['tcUser', 'tcPass', 'tcMailUser', 'tcMailPass'] };
+  for (const [key, fields] of Object.entries(SYNC_ON)) if (fields.some((f) => body[f])) require('../autosync').syncSoon(key);
   return getSettings();
 });
 

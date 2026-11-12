@@ -15,7 +15,7 @@ const { decodeQrDataUrl } = require('./qr-decode');
 
 const SEED = 'abcdef0123456789abcdef0123456789';
 const STOCK = { id: 900, phone: '0531112222', sim_number: '8997210000000000900', qr_code: 'LPA:1$smdp.hot.example$STOCK-SECRET' };
-const site = { signedIn: new Set(), badSignatures: 0, purchases: [], subscribes: [], logins: 0 };
+const site = { signedIn: new Set(), badSignatures: 0, purchases: [], subscribes: [], logins: 0, cardPrice: 47.5, cardListed: true };
 
 const server = http.createServer((req, res) => {
   let body = '';
@@ -46,7 +46,7 @@ const server = http.createServer((req, res) => {
       if (req.headers['x-sec-sign'] !== want) { site.badSignatures++; return json({ success: false, message: 'bad signature' }); }
       const cat = Number(m[1]);
       const type = u.searchParams.get('type');
-      if (type === 'credit' && cat === 10) return json({ success: true, last_page: 1, data: [{ id: 41, name: 'Hot 50 شيكل', price: 47.5 }] });
+      if (type === 'credit' && cat === 10) return json({ success: true, last_page: 1, data: site.cardListed ? [{ id: 41, name: 'Hot 50 شيكل', price: site.cardPrice }] : [] });
       if (type === 'bill' && cat === 25) return json({ success: true, last_page: 1, data: [{ id: 77, display_name: 'WE 100GB', price: 35, data_gb: 100, days: 30 }] });
       return json({ success: true, last_page: 1, data: [] });
     }
@@ -88,6 +88,10 @@ test.before(async () => {
   dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aylol-test-'));
   process.env.AYLOL_BASE = `http://127.0.0.1:${server.address().port}`;
   process.env.AYLOL_DATA = dataDir;
+  // curl through a wrapper that records its command line: what any user of the server could read in the process list.
+  const wrapper = path.join(dataDir, 'curl-logged.sh');
+  fs.writeFileSync(wrapper, `#!/bin/sh\nprintf '%s\\n' "$*" >> '${path.join(dataDir, 'argv.log')}'\nexec curl "$@"\n`, { mode: 0o755 });
+  process.env.AYLOL_CURL = wrapper;
   process.env.DB_FILE = ':memory:';
   process.env.ADMIN_PASSWORD = 'admin-pass';
   ({ server: app } = require('../server'));
@@ -160,4 +164,32 @@ test('Aylol: credentials only from the settings, real supplier catalog, eSIM num
   await until(async () => (await ok(call(admin, 'GET', '/api/tasks'))).find((t) => t.lineId === topup.line.id && t.status === 'done'));
   const sent = site.subscribes.at(-1);
   assert.deepEqual([sent.phone, sent.package_id, sent.company_id, sent.action], ['0529998877', '41', '10', 'recharge']);
+
+  // The site's price is read before every purchase: when it rose above the approved price, nothing is bought there
+  // and the request waits for the manager, who is told why.
+  site.cardPrice = 60;
+  const before = site.subscribes.length;
+  const dear = await ok(call(agent, 'POST', '/api/lines', { kind: 'external', packageId: cardPkg.id, number: '0527776655' }));
+  const held = await until(async () => (await ok(call(admin, 'GET', '/api/tasks'))).find((t) => t.lineId === dear.line.id && t.autoStatus === 'failed'));
+  assert.match(held.autoNote, /60/);
+  assert.equal(held.status, 'open');
+  assert.equal(site.subscribes.length, before, 'nothing bought above the approved price');
+  // The same when the site no longer lists the package.
+  site.cardPrice = 47.5;
+  site.cardListed = false;
+  const gone = await ok(call(agent, 'POST', '/api/lines', { kind: 'external', packageId: cardPkg.id, number: '0527776644' }));
+  await until(async () => (await ok(call(admin, 'GET', '/api/tasks'))).find((t) => t.lineId === gone.line.id && t.autoStatus === 'failed'));
+  assert.equal(site.subscribes.length, before);
+  site.cardListed = true;
+
+  // A bill line is not an eSIM: it is refused before the agent pays, so nothing is paid for at the site without an eSIM to give.
+  const billPkg = ayPkgs.find((p) => p.kind === 'invoice' && p.cost === 35);
+  assert.equal(billPkg.esimEnabled, false);
+  const refused = await call(agent, 'POST', '/api/lines', { kind: 'new', esim: true, packageId: billPkg.id, number: '0531234567', customerName: 'زبون' });
+  assert.equal(refused.status, 400);
+
+  // The password, the tokens and the customers' details never appear on curl's command line.
+  const argv = fs.readFileSync(path.join(dataDir, 'argv.log'), 'utf8');
+  assert.ok(argv.includes('/login'), 'the wrapper saw the requests');
+  for (const secret of ['right-pass', 'wrong-pass', 'CSRF-LOGIN', '0529998877', 'زبون']) assert.equal(argv.includes(secret), false, `${secret} on the command line`);
 });

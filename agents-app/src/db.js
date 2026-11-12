@@ -248,6 +248,16 @@ CREATE TABLE IF NOT EXISTS api_keys (
   created_at INTEGER NOT NULL,
   last_used_at INTEGER
 );
+-- Sales made over WhatsApp: the chat their result goes back to once carried out (sent_at: delivered).
+CREATE TABLE IF NOT EXISTS wa_orders (
+  task_id INTEGER PRIMARY KEY,
+  line_id INTEGER,
+  jid TEXT NOT NULL,
+  number TEXT NOT NULL DEFAULT '',
+  label TEXT NOT NULL DEFAULT '',
+  created_at INTEGER NOT NULL,
+  sent_at INTEGER
+);
 `);
 if (!tableSql('lines')) db.exec(LINES_DDL);
 
