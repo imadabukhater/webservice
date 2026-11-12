@@ -13,8 +13,9 @@ const assert = require('node:assert/strict');
 const { decodeQrDataUrl } = require('./qr-decode');
 
 const SEED = 'abcdef0123456789abcdef0123456789';
-const STOCK = { id: 900, phone: '0531112222', sim_number: '8997210000000000900' };
-const site = { signedIn: new Set(), purchases: [], subscribes: [] };
+const STOCKS = [{ id: 900, phone: '0531112222', sim_number: '8997210000000000900' }, { id: 901, phone: '0532223333', sim_number: '8997210000000000901' }];
+const site = { signedIn: new Set(), purchases: [], subscribes: [], gemini: [] };
+const lpaOf = (stock) => `LPA:1$smdp.hot.example$ACT-${stock.id}`;
 
 const server = http.createServer((req, res) => {
   let body = '';
@@ -51,11 +52,12 @@ const server = http.createServer((req, res) => {
       return json({ success: true, data: [] });
     }
     if (u.pathname === '/dashboard/esim/ready-stocks') {
-      return json(u.searchParams.get('category_id') === '10' ? { success: true, data: [STOCK] } : { success: true, data: [] });
+      return json(u.searchParams.get('category_id') === '10' ? { success: true, data: STOCKS.slice(site.purchases.length) } : { success: true, data: [] });
     }
     if (u.pathname === '/dashboard/esim/purchase-category-10-loaded' && req.method === 'POST') {
+      const stock = STOCKS[site.purchases.length];
       site.purchases.push(JSON.parse(body));
-      return json({ success: true, data: { phone: STOCK.phone, sim_number: STOCK.sim_number, lpa: 'LPA:1$smdp.hot.example$ACT-900' } });
+      return json({ success: true, data: { phone: stock.phone, sim_number: stock.sim_number, lpa: lpaOf(stock) } });
     }
     if (u.pathname === '/dashboard/charge-system/subscribe' && req.method === 'POST') {
       const f = Object.fromEntries(new URLSearchParams(body));
@@ -64,6 +66,21 @@ const server = http.createServer((req, res) => {
     }
     res.writeHead(404);
     res.end();
+  });
+});
+
+// A fake Gemini: answers from what the prompt gave it, and records the prompt.
+const gemini = http.createServer((req, res) => {
+  let body = '';
+  req.on('data', (c) => { body += c; });
+  req.on('end', () => {
+    site.gemini.push({ key: req.headers['x-goog-api-key'], body: JSON.parse(body) });
+    if (req.headers['x-goog-api-key'] !== 'good-key') { res.writeHead(403, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ error: { message: 'API key not valid' } })); }
+    const prompt = JSON.parse(body).contents[0].parts[0].text;
+    const id = /#(\d+) هوت موبايل/.exec(prompt)?.[1] || '0';
+    const reply = { action: 'answer', reply: `نعم، باقة هوت eSIM رقم ${id} بسعر 55 ₪. اطلبها من https://evil.example.com/pay` };
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ candidates: [{ content: { parts: [{ text: JSON.stringify(reply) }] } }] }));
   });
 });
 
@@ -82,6 +99,8 @@ const until = async (fn, ms = 8000) => {
 
 test.before(async () => {
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  await new Promise((r) => gemini.listen(0, '127.0.0.1', r));
+  process.env.GEMINI_BASE = `http://127.0.0.1:${gemini.address().port}`;
   dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wa-test-'));
   process.env.AYLOL_BASE = `http://127.0.0.1:${server.address().port}`;
   process.env.AYLOL_DATA = path.join(dataDir, 'aylol');
@@ -91,7 +110,7 @@ test.before(async () => {
   ({ server: app } = require('../server'));
   await new Promise((r) => app.listen(0, () => { base = `http://127.0.0.1:${app.address().port}`; r(); }));
 });
-test.after(() => { app.close(); server.close(); fs.rmSync(dataDir, { recursive: true, force: true }); });
+test.after(() => { app.close(); server.close(); gemini.close(); fs.rmSync(dataDir, { recursive: true, force: true }); });
 
 test('WhatsApp: agents sell as in the portal, results and real QR come back, customers only get the shop link', async () => {
   const wa = require('../src/whatsapp');
@@ -143,8 +162,8 @@ test('WhatsApp: agents sell as in the portal, results and real QR come back, cus
   assert.equal(site.purchases.length, 1);
   assert.deepEqual(site.purchases[0], { category_id: 10, purchase_type: 'loaded_esim', package_id: '501' });
   assert.match(done.caption, /0531112222/);
-  assert.equal(decodeQrDataUrl(`data:image/png;base64,${done.image.toString('base64')}`), 'LPA:1$smdp.hot.example$ACT-900', 'the real code, scannable');
-  await until(() => sent.find((m) => m.text && m.text.includes('LPA:1$smdp.hot.example$ACT-900')));
+  assert.equal(decodeQrDataUrl(`data:image/png;base64,${done.image.toString('base64')}`), lpaOf(STOCKS[0]), 'the real code, scannable');
+  await until(() => sent.find((m) => m.text && m.text.includes(lpaOf(STOCKS[0]))));
   assert.ok((await ok(call(login, 'GET', '/api/me'))).user.balance < 500, 'paid from the balance');
 
   // A top-up card, confirmed: carried out at the supplier with that number, and the agent is told.
@@ -185,6 +204,45 @@ test('WhatsApp: agents sell as in the portal, results and real QR come back, cus
   assert.match(link, new RegExp(`https://shop\\.example\\.com/shop#/buy/${esimPkg.id}\\?esim=1`));
   assert.equal(site.purchases.length, 1, 'a customer never buys over WhatsApp');
   assert.match(textOf(await say(C, '0541234567', 'رصيدي')), /الباقات/, 'no balance for strangers');
+
+  // The customer orders in the shop (an Aylol eSIM on one of its ready numbers), pays by Jawwal Pay, and checks the
+  // transfer over WhatsApp with the order number and the payer's name: the transfer's e-mail is found, the eSIM is
+  // bought and activated, and its QR code reaches the chat by itself.
+  await ok(call(admin, 'PUT', '/api/settings', { jawwalpayNumber: '0599000000', jawwalpayName: 'المتجر' }));
+  const order = await ok(call(null, 'POST', '/api/shop/orders', { packageId: esimPkg.id, kind: 'new', esim: true, customerName: 'محمد احمد', contactPhone: '0541234567' }));
+  assert.equal(order.status, 'awaiting_payment');
+  const asked = textOf(await say(C, '0541234567', `طلبي ${order.code}`));
+  assert.match(asked, /اسم المحوِّل/);
+  // Not paid yet: nothing matches, the order waits (and is checked again).
+  assert.match(textOf(await say(C, '0541234567', 'محمد احمد علي')), /لم يصل إشعاره/);
+  q(`INSERT INTO payment_mails (uid_validity, uid, message_id, trusted, from_addr, subject, received_at, amount, reference, sender_phone, sender_name, body, created_at)
+     VALUES (1, 7001, '<wa@jp>', 1, 'noreply@jawwalpay.ps', 'Jawwal Pay', ?, ?, '2922940777001', '', 'محمد احمد علي', 'incoming', ?)`).run(Date.now(), order.amount, Date.now());
+  // An outgoing transfer, or another amount, never pays it: only this received transfer does.
+  assert.match(textOf(await say(C, '0541234567', `${order.code} 2922940777001`)), /تم التحقق من الدفع/);
+  await until(() => site.purchases.length === 2);
+  await until(async () => (await ok(call(null, 'GET', `/api/shop/orders/${order.code}`))).stage === 'done');
+  await wa._test.watchShop();
+  const qrMsg = await until(() => sent.find((m) => m.image && m.jid === C));
+  assert.match(qrMsg.caption, new RegExp(order.code));
+  assert.equal(decodeQrDataUrl(`data:image/png;base64,${qrMsg.image.toString('base64')}`), lpaOf(STOCKS[1]));
+  assert.ok(sent.find((m) => m.jid === C && m.text && m.text.includes(lpaOf(STOCKS[1]))));
+  const after = sent.length;
+  await wa._test.watchShop();
+  assert.equal(sent.length, after, 'sent once');
+
+  // Gemini: free text is answered from the shop's own packages and prices, within the conversation, without links.
+  await ok(call(admin, 'PUT', '/api/whatsapp', { aiKey: 'good-key' }));
+  const answer = textOf(await say(C, '0541234567', 'عندكم شي لهوت؟'));
+  assert.match(answer, new RegExp(`رقم ${esimPkg.id} بسعر 55`));
+  assert.equal(/evil\.example|https?:\/\/evil/.test(answer), false, 'no link from the AI');
+  const prompt = site.gemini.at(-1).body.contents[0].parts[0].text;
+  assert.match(prompt, new RegExp(`#${esimPkg.id} هوت موبايل .* 55 ₪`));
+  assert.match(prompt, /المحادثة حتى الآن/);
+  assert.equal(prompt.includes(`#${cardPkg.id}`), false, 'only what the customer can buy');
+  // A wrong key: the menu still answers, and the error shows in the settings.
+  await ok(call(admin, 'PUT', '/api/whatsapp', { aiKey: 'bad-key' }));
+  assert.match(textOf(await say(C, '0541234567', 'سؤال آخر عن الشبكة')), /الباقات/);
+  assert.match((await ok(call(admin, 'GET', '/api/whatsapp'))).aiError, /403.*API key not valid/);
 
   // What WhatsApp delivers: private chats only, a LID chat with its phone, and old messages are not answered.
   const n = sent.length;

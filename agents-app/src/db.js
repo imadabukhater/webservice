@@ -258,6 +258,14 @@ CREATE TABLE IF NOT EXISTS wa_orders (
   created_at INTEGER NOT NULL,
   sent_at INTEGER
 );
+-- Shop orders a customer follows over WhatsApp: each change (payment verified, eSIM ready) is sent to that chat.
+CREATE TABLE IF NOT EXISTS wa_shop (
+  order_id INTEGER PRIMARY KEY,
+  jid TEXT NOT NULL,
+  stage TEXT NOT NULL DEFAULT '',
+  created_at INTEGER NOT NULL,
+  done_at INTEGER
+);
 `);
 if (!tableSql('lines')) db.exec(LINES_DDL);
 
@@ -489,6 +497,8 @@ function getSettings() {
     // Aylol Telecom (aylol-telecom.com) sign-in: the password never leaves the server (see aylolCredentials).
     aylolUser: out.aylol_user,
     aylolConfigured: !!(out.aylol_user && out.aylol_pass),
+    // The Google Authenticator key Aylol's two-step sign-in asks a code from (never sent back, like the password).
+    aylolHasSecret: !!out.aylol_secret,
     aylolMarkupCard: Math.max(0, Number(out.aylol_markup_card ?? out.aylol_markup) || 0),
     aylolMarkupInvoice: Math.max(0, Number(out.aylol_markup_invoice ?? out.aylol_markup) || 0),
     aylolSyncedCard: Number(out.aylol_synced_card) || null,
@@ -532,7 +542,7 @@ function tcCredentials() {
 }
 function aylolCredentials() {
   const get = (k) => q('SELECT value FROM settings WHERE key = ?').get(k)?.value || '';
-  return { user: get('aylol_user'), pass: get('aylol_pass') };
+  return { user: get('aylol_user'), pass: get('aylol_pass'), secret: get('aylol_secret') };
 }
 function qlCredentials() {
   const get = (k) => q('SELECT value FROM settings WHERE key = ?').get(k)?.value || '';

@@ -100,6 +100,11 @@ route('PUT', '/api/settings', ADMIN, ({ body }) => {
   if (body.qlPass) setSetting('ql_pass', String(body.qlPass).slice(0, 200));
   if (body.aylolUser !== undefined) setSetting('aylol_user', str(body.aylolUser, 120));
   if (body.aylolPass) setSetting('aylol_pass', String(body.aylolPass).slice(0, 200));
+  // Aylol's two-step sign-in (Google Authenticator): the key or the app's export link, stored as a base32 key.
+  if (body.aylolSecret) {
+    try { setSetting('aylol_secret', require('../layan').normalizeSecret(body.aylolSecret)); } catch (e) { fail(400, e.message); }
+  }
+  if (body.aylolSecretClear) setSetting('aylol_secret', '');
   if (body.lyUser !== undefined) setSetting('ly_user', str(body.lyUser, 120));
   if (body.lyPass) setSetting('ly_pass', String(body.lyPass).slice(0, 200));
   // The authenticator secret, as a key or the app's export link: stored as a base32 key, never sent back.
@@ -154,7 +159,7 @@ route('PUT', '/api/settings', ADMIN, ({ body }) => {
     setSetting('support_whatsapp', wa);
   }
   // A supplier's account just saved: its packages are synced now, not at the next daily sync.
-  const SYNC_ON = { art: ['artUser', 'artPass'], ql: ['qlUser', 'qlPass'], ay: ['aylolUser', 'aylolPass'], ly: ['lyUser', 'lyPass', 'lySecret'],
+  const SYNC_ON = { art: ['artUser', 'artPass'], ql: ['qlUser', 'qlPass'], ay: ['aylolUser', 'aylolPass', 'aylolSecret'], ly: ['lyUser', 'lyPass', 'lySecret'],
     tc: ['tcUser', 'tcPass', 'tcMailUser', 'tcMailPass'] };
   for (const [key, fields] of Object.entries(SYNC_ON)) if (fields.some((f) => body[f])) require('../autosync').syncSoon(key);
   return getSettings();

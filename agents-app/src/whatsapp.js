@@ -68,7 +68,7 @@ const linked = () => {
   try { return !!JSON.parse(fs.readFileSync(path.join(authDir(), 'creds.json'), 'utf8')).me; } catch { return false; }
 };
 
-const state = { sock: null, status: 'off', qr: '', qrAt: 0, phone: '', error: '', starting: false, retries: 0 };
+const state = { sock: null, status: 'off', qr: '', qrAt: 0, phone: '', error: '', starting: false, retries: 0, aiError: '' };
 let transport = null; // tests: replaces the socket's sendMessage
 
 const SILENT = {
@@ -85,7 +85,7 @@ const connected = () => !!transport || (state.status === 'connected' && !!state.
 function status() {
   return {
     status: state.status, qr: state.status === 'qr' ? state.qr : '', qrAt: state.qrAt, phone: state.phone, error: state.error,
-    linked: linked(), config: configView(),
+    linked: linked(), config: configView(), aiError: state.aiError,
   };
 }
 
@@ -192,7 +192,19 @@ async function send(jid, content) {
   if (!connected()) throw new Error('واتساب غير مربوط الآن');
   return state.sock.sendMessage(jid, content);
 }
-const say = (jid, text) => send(jid, { text: String(text).slice(0, 4000) });
+const say = (jid, text) => {
+  remember2(jid, 'model', text);
+  return send(jid, { text: String(text).slice(0, 4000) });
+};
+// The last messages of each chat (30 minutes), so Gemini answers within the conversation.
+const history = new Map();
+function remember2(jid, role, text) {
+  const t = Date.now();
+  const list = (history.get(jid) || []).filter((x) => t - x.at < 30 * 60_000);
+  list.push({ role, text: String(text || '').slice(0, 600), at: t });
+  history.set(jid, list.slice(-8));
+  if (history.size > 3000) for (const [k, v] of history) if (!v.some((x) => t - x.at < 30 * 60_000)) history.delete(k);
+}
 
 // A message to any number (the settings screen's test).
 // A local number (05…) is Palestinian when it starts 059 or 056 (970), Israeli otherwise (972).
@@ -300,6 +312,7 @@ async function handle({ jid, phone, text }) {
   if (who.kind === 'blocked') return say(jid, 'حسابك موقوف. تواصل مع المدير.');
   if (who.kind === 'customer' && !cfg.customers) return undefined;
   const t = norm(text);
+  remember2(jid, 'user', text);
   try {
     if (who.kind === 'agent') return await agentSays(jid, who.user, t, text);
     if (who.kind === 'admin') return await adminSays(jid, who.user, t);
@@ -402,7 +415,7 @@ async function agentSays(jid, user, t, raw) {
     const how = p.kind === 'card' ? `شحن 05XXXXXXXX ${p.id}` : p.pool ? `esim ${p.id}` : '';
     return say(jid, `#${p.id} ${p.companyName} — ${p.name}\nالسعر: *${round(p.price)} ₪*${how ? `\nللطلب: *${how}*` : '\nتُباع من البوابة.'}`);
   }
-  const ai = await understand(t, raw, 'agent');
+  const ai = await understand(t, raw, 'agent', agentContext(user), jid);
   if (ai) return agentAi(jid, user, ai);
   return say(jid, agentMenu(user));
 }
@@ -524,7 +537,18 @@ async function customerSays(jid, t, raw) {
   if (!shop.enabled) return say(jid, `${cfg.welcome || `أهلاً بك في ${shop.shopName}`}\nالمتجر مغلق الآن. سنرد عليك قريباً.`);
   const menu = () => say(jid, [cfg.welcome || `أهلاً بك في ${shop.shopName} 👋`, '',
     '*الباقات* — الباقات والأسعار (أو اسم الشركة، أو: باقات esim، كروت)', 'أرسل *رقم الباقة* لتطلبها.',
+    'دفعت؟ أرسل *رقم طلبك* (8 حروف وأرقام) للتحقق من التحويل ومتابعة التفعيل.',
     ...(base ? ['', `🛒 المتجر: ${base}`] : [])].join('\n'));
+  // The payment details for an order asked for just before.
+  const s = session(jid);
+  if (s?.step === 'proof' && !RE.help.test(t) && !RE.no.test(t)) {
+    sessions.delete(jid);
+    return customerProof(jid, s.orderId, raw);
+  }
+  if (RE.no.test(t)) { sessions.delete(jid); return menu(); }
+  // An order number: its state, and the payment check.
+  const code = orderCodeIn(raw);
+  if (code) return customerOrder(jid, code, raw);
   if (RE.help.test(t)) return menu();
   const asked = (RE.code.test(t) && Number(t.replace('#', ''))) || ((RE.esim.test(t) || RE.recharge.test(t) || /^(تفعيل|اطلب|شراء)/.test(t)) && pkgIdIn(t));
   if (asked) {
@@ -542,8 +566,9 @@ async function customerSays(jid, t, raw) {
     return say(jid, ['📦 *الباقات*', ...packageLines(list, { tags: (p) => (p.esim ? ' · eSIM' : p.kind === 'card' ? ' · شحن' : '') }), '',
       'أرسل *رقم الباقة* (مثل 12) لرابط الطلب والدفع.', ...(base ? [`🛒 ${base}`] : [])].join('\n'));
   }
-  const ai = await understand(t, raw, 'customer');
+  const ai = await understand(t, raw, 'customer', shopContext(shop), jid);
   if (ai?.action === 'package' && ai.packageId) return customerSays(jid, String(ai.packageId), String(ai.packageId));
+  if (ai?.action === 'verify' && orderCodeIn(String(ai.orderCode || ''))) return customerOrder(jid, orderCodeIn(String(ai.orderCode)), `${ai.orderCode} ${ai.payer || ''}`);
   if (ai?.action === 'packages') return customerSays(jid, norm(`باقات ${ai.company || ''}`), '');
   if (ai?.action === 'answer' && ai.reply) return say(jid, `${String(ai.reply).slice(0, 1500)}${base ? `\n\n🛒 ${base}` : ''}`);
   return menu();
@@ -553,7 +578,18 @@ async function customerSays(jid, t, raw) {
 // At most 200 questions an hour go to it (strangers cannot run the key's bill up), and what it writes carries no link.
 const aiCalls = [];
 const noLinks = (text) => String(text || '').replace(/(?:https?:\/\/|www\.)\S+/gi, '').replace(/\b[\w-]+\.(?:com|net|org|io|me|co|shop|xyz|info)\b\S*/gi, '').trim();
-async function understand(t, raw, kind) {
+// What Gemini may talk about: the packages (and prices) this person can buy, and how the shop's payment works.
+function shopContext(shop) {
+  return [`المتجر: ${shop.shopName}. الدفع بجوال باي${shop.payPhone ? ` إلى الرقم ${shop.payPhone}` : ''}، ثم يرسل الزبون رقم طلبه واسم المحوِّل أو الرقم المرجعي للتحقق، ويصله رمز eSIM بعد التحقق.`,
+    'الباقات (رقم — الاسم — السعر):',
+    ...shop.packages.slice(0, 80).map((p) => `#${p.id} ${p.companyName} ${p.name}${p.dataGb ? ` ${p.dataGb}GB` : ''} — ${round(p.price)} ₪${p.esim ? ` (eSIM، رسوم ${round(p.esimFee || 0)} ₪)` : p.kind === 'card' ? ' (شحن)' : ''}`)].join('\n');
+}
+function agentContext(user) {
+  const cat = catalog(user);
+  return ['رزم الوكيل وأسعاره (رقم — الاسم — السعر):',
+    ...cat.packages.slice(0, 80).map((p) => `#${p.id} ${p.companyName} ${p.name} — ${round(p.price)} ₪${p.kind === 'card' ? ' (شحن)' : p.pool ? ' (eSIM)' : ''}`)].join('\n');
+}
+async function understand(t, raw, kind, context = '', jid = '') {
   const cfg = config();
   if (!cfg.aiKey || !raw) return null;
   const hourAgo = Date.now() - 60 * 60_000;
@@ -562,28 +598,126 @@ async function understand(t, raw, kind) {
   aiCalls.push(Date.now());
   const actions = kind === 'agent'
     ? '"balance" | "recharge" (needs number and packageId) | "esim" (needs packageId) | "packages" (company, kind: card|esim|"") | "answer"'
-    : '"packages" (company) | "package" (packageId) | "answer"';
-  const prompt = `أنت مساعد متجر خطوط وشرائح eSIM وكروت شحن. افهم رسالة ${kind === 'agent' ? 'الوكيل' : 'الزبون'} وأعد JSON فقط:
-{"action": ${actions}, "packageId": 0, "number": "", "company": "", "kind": "", "reply": ""}
-"answer": رد قصير ومهذب بالعربية في reply، دون أسعار أو وعود غير مذكورة. لا تخترع أرقام رزم.
-الرسالة: ${String(raw).slice(0, 500)}`;
+    : '"packages" (company) | "package" (packageId) | "verify" (orderCode, payer: name, phone or reference of the transfer) | "answer"';
+  // The conversation so far, without the message being answered (the last one recorded).
+  const past = (history.get(jid) || []).slice(0, -1).map((m) => `${m.role === 'user' ? (kind === 'agent' ? 'الوكيل' : 'الزبون') : 'المتجر'}: ${m.text}`).join('\n');
+  const prompt = `أنت مساعد متجر خطوط وشرائح eSIM وكروت شحن، ترد على واتساب بالعربية. افهم آخر رسالة من ${kind === 'agent' ? 'الوكيل' : 'الزبون'} وأعد JSON فقط:
+{"action": ${actions}, "packageId": 0, "number": "", "company": "", "kind": "", "orderCode": "", "payer": "", "reply": ""}
+"answer": رد قصير ومهذب في reply. الأسعار والرزم من القائمة أدناه فقط، بأرقامها كما هي؛ لا تخترع رزمة أو سعراً أو موعداً، ولا تَعِد بتفعيل قبل الدفع والتحقق. إن لم تعرف فقل إن المتجر سيرد قريباً.
+${context}
+${past ? `المحادثة حتى الآن:\n${past}\n` : ''}آخر رسالة: ${String(raw).slice(0, 500)}`;
   try {
-    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(cfg.aiModel)}:generateContent`, {
+    const res = await fetch(`${process.env.GEMINI_BASE || 'https://generativelanguage.googleapis.com'}/v1beta/models/${encodeURIComponent(cfg.aiModel)}:generateContent`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-goog-api-key': cfg.aiKey },
       body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: prompt }] }], generationConfig: { temperature: 0.1, responseMimeType: 'application/json' } }),
       signal: AbortSignal.timeout(15_000),
     });
-    if (!res.ok) return null;
+    if (!res.ok) {
+      const err = await res.json().catch(() => null);
+      state.aiError = `Gemini ${res.status}: ${String(err?.error?.message || res.statusText).slice(0, 200)}`;
+      return null;
+    }
     const data = await res.json();
+    state.aiError = '';
     const v = JSON.parse(data?.candidates?.[0]?.content?.parts?.[0]?.text || 'null');
     if (!v || typeof v.action !== 'string') return null;
     if (v.reply) v.reply = noLinks(v.reply);
     return v;
-  } catch {
+  } catch (e) {
+    state.aiError = `Gemini: ${String(e.message).slice(0, 200)}`;
     return null;
   }
 }
+
+// ---------- customers' shop orders: the payment check, and every change sent to the chat ----------
+const orderCodeIn = (text) => {
+  const m = String(text || '').toUpperCase().match(/(?:^|[^A-Z0-9])([A-Z0-9]{8})(?![A-Z0-9])/g) || [];
+  for (const x of m) {
+    const c = x.replace(/[^A-Z0-9]/g, '');
+    if (/[A-Z]/.test(c) && q('SELECT 1 FROM shop_orders WHERE code = ?').get(c)) return c;
+  }
+  return '';
+};
+const STAGE_TEXT = {
+  awaiting_payment: '⏳ بانتظار الدفع.',
+  verifying: '⏳ نتحقق من التحويل: لم يصل إشعاره بعد. نعيد الفحص تلقائياً ويصلك الرد هنا.',
+  review: '🔎 الطلب عند المدير لمراجعة الدفع يدوياً. يصلك الرد هنا.',
+  processing: '✅ تم التحقق من الدفع. جارٍ التفعيل، ويصلك رمز التفعيل هنا.',
+  paid_issue: '✅ تم التحقق من الدفع. التفعيل يحتاج تدخل المدير، ويصلك الرمز هنا فور تجهيزه.',
+  done: '✅ تم التفعيل.',
+  failed: '❌ تعذّر التفعيل. سيتواصل معك المتجر.',
+  rejected: '❌ رُفض الطلب.',
+  cancelled: '⌛ انتهت مهلة الطلب وأُلغي. يمكنك طلب باقة جديدة.',
+};
+function follow(jid, o, stage) {
+  q(`INSERT INTO wa_shop (order_id, jid, stage, created_at) VALUES (?, ?, ?, ?)
+     ON CONFLICT(order_id) DO UPDATE SET jid = excluded.jid, stage = excluded.stage, done_at = NULL`).run(o.id, jid, stage, now());
+}
+async function customerOrder(jid, code, raw) {
+  const S = require('./routes/shop');
+  const o = S.byCode(code);
+  const rest = String(raw || '').replace(new RegExp(code, 'i'), '').replace(/^[\s:،,-]+|[\s:،,-]+$/g, '');
+  if (['awaiting_payment', 'verifying', 'review'].includes(o.status) && rest.length >= 2 && !/^(طلب|طلبي|رقم|حالة)$/.test(norm(rest))) {
+    return customerProof(jid, o.id, rest);
+  }
+  const v = S.orderView(o);
+  follow(jid, o, v.stage);
+  if (o.status === 'awaiting_payment') {
+    remember(jid, { step: 'proof', orderId: o.id });
+    return say(jid, `طلب *${o.code}* — ${o.package_label} — *${round(o.amount)} ₪*\n${STAGE_TEXT.awaiting_payment}\n\nبعد التحويل بجوال باي أرسل *اسم المحوِّل* أو *رقم هاتفه* أو *الرقم المرجعي* للتحويل.`);
+  }
+  return orderUpdate(jid, o, v);
+}
+async function customerProof(jid, orderId, details) {
+  const S = require('./routes/shop');
+  const text = String(details || '').trim().slice(0, 80);
+  const o = q('SELECT * FROM shop_orders WHERE id = ?').get(orderId);
+  // The shop's own check (the web page's): the e-mails of transfers received, by reference, phone or name.
+  const v = await S.submitProof(o, { payName: text });
+  follow(jid, o, v.stage);
+  return say(jid, `طلب *${o.code}*: ${STAGE_TEXT[v.stage] || v.stage}`);
+}
+async function orderUpdate(jid, o, v) {
+  if (v.stage === 'done' && o.esim) {
+    const code = v.esimCode || '';
+    let image = null;
+    const m = /^data:image\/(?:png|jpe?g);base64,(.+)$/.exec(v.esimQr || '');
+    if (m) image = Buffer.from(m[1], 'base64');
+    else if (/^LPA:/i.test(code)) image = qrcode.png(code, { scale: 8 });
+    const caption = `✅ تم تفعيل eSIM لطلبك *${o.code}*${v.number ? ` — الرقم *${v.number}*` : ''}\n\nامسح الرمز من الهاتف: الإعدادات ← الشبكة الخلوية ← إضافة eSIM.`;
+    if (image) await send(jid, { image, caption });
+    else await say(jid, `${caption}\nالرمز في صفحة طلبك على المتجر.`);
+    if (code) await say(jid, `رمز التفعيل اليدوي:\n${code}`);
+    return undefined;
+  }
+  return say(jid, `طلب *${o.code}* — ${o.package_label}\n${STAGE_TEXT[v.stage] || v.stage}`);
+}
+// Every 20 seconds: the orders followed here whose state changed get a message (the last one: the eSIM's QR code).
+const FINAL = new Set(['done', 'failed', 'rejected', 'cancelled']);
+let watching = false;
+async function watchShop() {
+  if (watching || !connected()) return;
+  watching = true;
+  try {
+    const S = require('./routes/shop');
+    q('DELETE FROM wa_shop WHERE created_at < ?').run(now() - 3 * 864e5);
+    for (const w of q('SELECT * FROM wa_shop WHERE done_at IS NULL').all()) {
+      const o = q('SELECT * FROM shop_orders WHERE id = ?').get(w.order_id);
+      if (!o) { q('DELETE FROM wa_shop WHERE order_id = ?').run(w.order_id); continue; }
+      const v = S.orderView(o);
+      if (v.stage === w.stage) continue;
+      q('UPDATE wa_shop SET stage = ?, done_at = ? WHERE order_id = ?').run(v.stage, FINAL.has(v.stage) ? now() : null, o.id);
+      try { await orderUpdate(w.jid, o, v); } catch (e) {
+        q('UPDATE wa_shop SET stage = ?, done_at = NULL WHERE order_id = ?').run(w.stage, o.id);
+        console.error('whatsapp order', e.message);
+      }
+    }
+  } finally {
+    watching = false;
+  }
+}
+setInterval(() => watchShop().catch((e) => console.error('whatsapp watch', e.message)), 20_000).unref();
 
 // ---------- results of sales made here ----------
 const WHAT = { esim: 'تفعيل eSIM', activate: 'تفعيل الخط', recharge: 'الشحن', renew: 'التمديد', port: 'تحويل الرقم' };
@@ -637,5 +771,5 @@ if (linked()) setTimeout(() => start().catch((e) => console.error('whatsapp star
 
 module.exports = {
   start, logout, status, config, configView, saveConfig, sendTo, taskResolved, handle,
-  _test: { setTransport: (fn) => { transport = fn; }, sessions, recent, norm, onRaw, jidOf },
+  _test: { setTransport: (fn) => { transport = fn; }, sessions, recent, norm, onRaw, jidOf, watchShop, history },
 };
