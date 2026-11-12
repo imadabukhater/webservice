@@ -298,6 +298,7 @@ function fulfil(orderId) {
   if (lyRef) require('./routes/layan').rememberEsim(lyRef.packageId, [o.number]);
   const tcRef = /^tcn:/.test(art) ? require('./telecom').parseRef(art) : null;
   if (tcRef) require('./routes/telecom').rememberEsim(tcRef.packageId, [o.number]);
+  if (/^ay:esim:/.test(art)) require('./routes/aylol').rememberEsim(art, [o.number]);
   try {
     const r = tx(() => {
       const agent = shopAgent();

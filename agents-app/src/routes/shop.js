@@ -30,10 +30,12 @@ function esimPackage(id) {
   const p = q(`SELECT p.*, c.name AS company_name, c.esim_fee AS company_esim_fee FROM packages p JOIN companies c ON c.id = p.company_id
                WHERE p.id = ? AND p.active = 1 AND p.shop_price > 0`).get(Number(id));
   const art = p?.art_card_id || '';
-  const hasRef = p && isEsimRef(art, p.company_name);
-  const ref = !hasRef ? null : /^qln:/.test(art) ? ql.parseRef(art) : /^lyn:/.test(art) ? ly.parseRef(art) : tc.parseRef(art);
+  // Aylol's eSIMs too: one of the site's ready numbers, bought there once the order is paid.
+  const aylol = /^ay:esim:/.test(art);
+  const hasRef = p && (isEsimRef(art, p.company_name) || aylol);
+  const ref = !hasRef ? null : aylol ? { system: 'ay', art } : /^qln:/.test(art) ? ql.parseRef(art) : /^lyn:/.test(art) ? ly.parseRef(art) : tc.parseRef(art);
   if (!p || (!ref && !p.esim_enabled)) fail(404, 'الباقة غير متوفرة');
-  return { p, ref, layan: /^lyn:/.test(art), telecom: /^tcn:/.test(art) && p.company_name === TC_ESIM_COMPANY, direct: !!p.esim_enabled };
+  return { p, ref, aylol, layan: /^lyn:/.test(art), telecom: /^tcn:/.test(art) && p.company_name === TC_ESIM_COMPANY, direct: !!p.esim_enabled };
 }
 // Layan's numbers have no id of their own: the number is the id.
 const phoneId = (phone) => Number(String(phone).replace(/\D/g, ''));
@@ -162,11 +164,14 @@ route('GET', '/api/shop/catalog', null, shopCatalogResponse);
 // The free eSIM numbers of a package at its supplier (remembered there, so a sale can use one), without the ones other
 // customers hold: [{ id, phone, sim, qr }]. QuickLine's come with their eSIM and QR code; Layan's get theirs when
 // activated (its numbers have no id: the number is the id).
-async function freeEsimNumbers(s, { ref, layan, telecom }) {
+async function freeEsimNumbers(s, { ref, layan, telecom, aylol }) {
   const held = heldNumbers();
   let list;
   try {
-    if (telecom) {
+    if (aylol) {
+      if (!s.aylolConfigured) fail(503, 'لا توجد أرقام متاحة الآن');
+      list = (await require('./aylol').freeNumbers(ref.art)).map((n) => ({ id: phoneId(n.phone), phone: n.phone, sim: '', qr: '' }));
+    } else if (telecom) {
       // Registered with the shop's address: none set, nothing to sell.
       if (!s.tcReady || !s.tcRegReady) fail(503, 'لا توجد أرقام متاحة الآن');
       const phones = await tc.esimNumbers(require('../db').tcCredentials(), ref.packageId);
@@ -329,9 +334,14 @@ route('GET', '/api/shop/orders/:code', null, async ({ params, query, ip }) => {
 route('POST', '/api/shop/orders/:code/proof', null, async ({ params, body, ip }) => {
   enabled();
   throttle(ip, 'proof', 30);
+  return submitProof(byCode(params.code, ip), body);
+}, { maxBody: 2200 * 1024 });
+
+// The customer's payment details (also sent over WhatsApp): matched against the Jawwal Pay / PalPay e-mails received.
+async function submitProof(order, body) {
   shop.expireUnconfirmed();
   shop.escalate();
-  const o = byCode(params.code, ip);
+  const o = q('SELECT * FROM shop_orders WHERE id = ?').get(order.id);
   if (o.status === 'cancelled') fail(400, 'انتهت مهلة حجز الرقم (5 دقائق) دون تأكيد الإرسال وتم إلغاء الطلبية تلقائياً');
   if (!['awaiting_payment', 'verifying', 'review'].includes(o.status)) fail(400, 'تم التعامل مع هذا الطلب');
   const prevTries = Number(o.proof_tries) || 0;
@@ -371,7 +381,7 @@ route('POST', '/api/shop/orders/:code/proof', null, async ({ params, body, ip })
     try { await shop.checkMail({ force: true }); } catch (e) { console.error('shop mail', e.message); }
   }
   return orderView(byCode(o.code));
-}, { maxBody: 2200 * 1024 });
+}
 
 route('POST', '/api/shop/orders/:code/cancel', null, ({ params, ip }) => {
   throttle(ip, 'cancel', 30);
@@ -458,4 +468,4 @@ route('GET', '/api/shop/admin/summary', ADMIN, () => ({
   agentId: shop.shopAgent().id,
 }));
 
-module.exports = { shopCatalogResponse };
+module.exports = { shopCatalogResponse, submitProof, orderView, byCode };

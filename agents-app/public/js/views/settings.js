@@ -39,7 +39,7 @@ function waHtml(w) {
   return `
         <section class="card card-pad form">
           <h2 class="dot-title">واتساب المتجر</h2>
-          <p class="muted small">يربط رقم واتساب المتجر بالسيرفر (مثل واتساب ويب). بعدها يرد تلقائياً: <b>الوكيل</b> (رقمه المحفوظ في حسابه) يرى رزمه وأسعاره ورصيده، ويشحن ويفعّل eSIM من رصيده بعد أن يرسل «نعم»، وتصله النتيجة ورمز QR الحقيقي في المحادثة. <b>الزبون</b> يرى باقات المتجر وأسعاره، ويأخذ رابط الطلب والدفع في المتجر — لا يُفعَّل له شيء قبل التحقق من الدفع.</p>
+          <p class="muted small">يربط رقم واتساب المتجر بالسيرفر (مثل واتساب ويب). بعدها يرد تلقائياً: <b>الوكيل</b> (رقمه المحفوظ في حسابه) يرى رزمه وأسعاره ورصيده، ويشحن ويفعّل eSIM من رصيده بعد أن يرسل «نعم»، وتصله النتيجة ورمز QR الحقيقي في المحادثة. <b>الزبون</b> يرى باقات المتجر وأسعاره ورابط الطلب، ثم يرسل رقم طلبه واسم المحوِّل أو الرقم المرجعي فيُفحص التحويل في إشعارات جوال باي، ويصله رمز eSIM في المحادثة بعد التحقق. مع مفتاح Gemini يرد على الأسئلة الحرة من قائمة الباقات والأسعار نفسها.</p>
           <div id="wa-status">${waStatusHtml(w)}</div>
         </section>
         <form class="card card-pad form" id="wa-form" novalidate autocomplete="off">
@@ -53,6 +53,9 @@ function waHtml(w) {
           <div class="field"><label for="wa-welcome">رسالة الترحيب</label><input class="input" id="wa-welcome" name="welcome" maxlength="300" value="${esc(c.welcome || '')}" placeholder="أهلاً بك في متجرنا 👋"></div>
           <div class="field"><label for="wa-ai">مفتاح Gemini (اختياري)</label><input class="input ltr" id="wa-ai" name="aiKey" type="password" autocomplete="new-password" placeholder="${c.hasAiKey ? 'محفوظ — اتركه فارغاً للإبقاء' : 'بدونه يفهم الأوامر المكتوبة فقط'}">
             <span class="hint">لفهم الرسائل الحرة. يُرسَل نص الرسالة إلى Google لفهمها، ولا يُنفَّذ شيء بدون «نعم».</span></div>
+          <div class="field"><label for="wa-model">نموذج Gemini</label><input class="input ltr" id="wa-model" name="aiModel" value="${esc(c.aiModel || 'gemini-2.5-flash')}">
+            <span class="hint">غيّره إن أوقفت Google هذا النموذج، مثل gemini-2.5-flash.</span></div>
+          ${w?.aiError ? `<div class="msg">${icon('alert')}<span>آخر خطأ من Gemini: ${esc(w.aiError)}</span></div>` : ''}
           ${c.hasAiKey ? '<label class="switch-row"><span class="grow"><b>حذف مفتاح Gemini المحفوظ</b></span><input class="switch" type="checkbox" name="aiKeyClear"></label>' : ''}
           <div id="wa-msg"></div>
           <button class="btn btn-primary" type="submit">${icon('check')}حفظ</button>
@@ -120,7 +123,10 @@ export default {
               <div class="field"><label for="aylol-user">البريد في أيلول</label><input class="input ltr" id="aylol-user" name="aylolUser" type="email" value="${esc(s.aylolUser || '')}" autocomplete="off"></div>
               <div class="field"><label for="aylol-pass">كلمة المرور</label><input class="input ltr" id="aylol-pass" name="aylolPass" type="password" autocomplete="new-password" placeholder="${s.aylolConfigured ? 'محفوظة — اتركها فارغة للإبقاء' : ''}"></div>
             </div>
-            <div class="msg info">${icon('info')}<span>بعد الحفظ تُزامَن رزم أيلول فوراً، ثم كل يوم تلقائياً. نسبة الربح لكل نظام في «الشركات والرزم» ← تبويب «أيلول».</span></div>
+            <div class="field"><label for="aylol-secret">المفتاح السري لـ Google Authenticator (التحقق بخطوتين)</label>
+              <input class="input ltr" id="aylol-secret" name="aylolSecret" type="password" autocomplete="off" placeholder="${s.aylolHasSecret ? 'محفوظ — اتركه فارغاً للإبقاء' : 'المفتاح تحت رمز QR، أو رابط otpauth'}">
+              <span class="hint">أيلول يطلب رمزاً من Google Authenticator بعد كلمة المرور. انسخ المفتاح المكتوب تحت رمز QR عند تفعيل التحقق بخطوتين في أيلول (أو رابط التصدير من التطبيق)، فيصنع السيرفر الرمز بنفسه. يبقى على السيرفر ولا يظهر بعد حفظه.</span></div>
+            <div class="msg info">${icon('info')}<span>بعد الحفظ تُزامَن رزم أيلول فوراً، ثم كل 6 ساعات تلقائياً. نسبة الربح لكل نظام في «الشركات والرزم» ← تبويب «أيلول».</span></div>
             <div id="aylol-msg"></div>
             <div class="btn-row">
               <button class="btn btn-primary" type="submit">${icon('check')}حفظ</button>
@@ -229,7 +235,7 @@ export default {
         V.wa = await api.put('/api/whatsapp', {
           enabled: form.elements.enabled.checked, customers: form.elements.customers.checked,
           admins: field(form, 'admins'), shopUrl: field(form, 'shopUrl'), welcome: field(form, 'welcome'),
-          aiKey: form.elements.aiKey.value, aiKeyClear: !!form.elements.aiKeyClear?.checked,
+          aiKey: form.elements.aiKey.value, aiKeyClear: !!form.elements.aiKeyClear?.checked, aiModel: field(form, 'aiModel'),
         });
         form.elements.aiKey.value = '';
         msg.innerHTML = '';
@@ -283,7 +289,9 @@ export default {
       const form = e.currentTarget;
       const msg = root.querySelector('#aylol-msg');
       try {
-        S.settings = await api.put('/api/settings', { aylolUser: field(form, 'aylolUser'), aylolPass: form.elements.aylolPass.value });
+        S.settings = await api.put('/api/settings', { aylolUser: field(form, 'aylolUser'), aylolPass: form.elements.aylolPass.value, aylolSecret: form.elements.aylolSecret.value });
+        form.elements.aylolPass.value = '';
+        form.elements.aylolSecret.value = '';
         toast('تم حفظ إعدادات أيلول');
         changed();
       } catch (err) {

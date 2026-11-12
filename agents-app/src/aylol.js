@@ -13,6 +13,7 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const { execFile } = require('node:child_process');
 const qr = require('./qr');
+const { totp } = require('./layan');
 
 const BASE = () => process.env.AYLOL_BASE || 'https://www.aylol-telecom.com';
 const CURL = () => process.env.AYLOL_CURL || 'curl';
@@ -128,7 +129,67 @@ function requireCreds(creds) {
   const user = String(creds?.user || '').trim();
   const pass = String(creds?.pass || '');
   if (!user || !pass) throw new AylolError('أدخل بريد وكلمة مرور أيلول في الإعدادات أولاً', { refused: true });
-  return { user, pass };
+  return { user, pass, secret: String(creds?.secret || '') };
+}
+
+// ---------- two-step sign-in (Google Authenticator) ----------
+// After the password the site sends to /two-factor, a form asking the authenticator's 6-digit code: one field, or one
+// box per digit. Its own fields are read from the page (hidden token, field names, where it posts), never guessed.
+const attrOf = (tag, name) => {
+  const m = new RegExp(`(?:^|\\s)${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s>]+))`, 'i').exec(tag);
+  return m ? (m[1] ?? m[2] ?? m[3] ?? '') : null;
+};
+const unescapeHtml = (s) => String(s || '').replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&#0?39;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>');
+const CODE_NAME = /code|otp|one_?time|totp|2fa|verification|pin|authenticator/i;
+function twoFactorForm(html, pageUrl) {
+  for (const [, attrs, inner] of String(html || '').matchAll(/<form\b([^>]*)>([\s\S]*?)<\/form>/gi)) {
+    const inputs = [...inner.matchAll(/<input\b[^>]*>/gi)].map(([tag]) => ({
+      name: attrOf(tag, 'name'), type: (attrOf(tag, 'type') || 'text').toLowerCase(), value: unescapeHtml(attrOf(tag, 'value') || ''), max: attrOf(tag, 'maxlength'),
+    })).filter((i) => i.name);
+    const typed = inputs.filter((i) => ['text', 'number', 'tel', ''].includes(i.type));
+    const digits = typed.filter((i) => i.max === '1');
+    const single = typed.find((i) => CODE_NAME.test(i.name)) || (typed.length === 1 ? typed[0] : null);
+    if (inputs.some((i) => i.type === 'password') || (!single && digits.length < 4)) continue;
+    let action;
+    try { action = new URL(unescapeHtml(attrOf(attrs, 'action') || pageUrl), pageUrl); } catch { continue; }
+    return {
+      action: action.href,
+      hidden: inputs.filter((i) => i.type === 'hidden'),
+      codeHidden: inputs.find((i) => i.type === 'hidden' && i.name !== '_token' && CODE_NAME.test(i.name)) || null,
+      single: digits.length >= 4 ? null : single,
+      digits: digits.length >= 4 ? digits : [],
+      remember: inputs.filter((i) => i.type === 'checkbox' && /remember|trust/i.test(i.name)),
+    };
+  }
+  return null;
+}
+function twoFactorFields(form, code) {
+  const pairs = form.hidden.map((i) => [i.name, form.codeHidden && i.name === form.codeHidden.name ? code : i.value]);
+  if (form.single) pairs.push([form.single.name, code]);
+  form.digits.forEach((d, n) => pairs.push([d.name, code[n] || '']));
+  for (const r of form.remember) pairs.push([r.name, r.value || 'on']); // remember this device: fewer codes later
+  return new URLSearchParams(pairs).toString();
+}
+const charged = async () => {
+  const h = await page(`${BASE()}/dashboard/charge-system`, `${BASE()}/admin/home`);
+  return { h, seed: exSeed(h) };
+};
+async function passTwoFactor(c) {
+  const pageUrl = `${BASE()}/two-factor`;
+  const html = await page(pageUrl, `${BASE()}/login`);
+  const form = twoFactorForm(html, pageUrl);
+  if (!form) return null;
+  if (!c.secret) throw new AylolError('أيلول يطلب رمز Google Authenticator: أدخل المفتاح السري في الإعدادات ← أيلول', { refused: true });
+  // The code goes to the site itself only.
+  if (new URL(form.action).origin !== new URL(BASE()).origin) throw new AylolError('أيلول: صفحة رمز المصادقة ترسل إلى موقع آخر — لم أرسل الرمز');
+  for (let attempt = 0; attempt < 2; attempt++) {
+    // A code is used once: a second try waits for the next one (every 30 seconds).
+    if (attempt) await new Promise((r) => setTimeout(r, 30_500 - (Date.now() % 30_000)));
+    await page(form.action, pageUrl, ['-H', `Origin: ${BASE()}`, '-H', 'Content-Type: application/x-www-form-urlencoded'], twoFactorFields(form, totp(c.secret)));
+    const after = await charged();
+    if (after.seed) return after.h;
+  }
+  throw new AylolError('أيلول رفض رمز المصادقة — تأكد من المفتاح السري (نفس حساب Google Authenticator) ومن ضبط ساعة الخادم', { refused: true });
 }
 
 // ---------- session ----------
@@ -150,7 +211,9 @@ async function login(creds) {
   if (!csrf1) throw new AylolError('أيلول: تعذّر قراءة صفحة الدخول');
   await page(`${BASE()}/login`, `${BASE()}/login`, ['-H', `Origin: ${BASE()}`, '-H', 'Content-Type: application/x-www-form-urlencoded'],
     formBody({ email: c.user, password: c.pass, _token: csrf1 }));
-  const ch = await page(`${BASE()}/dashboard/charge-system`, `${BASE()}/admin/home`);
+  let ch = (await charged()).h;
+  // Two-step sign-in: the charge page only opens once the authenticator's code is accepted.
+  if (!exSeed(ch)) ch = (await passTwoFactor(c)) || ch;
   const seed = exSeed(ch);
   if (!seed) throw new AylolError('أيلول رفض الدخول — راجع البريد وكلمة المرور', { refused: true });
   Object.assign(state, { seed, csrf: exCsrf(ch) || csrf1, user: c.user, loggedAt: Date.now(), chargeHtml: ch, balance: exBalance(ch) });
@@ -465,5 +528,5 @@ async function balance(creds) {
 
 module.exports = {
   AylolError, login, balance, parseCategoriesFromHtml, fetchPackages, syncAll, fetchEsimPage, fetchEsimPackages, fetchEsimReadyStocks,
-  purchaseEsim, lookupAvailableNumbers, executeOrder, currentPrice, mapToEsimCategoryId, esimCodeAndQr, _state: state,
+  purchaseEsim, lookupAvailableNumbers, executeOrder, currentPrice, mapToEsimCategoryId, esimCodeAndQr, twoFactorForm, twoFactorFields, _state: state,
 };
