@@ -207,8 +207,8 @@ function renderBrandWordmark(rawName = '') {
 }
 
 function shell(body, { sub = '' } = {}) {
-  const rawBrand = S.data?.shopTitle || S.data?.appName || 'Hot eSIM';
-  const name = S.data?.shopTitle || (S.data?.appName ? `متجر ${S.data.appName}` : 'Hot eSIM');
+  const rawBrand = S.data?.shopTitle || 'Hot eSIM';
+  const name = S.data?.shopTitle || 'Hot eSIM';
   const subtitle = sub || S.data?.shopSubtitle || 'شرائح وباقات فورية';
   const wa = waHref(S.data?.supportWhatsapp, `مرحباً، أحتاج مساعدة في ${name}`);
   const dark = document.documentElement.dataset.theme === 'dark';
@@ -1180,7 +1180,7 @@ function viewCatalog() {
   const companies = S.data.companies || [];
   const packages = S.data.packages || [];
   const coMap = new Map(companies.map((c) => [c.id, c]));
-  const rawBrand = S.data?.shopTitle || S.data?.appName || 'Hot Esim';
+  const rawBrand = S.data?.shopTitle || 'Hot eSIM';
   const wa = waHref(S.data?.supportWhatsapp, 'مرحباً، أحتاج مساعدة في المتجر');
 
   // Counts per dedicated tab (eSIM/new-line packages vs Recharge packages)

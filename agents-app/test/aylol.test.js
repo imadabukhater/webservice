@@ -89,8 +89,18 @@ test.before(async () => {
   process.env.AYLOL_BASE = `http://127.0.0.1:${server.address().port}`;
   process.env.AYLOL_DATA = dataDir;
   // curl through a wrapper that records its command line: what any user of the server could read in the process list.
-  const wrapper = path.join(dataDir, 'curl-logged.sh');
-  fs.writeFileSync(wrapper, `#!/bin/sh\nprintf '%s\\n' "$*" >> '${path.join(dataDir, 'argv.log')}'\nexec curl "$@"\n`, { mode: 0o755 });
+  // A shell script where the system runs one; a Node script on Windows, which cannot.
+  const argvLog = path.join(dataDir, 'argv.log');
+  const wrapper = path.join(dataDir, process.platform === 'win32' ? 'curl-logged.js' : 'curl-logged.sh');
+  if (process.platform === 'win32') {
+    fs.writeFileSync(wrapper, [
+      'const args = process.argv.slice(2);',
+      `require('node:fs').appendFileSync(${JSON.stringify(argvLog)}, args.join(' ') + '\\n');`,
+      "process.exit(require('node:child_process').spawnSync('curl', args, { stdio: 'inherit' }).status ?? 1);",
+    ].join('\n'));
+  } else {
+    fs.writeFileSync(wrapper, `#!/bin/sh\nprintf '%s\\n' "$*" >> '${argvLog}'\nexec curl "$@"\n`, { mode: 0o755 });
+  }
   process.env.AYLOL_CURL = wrapper;
   process.env.DB_FILE = ':memory:';
   process.env.ADMIN_PASSWORD = 'admin-pass';

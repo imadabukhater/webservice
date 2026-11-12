@@ -53,10 +53,34 @@ function serial(fn) {
 
 // body: sent as the request's body through curl's stdin, so the password, tokens and customers' details never show
 // in the server's process list. -g: the site's values are never read as curl's URL patterns.
+// Some curl builds (Windows' own, Git for Windows) have no HTTP/2: --http2 would make every request fail there.
+// Asked once per curl program; without HTTP/2 the requests simply go over HTTP/1.1.
+const http2Support = new Map();
+function hasHttp2(bin) {
+  if (!http2Support.has(bin)) {
+    http2Support.set(bin, new Promise((resolve) => {
+      execFile(bin, ['-V'], { timeout: 10_000 }, (err, stdout) => resolve(!err && /^Features:.*\bHTTP2\b/m.test(String(stdout))));
+    }));
+  }
+  return http2Support.get(bin);
+}
+// AYLOL_CURL may also be a Node script (a wrapper, e.g. in the tests on Windows, which cannot run shell scripts).
+const curlCommand = () => {
+  const bin = CURL();
+  return /\.[cm]?js$/i.test(bin) ? [process.execPath, [bin]] : [bin, []];
+};
+
 function curl(args, body = null) {
-  return serial(() => new Promise((resolve, reject) => {
+  return serial(async () => {
+    const [bin, pre] = curlCommand();
+    const http2 = (await hasHttp2(bin === process.execPath ? 'curl' : bin)) ? ['--http2'] : [];
+    return run(bin, pre, http2, args, body);
+  });
+}
+function run(bin, pre, http2, args, body) {
+  return new Promise((resolve, reject) => {
     const out = path.join(dataDir(), `res-${crypto.randomBytes(6).toString('hex')}.tmp`);
-    const child = execFile(CURL(), ['--http2', '-g', '-sS', '--max-time', String(TIMEOUT_S), '-A', UA, '-b', cookieJar(), '-c', cookieJar(), ...args,
+    const child = execFile(bin, [...pre, ...http2, '-g', '-sS', '--max-time', String(TIMEOUT_S), '-A', UA, '-b', cookieJar(), '-c', cookieJar(), ...args,
       ...(body === null ? [] : ['--data-binary', '@-']), '-o', out],
       { timeout: (TIMEOUT_S + 5) * 1000 }, (err) => {
         let text = '';
@@ -70,7 +94,7 @@ function curl(args, body = null) {
       });
     child.stdin.on('error', () => {});
     child.stdin.end(body === null ? '' : body);
-  }));
+  });
 }
 const formBody = (fields) => new URLSearchParams(Object.entries(fields).map(([k, v]) => [k, String(v ?? '')])).toString();
 
