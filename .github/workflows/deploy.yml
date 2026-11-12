@@ -4,6 +4,10 @@ on:
   push:
     branches: [ccr-ab68d4af-p55geh]
     paths: [agents-app/**]
+  # Tests also run on a pull request into the site's branch, before it is merged (the deploy job does not).
+  pull_request:
+    branches: [ccr-ab68d4af-p55geh]
+    paths: [agents-app/**]
 
 jobs:
   test:
@@ -13,7 +17,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - run: cd agents-app && npm install && npm test
+      - run: cd agents-app && npm ci --ignore-scripts --no-audit --no-fund && npm test
 
   deploy:
     needs: test
