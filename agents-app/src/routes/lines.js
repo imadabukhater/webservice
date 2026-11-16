@@ -132,12 +132,11 @@ function createLine(user, body) {
     if (!require('./telecom').servedEsim(tcRef.packageId, number)) fail(400, 'اختر رقم الهاتف من قائمة الأرقام المتاحة');
     tcJob = { esim: true, email: str(body.customerEmail, 120), phone: str(body.customerPhone, 20) };
   }
-  // An Aylol eSIM on one of the site's ready numbers: carried out there automatically once the sale is made.
-  const ayRef = kind === 'new' && /^ay:esim:/.test(pkg.art_card_id || '') ? pkg.art_card_id : '';
-  // An Aylol bill line is activated on a SIM card: sold as an eSIM it would be paid for there with no eSIM to give.
-  if (kind === 'new' && esim && /^ay:bill:/.test(pkg.art_card_id || '')) fail(400, 'هذه الرزمة تُفعَّل على شريحة عادية. لشريحة eSIM اختر رزمة eSIM');
+  // An Aylol new subscription (an eSIM package, or a bill line) on one of the site's ready eSIM numbers: the number
+  // comes from the site's own list, never typed, and the line is carried out there automatically once sold.
+  const ayRef = kind === 'new' && /^ay:(esim|bill):/.test(pkg.art_card_id || '') ? pkg.art_card_id : '';
   if (ayRef) {
-    if (!esim) fail(400, 'هذه الرزمة شريحة eSIM: اختر eSIM');
+    if (!esim) fail(400, 'هذه الرزمة اشتراك جديد على eSIM برقم من المورّد: اختر eSIM');
     if (port) fail(400, 'هذه الرزمة لا تدعم تحويل الرقم مع eSIM');
     if (!require('./aylol').servedEsim(ayRef, number)) fail(400, 'اختر رقم الهاتف من قائمة الأرقام المتاحة');
   }

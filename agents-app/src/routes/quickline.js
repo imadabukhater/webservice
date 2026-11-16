@@ -212,7 +212,7 @@ function freeNumbersFor(packageId, esim = false, exclude = []) {
   const lyRef = require('../layan').parseRef(art);
   if (lyRef?.system === 'lyn') return require('./layan').freeNumbers(lyRef, esim);
   // An Aylol eSIM picks one of the site's ready eSIM numbers.
-  if (/^ay:esim:/.test(art)) return require('./aylol').freeNumbers(art);
+  if (/^ay:(esim|bill):/.test(art)) return require('./aylol').freeNumbers(art);
   const ref = newLinePackage(packageId);
   return agentWrap(async (creds) => {
     const list = await ql.freeNumbers(creds, { packageId: ref.packageId, exclude, esim });

@@ -490,16 +490,29 @@ async function executeOrder({ ref, phoneNumber = '', price = 0, simNumber = '', 
   let sim = String(simNumber || '').trim();
   let allocQr = '';
   let allocCode = '';
+  let stockId = '';
+  // A new subscription on a number picked from the site's ready eSIMs: that eSIM (its SIM number and its code) goes
+  // with the order. Gone from the list meanwhile: nothing is sent.
+  if (useEsim && phone) {
+    const look = await lookupAvailableNumbers({ ref, companyId, packageId, allocate: false }, creds);
+    const n = look.numbers.find((x) => x.phoneNumber === phone);
+    if (!n) throw new AylolError(`الرقم ${phone} لم يعد متاحاً في أيلول`, { refused: true });
+    sim = n.simNumber || sim;
+    allocQr = n.qr || '';
+    allocCode = n.esimCode || '';
+    stockId = String(n.esimStockId || '');
+  }
   if ((useEsim || needNewNum) && !phone) {
     const look = await lookupAvailableNumbers({ ref, companyId, packageId, simNumber: sim, allocate: true }, creds);
     const n0 = look.numbers[0];
-    if (n0) { phone = n0.phoneNumber || phone; sim = n0.simNumber || sim; allocQr = n0.qr || ''; allocCode = n0.esimCode || ''; }
+    if (n0) { phone = n0.phoneNumber || phone; sim = n0.simNumber || sim; allocQr = n0.qr || ''; allocCode = n0.esimCode || ''; stockId = String(n0.esimStockId || ''); }
   }
   if (!/^05\d{8}$/.test(phone)) throw new AylolError('لم يتوفر رقم متاح من أيلول لهذه العملية', { refused: true });
   const endpoint = (type === 'bill' && (companyId === '6' || companyId === '25')) ? '/dashboard/charge-system/provider-subscribe' : '/dashboard/charge-system/subscribe';
   const payload = (type === 'credit' && !useEsim && !sim)
     ? { _token: state.csrf, package_id: packageId, company_id: companyId, phone, price: String(Number(price) || 0), note, action: 'recharge' }
-    : { _token: state.csrf, package_id: packageId, company_id: companyId, category_id: companyId, phone, MobileNumber: phone, price: String(Number(price) || 0), customer_price: String(Number(price) || 0), duration: '1', note, ...(sim ? { sim_number: sim } : {}) };
+    : { _token: state.csrf, package_id: packageId, company_id: companyId, category_id: companyId, phone, MobileNumber: phone, price: String(Number(price) || 0), customer_price: String(Number(price) || 0), duration: '1', note, ...(sim ? { sim_number: sim } : {}),
+      ...(useEsim ? { esim: '1', is_esim: '1', ...(stockId ? { esim_id: stockId } : {}) } : {}) };
   const raw = await ajax(endpoint, { signed: true, extra: ['-H', 'Content-Type: application/x-www-form-urlencoded; charset=UTF-8'], body: formBody(payload) });
   const data = parseJson(raw);
   if (!data) throw new AylolError(`أيلول: رد غير مفهوم (${raw.slice(0, 120)})`);

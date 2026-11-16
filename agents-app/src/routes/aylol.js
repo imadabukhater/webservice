@@ -76,7 +76,7 @@ async function collectItems(creds, kind) {
   const synced = await ay.syncAll(creds, [kind === 'card' ? 'credit' : 'bill']);
   const items = synced.items.map((x) => ({
     ref: x.ref, name: x.name, company: x.company, cost: Number(x.price) || 0, dataGb: x.dataGb || null, minutes: x.minutes || null,
-    sms: x.sms || null, days: x.days || 30, description: String(x.description || '').slice(0, 400), esim: 0,
+    sms: x.sms || null, days: x.days || 30, description: String(x.description || '').slice(0, 400), esim: kind === 'card' ? 0 : 1,
   }));
   if (kind === 'invoice') {
     for (const cat of ESIM_CATS) {
@@ -142,8 +142,8 @@ async function syncKind(creds, kind) {
       if (!used) { q('DELETE FROM packages WHERE id = ?').run(g.id); removed++; }
     }
     for (const id of companyIds) if (!known.has(id)) q("UPDATE companies SET activation = 'auto' WHERE id = ? AND activation = 'manual'").run(id);
-    // A bill line is activated on a SIM card; only the eSIM packages are eSIMs.
-    if (kind === 'invoice') q("UPDATE packages SET esim_enabled = 0 WHERE art_card_id LIKE 'ay:bill:%' AND esim_enabled != 0").run();
+    // A bill line is a new subscription on one of the site's ready eSIM numbers, as its eSIM packages are.
+    if (kind === 'invoice') q("UPDATE packages SET esim_enabled = 1 WHERE art_card_id LIKE 'ay:bill:%' AND esim_enabled != 1").run();
     setSetting(`aylol_synced_${kind}`, now());
     return { kind, total: items.length, added, updated, restored, switchedOff: off, removed, pending: pendingCount(kind), markup: markupFor(kind) };
   });

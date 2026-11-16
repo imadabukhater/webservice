@@ -31,7 +31,7 @@ function esimPackage(id) {
                WHERE p.id = ? AND p.active = 1 AND p.shop_price > 0`).get(Number(id));
   const art = p?.art_card_id || '';
   // Aylol's eSIMs too: one of the site's ready numbers, bought there once the order is paid.
-  const aylol = /^ay:esim:/.test(art);
+  const aylol = /^ay:(esim|bill):/.test(art);
   const hasRef = p && (isEsimRef(art, p.company_name) || aylol);
   const ref = !hasRef ? null : aylol ? { system: 'ay', art } : /^qln:/.test(art) ? ql.parseRef(art) : /^lyn:/.test(art) ? ly.parseRef(art) : tc.parseRef(art);
   if (!p || (!ref && !p.esim_enabled)) fail(404, 'الباقة غير متوفرة');
@@ -91,7 +91,7 @@ function orderView(o, { admin = false } = {}) {
   const needsSupport = Boolean(waitingReview && waitUntil !== null && now() >= waitUntil);
   return {
     // An eSIM's number (given at random) shows to the customer once the order is paid.
-    code: o.code, packageLabel: o.package_label, kind: o.kind, number: admin || !o.esim || o.status === 'paid' ? o.number : null, customerName: o.customer_name,
+    code: o.code, packageLabel: o.package_label, kind: o.kind, number: o.number, customerName: o.customer_name,
     amount: round(o.amount), esimFee: round(o.esim_fee || 0), packagePrice: round(o.amount - (o.esim_fee || 0)),
     status: o.status, stage: stage(o, line), response: o.response,
     proofSent: !!o.proof_at, proofTries, firstProofAt, retryUntil, canRetryProof, waitUntil, needsSupport,
@@ -214,10 +214,14 @@ route('GET', '/api/shop/available', null, async ({ query, ip }) => {
 });
 
 route('POST', '/api/shop/orders', null, ({ body, ip, req }) => {
-  const s = enabled();
   throttle(ip, 'order', 20);
+  return createOrder(body, { ip, clientId: str(req?.headers?.['x-client-id'] || body.clientId || '', 64) });
+});
+
+// A new order, with every check the web page's orders get (also made over WhatsApp, where ip and clientId name the chat).
+function createOrder(body, { ip, clientId = '' }) {
+  const s = enabled();
   shop.expireUnconfirmed();
-  const clientId = str(req?.headers?.['x-client-id'] || body.clientId || '', 64);
 
   // Safety rule: A customer can hold at most 1 active reservation (awaiting_payment) at a time.
   if (clientId) {
@@ -265,7 +269,7 @@ route('POST', '/api/shop/orders', null, ({ body, ip, req }) => {
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
     .run(code, p.id, D.packageLabel(p), kind, number, sim, str(body.customerName, 80), contact, round(p.shop_price), ip, clientId, t, t);
   return orderView(byCode(code));
-});
+}
 
 // An eSIM on a free number picked at random. It is held for this order (no other customer gets it) and checked again
 // when it is sold; QuickLine's eSIM and QR code are kept with the order. The customer sees the number once paid.
@@ -468,4 +472,4 @@ route('GET', '/api/shop/admin/summary', ADMIN, () => ({
   agentId: shop.shopAgent().id,
 }));
 
-module.exports = { shopCatalogResponse, submitProof, orderView, byCode };
+module.exports = { shopCatalogResponse, submitProof, orderView, byCode, createOrder };
