@@ -74,7 +74,14 @@ const gemini = http.createServer((req, res) => {
   let body = '';
   req.on('data', (c) => { body += c; });
   req.on('end', () => {
-    site.gemini.push({ key: req.headers['x-goog-api-key'], body: JSON.parse(body) });
+    const groq = req.url.endsWith('/chat/completions');
+    site.gemini.push({ groq, key: req.headers['x-goog-api-key'] || req.headers.authorization, body: JSON.parse(body) });
+    if (groq) {
+      const ok = req.headers.authorization === 'Bearer good-key';
+      const id = /#(\d+) هوت موبايل/.exec(JSON.parse(body).messages[0].content)?.[1] || '0';
+      res.writeHead(ok ? 200 : 401, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify(ok ? { choices: [{ message: { content: JSON.stringify({ action: 'buy', packageId: Number(id) }) } }] } : { error: { message: 'Invalid API Key' } }));
+    }
     if (req.headers['x-goog-api-key'] !== 'good-key') { res.writeHead(403, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ error: { message: 'API key not valid' } })); }
     const prompt = JSON.parse(body).contents[0].parts[0].text;
     const id = /#(\d+) هوت موبايل/.exec(prompt)?.[1] || '0';
@@ -101,6 +108,7 @@ test.before(async () => {
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   await new Promise((r) => gemini.listen(0, '127.0.0.1', r));
   process.env.GEMINI_BASE = `http://127.0.0.1:${gemini.address().port}`;
+  process.env.GROQ_BASE = `http://127.0.0.1:${gemini.address().port}/openai/v1`;
   dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wa-test-'));
   process.env.AYLOL_BASE = `http://127.0.0.1:${server.address().port}`;
   process.env.AYLOL_DATA = path.join(dataDir, 'aylol');
@@ -112,7 +120,7 @@ test.before(async () => {
 });
 test.after(() => { app.close(); server.close(); gemini.close(); fs.rmSync(dataDir, { recursive: true, force: true }); });
 
-test('WhatsApp: agents sell as in the portal, results and real QR come back, customers only get the shop link', async () => {
+test('WhatsApp: agents sell as in the portal; customers buy in the chat, their transfer is checked and the real QR comes back', async () => {
   const wa = require('../src/whatsapp');
   const { q } = require('../src/db');
   const sent = [];
@@ -193,37 +201,42 @@ test('WhatsApp: agents sell as in the portal, results and real QR come back, cus
   // The manager: open requests; selling stays in the portal.
   assert.match(textOf(await say('970599000111@s.whatsapp.net', '0599000111', 'الطلبات')), /لا طلبات مفتوحة|طلبات مفتوحة/);
 
-  // A customer: the shop's packages at the shop's price, and its link to pay. Nothing is bought, nobody is charged.
+  // A customer buys in the chat: company → package → name → a real shop order (an Aylol eSIM on one of its ready
+  // numbers) → pays by Jawwal Pay and sends the payer's name → the transfer's e-mail is found, the eSIM is bought and
+  // activated, and its QR code reaches the chat by itself. Nothing is bought before the payment is verified.
   const C = '972541234567@s.whatsapp.net';
   q('UPDATE packages SET shop_price = 55 WHERE id = ?').run(esimPkg.id);
-  await ok(call(admin, 'PUT', '/api/settings', { shopEnabled: true }));
-  const shopList = textOf(await say(C, '0541234567', 'الباقات'));
-  assert.match(shopList, /55 ₪/);
-  assert.equal(shopList.includes(`#${cardPkg.id}`), false, 'only what the shop sells');
-  const link = textOf(await say(C, '0541234567', `esim ${esimPkg.id}`));
-  assert.match(link, new RegExp(`https://shop\\.example\\.com/shop#/buy/${esimPkg.id}\\?esim=1`));
-  assert.equal(site.purchases.length, 1, 'a customer never buys over WhatsApp');
-  assert.match(textOf(await say(C, '0541234567', 'رصيدي')), /الباقات/, 'no balance for strangers');
-
-  // The customer orders in the shop (an Aylol eSIM on one of its ready numbers), pays by Jawwal Pay, and checks the
-  // transfer over WhatsApp with the order number and the payer's name: the transfer's e-mail is found, the eSIM is
-  // bought and activated, and its QR code reaches the chat by itself.
-  await ok(call(admin, 'PUT', '/api/settings', { jawwalpayNumber: '0599000000', jawwalpayName: 'المتجر' }));
-  const order = await ok(call(null, 'POST', '/api/shop/orders', { packageId: esimPkg.id, kind: 'new', esim: true, customerName: 'محمد احمد', contactPhone: '0541234567' }));
+  await ok(call(admin, 'PUT', '/api/settings', { shopEnabled: true, jawwalpayNumber: '0599000000', jawwalpayName: 'المتجر' }));
+  assert.match(textOf(await say(C, '0541234567', 'مرحبا')), /\*1\.\* هوت موبايل/);
+  assert.equal(/رصيدك/.test(textOf(await say(C, '0541234567', 'رصيدي'))), false, 'no balance for strangers');
+  const pkgs = textOf(await say(C, '0541234567', '1')); // only eSIMs on sale for it: straight to them
+  assert.match(pkgs, /55 ₪ \+ \d+ ₪ رسوم eSIM/);
+  assert.equal(pkgs.includes(cardPkg.name), false, 'only what the shop sells');
+  assert.match(textOf(await say(C, '0541234567', '1')), /اسمك الكامل/);
+  const reserved = textOf(await say(C, '0541234567', 'محمد احمد'));
+  const code = /رقم \*([A-Z0-9]{8})\*/.exec(reserved)?.[1];
+  assert.ok(code, reserved);
+  assert.match(reserved, /0599000000/);
+  const order = await ok(call(null, 'GET', `/api/shop/orders/${code}`));
   assert.equal(order.status, 'awaiting_payment');
-  const asked = textOf(await say(C, '0541234567', `طلبي ${order.code}`));
-  assert.match(asked, /اسم المحوِّل/);
+  assert.equal(site.purchases.length, 1, 'nothing bought before the payment');
+  // One reservation per chat at a time.
+  await say(C, '0541234567', '0');
+  await say(C, '0541234567', '1');
+  await say(C, '0541234567', '1');
+  assert.match(textOf(await say(C, '0541234567', 'محمد احمد')), new RegExp(`حجز نشط.*${code}`));
   // Not paid yet: nothing matches, the order waits (and is checked again).
+  assert.match(textOf(await say(C, '0541234567', `طلبي ${code}`)), /اسم المحوِّل/);
   assert.match(textOf(await say(C, '0541234567', 'محمد احمد علي')), /لم يصل إشعاره/);
   q(`INSERT INTO payment_mails (uid_validity, uid, message_id, trusted, from_addr, subject, received_at, amount, reference, sender_phone, sender_name, body, created_at)
      VALUES (1, 7001, '<wa@jp>', 1, 'noreply@jawwalpay.ps', 'Jawwal Pay', ?, ?, '2922940777001', '', 'محمد احمد علي', 'incoming', ?)`).run(Date.now(), order.amount, Date.now());
-  // An outgoing transfer, or another amount, never pays it: only this received transfer does.
-  assert.match(textOf(await say(C, '0541234567', `${order.code} 2922940777001`)), /تم التحقق من الدفع/);
+  // Only this received transfer of the order's amount pays it.
+  assert.match(textOf(await say(C, '0541234567', `${code} 2922940777001`)), /تم التحقق من الدفع/);
   await until(() => site.purchases.length === 2);
-  await until(async () => (await ok(call(null, 'GET', `/api/shop/orders/${order.code}`))).stage === 'done');
+  await until(async () => (await ok(call(null, 'GET', `/api/shop/orders/${code}`))).stage === 'done');
   await wa._test.watchShop();
   const qrMsg = await until(() => sent.find((m) => m.image && m.jid === C));
-  assert.match(qrMsg.caption, new RegExp(order.code));
+  assert.match(qrMsg.caption, new RegExp(code));
   assert.equal(decodeQrDataUrl(`data:image/png;base64,${qrMsg.image.toString('base64')}`), lpaOf(STOCKS[1]));
   assert.ok(sent.find((m) => m.jid === C && m.text && m.text.includes(lpaOf(STOCKS[1]))));
   const after = sent.length;
@@ -232,7 +245,7 @@ test('WhatsApp: agents sell as in the portal, results and real QR come back, cus
 
   // Gemini: free text is answered from the shop's own packages and prices, within the conversation, without links.
   await ok(call(admin, 'PUT', '/api/whatsapp', { aiKey: 'good-key' }));
-  const answer = textOf(await say(C, '0541234567', 'عندكم شي لهوت؟'));
+  const answer = textOf(await say(C, '0541234567', 'شو أفضل شي عندكم للإنترنت؟'));
   assert.match(answer, new RegExp(`رقم ${esimPkg.id} بسعر 55`));
   assert.equal(/evil\.example|https?:\/\/evil/.test(answer), false, 'no link from the AI');
   const prompt = site.gemini.at(-1).body.contents[0].parts[0].text;
@@ -241,8 +254,41 @@ test('WhatsApp: agents sell as in the portal, results and real QR come back, cus
   assert.equal(prompt.includes(`#${cardPkg.id}`), false, 'only what the customer can buy');
   // A wrong key: the menu still answers, and the error shows in the settings.
   await ok(call(admin, 'PUT', '/api/whatsapp', { aiKey: 'bad-key' }));
-  assert.match(textOf(await say(C, '0541234567', 'سؤال آخر عن الشبكة')), /الباقات/);
+  assert.match(textOf(await say(C, '0541234567', 'سؤال آخر عن الشبكة')), /اختر الشركة/);
   assert.match((await ok(call(admin, 'GET', '/api/whatsapp'))).aiError, /403.*API key not valid/);
+
+  // Groq instead of Gemini, with what the manager taught it from WhatsApp; "I want one" starts that package's order.
+  const ADM = '970599000111@s.whatsapp.net';
+  assert.match(textOf(await say(ADM, '0599000111', '!تعلم الدعم من 9 صباحاً حتى 10 مساءً')), /حفظت المعلومة/);
+  await ok(call(admin, 'PUT', '/api/whatsapp', { aiProvider: 'groq', aiKey: 'good-key', aiModel: '' }));
+  assert.equal((await ok(call(admin, 'GET', '/api/whatsapp'))).config.aiModel, 'openai/gpt-oss-20b');
+  const C3 = '972547654321@s.whatsapp.net';
+  assert.match(textOf(await say(C3, '0547654321', 'بدي واحدة الله يخليك')), /اسمك الكامل/);
+  const g = site.gemini.at(-1);
+  assert.equal(g.groq, true);
+  assert.equal(g.body.model, 'openai/gpt-oss-20b');
+  assert.deepEqual(g.body.response_format, { type: 'json_object' });
+  assert.match(g.body.messages[0].content, /الدعم من 9 صباحاً حتى 10 مساءً/);
+
+  // A top-up ordered in the chat, paid with a receipt photo: the photo is kept with the order for the manager; when
+  // the payment goes to review, the manager is told on WhatsApp.
+  q('UPDATE packages SET shop_price = 50 WHERE id = ?').run(cardPkg.id);
+  const C2 = '972541112233@s.whatsapp.net';
+  assert.match(textOf(await say(C2, '0541112233', `#${cardPkg.id}`)), /رقم الهاتف/);
+  const top = textOf(await say(C2, '0541112233', '0529998877'));
+  const topCode = /رقم \*([A-Z0-9]{8})\*/.exec(top)?.[1];
+  assert.ok(topCode, top);
+  const png = Buffer.from(require('../src/qr').dataUrl('receipt').split(',')[1], 'base64');
+  wa._test.setDownloader(async () => ({ buffer: png, mime: 'image/png' }));
+  const from = sent.length;
+  await wa._test.onRaw({ key: { remoteJid: C2, fromMe: false }, message: { imageMessage: { mimetype: 'image/png' } }, messageTimestamp: Math.floor(Date.now() / 1000) });
+  assert.match(textOf(sent.slice(from)), /استلمنا صورة الإشعار/);
+  const adminView = (await ok(call(admin, 'GET', '/api/shop/admin/orders'))).find((o) => o.code === topCode);
+  assert.equal(adminView.hasReceipt, true);
+  q("UPDATE shop_orders SET status = 'review' WHERE code = ?").run(topCode);
+  await wa._test.watchShop();
+  assert.ok(sent.find((m) => m.jid === ADM && m.text && m.text.includes(topCode) && m.text.includes('مراجعتك')), 'the manager is told');
+  assert.equal(site.subscribes.filter((x) => x.phone === '0529998877').length, 1, 'the top-up waits for the payment');
 
   // What WhatsApp delivers: private chats only, a LID chat with its phone, and old messages are not answered.
   const n = sent.length;

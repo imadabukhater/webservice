@@ -39,24 +39,32 @@ function waHtml(w) {
   return `
         <section class="card card-pad form">
           <h2 class="dot-title">واتساب المتجر</h2>
-          <p class="muted small">يربط رقم واتساب المتجر بالسيرفر (مثل واتساب ويب). بعدها يرد تلقائياً: <b>الوكيل</b> (رقمه المحفوظ في حسابه) يرى رزمه وأسعاره ورصيده، ويشحن ويفعّل eSIM من رصيده بعد أن يرسل «نعم»، وتصله النتيجة ورمز QR الحقيقي في المحادثة. <b>الزبون</b> يرى باقات المتجر وأسعاره ورابط الطلب، ثم يرسل رقم طلبه واسم المحوِّل أو الرقم المرجعي فيُفحص التحويل في إشعارات جوال باي، ويصله رمز eSIM في المحادثة بعد التحقق. مع مفتاح Gemini يرد على الأسئلة الحرة من قائمة الباقات والأسعار نفسها.</p>
+          <p class="muted small">يربط رقم واتساب المتجر بالسيرفر (مثل واتساب ويب). بعدها يرد تلقائياً: <b>الوكيل</b> (رقمه المحفوظ في حسابه) يرى رزمه وأسعاره ورصيده، ويشحن ويفعّل eSIM من رصيده بعد أن يرسل «نعم»، وتصله النتيجة ورمز QR الحقيقي في المحادثة. <b>الزبون</b> يشتري في المحادثة: يختار الشركة ثم الخدمة ثم الباقة، فيُحجز له طلب حقيقي في المتجر، ثم يرسل اسم المحوِّل أو الرقم المرجعي أو صورة الإشعار، فيُفحص التحويل في إشعارات جوال باي، ويصله التفعيل ورمز eSIM في المحادثة. مع المساعد الذكي يرد على الأسئلة الحرة من باقاتك وأسعارك.</p>
           <div id="wa-status">${waStatusHtml(w)}</div>
         </section>
         <form class="card card-pad form" id="wa-form" novalidate autocomplete="off">
           <h2 class="dot-title">الرد التلقائي</h2>
           <label class="switch-row"><span class="grow"><b>الرد على الرسائل</b><small>أوقفه ليبقى واتساب مربوطاً دون رد تلقائي</small></span><input class="switch" type="checkbox" name="enabled" ${c.enabled !== false ? 'checked' : ''}></label>
-          <label class="switch-row"><span class="grow"><b>الرد على الزبائن</b><small>غير الوكلاء: باقات المتجر وأسعاره ورابط الطلب والدفع</small></span><input class="switch" type="checkbox" name="customers" ${c.customers !== false ? 'checked' : ''}></label>
+          <label class="switch-row"><span class="grow"><b>الرد على الزبائن</b><small>غير الوكلاء: يشترون من المتجر داخل المحادثة، ويُفحص تحويلهم ويصلهم التفعيل</small></span><input class="switch" type="checkbox" name="customers" ${c.customers !== false ? 'checked' : ''}></label>
           <div class="field"><label for="wa-admins">أرقام المدير</label><input class="input ltr" id="wa-admins" name="admins" inputmode="tel" placeholder="0599123456, 0521234567" value="${esc(c.admins || '')}">
             <span class="hint">من هذه الأرقام: الطلبات المفتوحة وحالة أي رقم. الوكيل يُعرف من رقم الهاتف في حسابه (الوكلاء ← تعديل).</span></div>
           <div class="field"><label for="wa-shop">رابط المتجر</label><input class="input ltr" id="wa-shop" name="shopUrl" placeholder="https://www.example.com/shop" value="${esc(c.shopUrl || '')}">
             <span class="hint">يُرسَل للزبون مع كل باقة ليطلبها ويدفع.</span></div>
           <div class="field"><label for="wa-welcome">رسالة الترحيب</label><input class="input" id="wa-welcome" name="welcome" maxlength="300" value="${esc(c.welcome || '')}" placeholder="أهلاً بك في متجرنا 👋"></div>
-          <div class="field"><label for="wa-ai">مفتاح Gemini (اختياري)</label><input class="input ltr" id="wa-ai" name="aiKey" type="password" autocomplete="new-password" placeholder="${c.hasAiKey ? 'محفوظ — اتركه فارغاً للإبقاء' : 'بدونه يفهم الأوامر المكتوبة فقط'}">
-            <span class="hint">لفهم الرسائل الحرة. يُرسَل نص الرسالة إلى Google لفهمها، ولا يُنفَّذ شيء بدون «نعم».</span></div>
-          <div class="field"><label for="wa-model">نموذج Gemini</label><input class="input ltr" id="wa-model" name="aiModel" value="${esc(c.aiModel || 'gemini-2.5-flash')}">
-            <span class="hint">غيّره إن أوقفت Google هذا النموذج، مثل gemini-2.5-flash.</span></div>
-          ${w?.aiError ? `<div class="msg">${icon('alert')}<span>آخر خطأ من Gemini: ${esc(w.aiError)}</span></div>` : ''}
-          ${c.hasAiKey ? '<label class="switch-row"><span class="grow"><b>حذف مفتاح Gemini المحفوظ</b></span><input class="switch" type="checkbox" name="aiKeyClear"></label>' : ''}
+          <div class="field"><label for="wa-provider">المساعد الذكي (اختياري)</label>
+            <select class="input" id="wa-provider" name="aiProvider">
+              <option value="gemini" ${c.aiProvider !== 'groq' ? 'selected' : ''}>Google Gemini</option>
+              <option value="groq" ${c.aiProvider === 'groq' ? 'selected' : ''}>Groq</option>
+            </select>
+            <span class="hint">بدونه يرد البوت بالقوائم والأوامر فقط. معه يفهم الأسئلة الحرة ويرد من باقاتك وأسعارك. يُرسَل نص الرسالة إلى الخدمة المختارة لفهمها، ولا يُنفَّذ شراء إلا بالخطوات والدفع.</span></div>
+          <div class="field"><label for="wa-ai">مفتاح الخدمة (API key)</label><input class="input ltr" id="wa-ai" name="aiKey" type="password" autocomplete="new-password" placeholder="${c.hasAiKey ? 'محفوظ — اتركه فارغاً للإبقاء' : 'من Google AI Studio أو console.groq.com'}"></div>
+          <div class="field"><label for="wa-model">النموذج</label><input class="input ltr" id="wa-model" name="aiModel" value="${esc(c.aiModel || '')}" placeholder="gemini-2.5-flash أو openai/gpt-oss-20b">
+            <span class="hint">اتركه فارغاً للنموذج الافتراضي للخدمة المختارة.</span></div>
+          <div class="field"><label for="wa-knowledge">معلومات يعرفها المساعد</label>
+            <textarea class="input" id="wa-knowledge" name="knowledge" rows="4" maxlength="2000" placeholder="مثل: الدعم من 9 صباحاً حتى 10 مساءً. شريحة eSIM تعمل على الأجهزة الحديثة فقط.">${esc(c.knowledge || '')}</textarea>
+            <span class="hint">يعتمد عليها في ردوده. تستطيع أيضاً الإضافة من رقم المدير على واتساب: «!تعلم …».</span></div>
+          ${w?.aiError ? `<div class="msg">${icon('alert')}<span>آخر خطأ من المساعد: ${esc(w.aiError)}</span></div>` : ''}
+          ${c.hasAiKey ? '<label class="switch-row"><span class="grow"><b>حذف المفتاح المحفوظ</b></span><input class="switch" type="checkbox" name="aiKeyClear"></label>' : ''}
           <div id="wa-msg"></div>
           <button class="btn btn-primary" type="submit">${icon('check')}حفظ</button>
         </form>
@@ -236,8 +244,10 @@ export default {
           enabled: form.elements.enabled.checked, customers: form.elements.customers.checked,
           admins: field(form, 'admins'), shopUrl: field(form, 'shopUrl'), welcome: field(form, 'welcome'),
           aiKey: form.elements.aiKey.value, aiKeyClear: !!form.elements.aiKeyClear?.checked, aiModel: field(form, 'aiModel'),
+          aiProvider: form.elements.aiProvider.value, knowledge: form.elements.knowledge.value,
         });
         form.elements.aiKey.value = '';
+        form.elements.aiModel.value = V.wa?.config?.aiModel || '';
         msg.innerHTML = '';
         toast('تم حفظ إعدادات واتساب');
       } catch (err) {

@@ -214,10 +214,14 @@ route('GET', '/api/shop/available', null, async ({ query, ip }) => {
 });
 
 route('POST', '/api/shop/orders', null, ({ body, ip, req }) => {
-  const s = enabled();
   throttle(ip, 'order', 20);
+  return createOrder(body, { ip, clientId: str(req?.headers?.['x-client-id'] || body.clientId || '', 64) });
+});
+
+// A new order, with every check the web page's orders get (also made over WhatsApp, where ip and clientId name the chat).
+function createOrder(body, { ip, clientId = '' }) {
+  const s = enabled();
   shop.expireUnconfirmed();
-  const clientId = str(req?.headers?.['x-client-id'] || body.clientId || '', 64);
 
   // Safety rule: A customer can hold at most 1 active reservation (awaiting_payment) at a time.
   if (clientId) {
@@ -265,7 +269,7 @@ route('POST', '/api/shop/orders', null, ({ body, ip, req }) => {
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
     .run(code, p.id, D.packageLabel(p), kind, number, sim, str(body.customerName, 80), contact, round(p.shop_price), ip, clientId, t, t);
   return orderView(byCode(code));
-});
+}
 
 // An eSIM on a free number picked at random. It is held for this order (no other customer gets it) and checked again
 // when it is sold; QuickLine's eSIM and QR code are kept with the order. The customer sees the number once paid.
@@ -468,4 +472,4 @@ route('GET', '/api/shop/admin/summary', ADMIN, () => ({
   agentId: shop.shopAgent().id,
 }));
 
-module.exports = { shopCatalogResponse, submitProof, orderView, byCode };
+module.exports = { shopCatalogResponse, submitProof, orderView, byCode, createOrder };
