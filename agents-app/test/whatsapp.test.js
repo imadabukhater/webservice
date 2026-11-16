@@ -217,6 +217,7 @@ test('WhatsApp: agents sell as in the portal; customers buy in the chat, their t
   const code = /رقم \*([A-Z0-9]{8})\*/.exec(reserved)?.[1];
   assert.ok(code, reserved);
   assert.match(reserved, /0599000000/);
+  assert.match(reserved, /رقمك الجديد: \*053\d{7}\*/, 'the supplier\'s free number, never typed by the customer');
   const order = await ok(call(null, 'GET', `/api/shop/orders/${code}`));
   assert.equal(order.status, 'awaiting_payment');
   assert.equal(site.purchases.length, 1, 'nothing bought before the payment');

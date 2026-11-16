@@ -246,13 +246,15 @@ test('eSIM shop: a random number held per order, pay by JawwalPay, confirmed fro
   assert.ok(!/QuickLine|8997|iVBOR|058111/.test(JSON.stringify([pub, avail])), 'no supplier, number, SIM or QR code before payment');
   assert.equal((await call(null, 'GET', `/api/shop/numbers?packageId=${pkg.id}`)).status, 404, 'the free numbers are not listed');
 
-  // ----- each order gets a free number at random, held for it, and shown once paid -----
+  // ----- each order gets a free number at random, held for it and shown at once (the customer never types one) -----
   const order = (body) => call(null, 'POST', '/api/shop/orders', { kind: 'esim', packageId: pkg.id, ...body });
   const numberOf = async (code) => (await ok(call(admin, 'GET', '/api/shop/admin/orders'))).find((o) => o.code === code).number;
   assert.equal((await order({})).status, 400, 'a name is needed to register the line');
   assert.equal((await order({ customerName: 'زبون', email: 'not-an-email' })).status, 400);
   const a = await ok(order({ customerName: 'المعتز بالله ابو خاطر', email: 'Buyer@Example.com' }));
-  assert.deepEqual([a.status, a.esim, a.number, a.amount, a.email, a.esimQr], ['awaiting_payment', true, null, 90, 'buyer@example.com', null]);
+  assert.deepEqual([a.status, a.esim, a.amount, a.email, a.esimQr], ['awaiting_payment', true, 90, 'buyer@example.com', null]);
+  assert.match(a.number, /^058111222\d$/, 'the new number, from the supplier, shows with the order');
+  assert.equal(a.number, await numberOf(a.code));
   assert.ok(a.reservedUntil > Date.now() + 4 * 60_000 && a.reservedUntil <= Date.now() + 5 * 60_000 + 5000, 'held for 5 minutes');
   assert.equal(a.sim, undefined, 'the eSIM itself is not shown');
   const b = await ok(order({ customerName: 'زبون ثانٍ' }));
@@ -265,12 +267,13 @@ test('eSIM shop: a random number held per order, pay by JawwalPay, confirmed fro
   // ----- a transfer sent from the wallet is never a payment, even with its transaction number -----
   jawwalPay('تمت حركة تحويل الأموال لمبلغ: ILS 90.00 للمشترك: 00970592578034 بنجاح! رصيدك الحالي: ILS 415.00. رقم الحركة: 2922925325476.');
   const vb = await ok(call(null, 'POST', `/api/shop/orders/${b.code}/proof`, { payReference: '2922925325476' }));
-  assert.deepEqual([vb.status, vb.number], ['verifying', null], 'not paid by an outgoing transfer, and its number still hidden');
+  assert.equal(vb.status, 'verifying', 'not paid by an outgoing transfer');
+  assert.equal(vb.esimQr, null, 'and no eSIM before payment');
 
   // ----- paid: JawwalPay's e-mail with the transaction number in brackets -----
   jawwalPay('لقد استلمت حركه تحويل اموال بقيمة: ILS 90.00 من المعتز بالله عاطف ابو خاطر . الرصيد الحالي: ILS 505.00 .المرجع :(2922922722823)');
   const va = await ok(call(null, 'POST', `/api/shop/orders/${a.code}/proof`, { payReference: '2922922722823' }));
-  assert.deepEqual([va.status, va.number], ['paid', numbers[0]], 'the number shows once paid');
+  assert.deepEqual([va.status, va.number], ['paid', numbers[0]]);
   const done = await until(async () => { const o = await ok(call(null, 'GET', `/api/shop/orders/${a.code}`)); return o.stage === 'done' && o; });
   assert.equal(done.esimQr, `data:image/png;base64,${QR}`, 'the QR code shows once the line is active');
   assert.deepEqual([ql.created[0].newSubscriptionType, ql.created[0].numberId], ['newEsimSubscription', String(9101 + Number(numbers[0].slice(-1)))]);
@@ -314,8 +317,9 @@ test('eSIM shop with Layan: its free eSIM numbers, activated after payment with 
   assert.deepEqual(await ok(call(null, 'GET', `/api/shop/available?packageId=${pkg.id}`)), { available: true });
   assert.equal(lyFake.emptySims.length, 0, 'no eSIM is taken from Layan before payment');
   const o = await ok(call(null, 'POST', '/api/shop/orders', { kind: 'esim', packageId: pkg.id, customerName: 'زبون ليان', email: 'ly@example.com' }));
-  assert.deepEqual([o.number, o.esim, o.amount], [null, true, 60]);
+  assert.deepEqual([o.esim, o.amount], [true, 60]);
   const num = (await ok(call(admin, 'GET', '/api/shop/admin/orders'))).find((x) => x.code === o.code).number;
+  assert.equal(o.number, num, 'the reserved number shows with the order');
   assert.ok(['0515102941', '0515102942'].includes(num), num);
 
   jawwalPay('لقد استلمت حركه تحويل اموال بقيمة: ILS 60.00 من زبون ليان . الرصيد الحالي: ILS 700.00 .المرجع :(2922950000001)');
@@ -346,8 +350,8 @@ test('eSIM shop with telecom (ALOHA): a free number, an eSIM taken and registere
   assert.deepEqual(await ok(call(null, 'GET', `/api/shop/available?packageId=${pkg.id}`)), { available: true });
 
   const o = await ok(call(null, 'POST', '/api/shop/orders', { kind: 'esim', packageId: pkg.id, customerName: 'منى حسب الله', email: 'mona@example.com', contactPhone: '0599123456' }));
-  assert.equal(o.number, null);
   const num = (await ok(call(admin, 'GET', '/api/shop/admin/orders'))).find((x) => x.code === o.code).number;
+  assert.equal(o.number, num, 'the reserved number shows with the order');
   assert.ok(tcFake.numbers.includes(num), num);
   assert.equal(tcFake.chosen.length, 0, 'no eSIM is taken before payment');
 

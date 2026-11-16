@@ -15,6 +15,7 @@ const { decodeQrDataUrl } = require('./qr-decode');
 
 const SEED = 'abcdef0123456789abcdef0123456789';
 const STOCK = { id: 900, phone: '0531112222', sim_number: '8997210000000000900', qr_code: 'LPA:1$smdp.hot.example$STOCK-SECRET' };
+const STOCK2 = { id: 901, phone: '0532223333', sim_number: '8997210000000000901', qr_code: 'LPA:1$smdp.hot.example$STOCK-901' };
 const site = { signedIn: new Set(), badSignatures: 0, purchases: [], subscribes: [], logins: 0, cardPrice: 47.5, cardListed: true };
 
 const server = http.createServer((req, res) => {
@@ -47,7 +48,7 @@ const server = http.createServer((req, res) => {
       const cat = Number(m[1]);
       const type = u.searchParams.get('type');
       if (type === 'credit' && cat === 10) return json({ success: true, last_page: 1, data: site.cardListed ? [{ id: 41, name: 'Hot 50 شيكل', price: site.cardPrice }] : [] });
-      if (type === 'bill' && cat === 25) return json({ success: true, last_page: 1, data: [{ id: 77, display_name: 'WE 100GB', price: 35, data_gb: 100, days: 30 }] });
+      if (type === 'bill' && cat === 12) return json({ success: true, last_page: 1, data: [{ id: 77, display_name: 'Hot 100GB', price: 35, data_gb: 100, days: 30 }] });
       return json({ success: true, last_page: 1, data: [] });
     }
     if (u.pathname === '/dashboard/esim/packages') {
@@ -55,7 +56,7 @@ const server = http.createServer((req, res) => {
       return json({ success: true, data: [] });
     }
     if (u.pathname === '/dashboard/esim/ready-stocks') {
-      return json(u.searchParams.get('category_id') === '10' ? { success: true, data: [STOCK] } : { success: true, data: [] });
+      return json(u.searchParams.get('category_id') === '10' ? { success: true, data: [STOCK, STOCK2] } : { success: true, data: [] });
     }
     if (u.pathname === '/dashboard/esim/purchase-category-10-loaded' && req.method === 'POST') {
       site.purchases.push(JSON.parse(body));
@@ -149,7 +150,7 @@ test('Aylol: credentials only from the settings, real supplier catalog, eSIM num
   assert.equal(seen.pool, true);
   assert.equal(JSON.stringify(agentCat).includes('أيلول') || JSON.stringify(agentCat).includes('ay:'), false);
   const free = await ok(call(agent, 'GET', `/api/numbers/free?packageId=${esimPkg.id}&esim=1`));
-  assert.deepEqual(free, [{ id: STOCK.phone, phone: STOCK.phone }]);
+  assert.deepEqual(free, [{ id: STOCK.phone, phone: STOCK.phone }, { id: STOCK2.phone, phone: STOCK2.phone }]);
   assert.equal(site.purchases.length, 0, 'looking at numbers buys nothing');
   assert.equal((await call(agent, 'GET', '/api/aylol/available-numbers?packageId=1')).status, 404, 'the old lookup that could buy is gone');
 
@@ -192,11 +193,24 @@ test('Aylol: credentials only from the settings, real supplier catalog, eSIM num
   assert.equal(site.subscribes.length, before);
   site.cardListed = true;
 
-  // A bill line is not an eSIM: it is refused before the agent pays, so nothing is paid for at the site without an eSIM to give.
+  // A bill line is a new subscription: its number is one of the site's ready eSIM numbers (never typed), and the
+  // order carries that eSIM (its SIM number and id); the customer gets that eSIM's own code as a QR.
   const billPkg = ayPkgs.find((p) => p.kind === 'invoice' && p.cost === 35);
-  assert.equal(billPkg.esimEnabled, false);
-  const refused = await call(agent, 'POST', '/api/lines', { kind: 'new', esim: true, packageId: billPkg.id, number: '0531234567', customerName: 'زبون' });
-  assert.equal(refused.status, 400);
+  const billSeen = (await ok(call(agent, 'GET', '/api/catalog'))).packages.find((p) => p.id === billPkg.id);
+  assert.deepEqual([billSeen.pool, billSeen.esimOnly, billSeen.esimEnabled], [true, true, true]);
+  assert.equal((await call(agent, 'POST', '/api/lines', { kind: 'new', esim: true, packageId: billPkg.id, number: '0531234567', customerName: 'زبون' })).status, 400, 'a typed number is refused');
+  assert.equal((await call(agent, 'POST', '/api/lines', { kind: 'new', packageId: billPkg.id, number: STOCK2.phone, sim: '8997210000000000999', customerName: 'زبون' })).status, 400, 'eSIM only');
+  const freeBill = await ok(call(agent, 'GET', `/api/numbers/free?packageId=${billPkg.id}&esim=1`));
+  assert.ok(freeBill.some((n) => n.phone === STOCK2.phone));
+  const subs = site.subscribes.length;
+  const bill = await ok(call(agent, 'POST', '/api/lines', { kind: 'new', esim: true, packageId: billPkg.id, number: STOCK2.phone, customerName: 'زبون الفاتورة' }));
+  await until(async () => (await ok(call(admin, 'GET', '/api/tasks'))).find((t) => t.lineId === bill.line.id && t.status === 'done'));
+  assert.equal(site.subscribes.length, subs + 1);
+  const order = site.subscribes.at(-1);
+  assert.deepEqual([order.phone, order.package_id, order.company_id, order.sim_number, order.esim_id, order.esim], [STOCK2.phone, '77', '12', STOCK2.sim_number, '901', '1']);
+  const billLine = (await ok(call(agent, 'GET', `/api/lines/${bill.line.id}`))).line;
+  assert.deepEqual([billLine.status, billLine.number, billLine.esimCode], ['active', STOCK2.phone, STOCK2.qr_code]);
+  assert.equal(decodeQrDataUrl(billLine.esimQr), STOCK2.qr_code);
 
   // The password, the tokens and the customers' details never appear on curl's command line.
   const argv = fs.readFileSync(path.join(dataDir, 'argv.log'), 'utf8');

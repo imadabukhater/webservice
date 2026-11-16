@@ -126,7 +126,7 @@ export default {
         </form>
                   <form class="card card-pad form" id="aylol-form" novalidate autocomplete="off">
             <h2 class="dot-title">البيع والشحن التلقائي عبر أيلول تيليكوم (Aylol)</h2>
-            <p class="muted small">يشحن السيرفر كروت الشركات ويفعّل خطوط الفواتير الجديدة وشرائح eSIM (هوت موبايل و019) من حسابك في أيلول تيليكوم تلقائياً. قبل كل عملية يتأكد من سعر أيلول الحالي: إن ارتفع عن المعتمد لا يشتري، ويصلك تنبيه.</p>
+            <p class="muted small">يشحن السيرفر كروت الشركات، ويفعّل الاشتراكات الجديدة (خطوط الفواتير وشرائح eSIM) من حسابك في أيلول تيليكوم تلقائياً: الرقم يؤخذ من أرقام أيلول الجاهزة ولا يكتبه الزبون. قبل كل عملية يتأكد من سعر أيلول الحالي: إن ارتفع عن المعتمد لا يشتري، ويصلك تنبيه.</p>
             <div class="row2 stack-xs">
               <div class="field"><label for="aylol-user">البريد في أيلول</label><input class="input ltr" id="aylol-user" name="aylolUser" type="email" value="${esc(s.aylolUser || '')}" autocomplete="off"></div>
               <div class="field"><label for="aylol-pass">كلمة المرور</label><input class="input ltr" id="aylol-pass" name="aylolPass" type="password" autocomplete="new-password" placeholder="${s.aylolConfigured ? 'محفوظة — اتركها فارغة للإبقاء' : ''}"></div>
@@ -134,7 +134,7 @@ export default {
             <div class="field"><label for="aylol-secret">المفتاح السري لـ Google Authenticator (التحقق بخطوتين)</label>
               <input class="input ltr" id="aylol-secret" name="aylolSecret" type="password" autocomplete="off" placeholder="${s.aylolHasSecret ? 'محفوظ — اتركه فارغاً للإبقاء' : 'المفتاح تحت رمز QR، أو رابط otpauth'}">
               <span class="hint">أيلول يطلب رمزاً من Google Authenticator بعد كلمة المرور. انسخ المفتاح المكتوب تحت رمز QR عند تفعيل التحقق بخطوتين في أيلول (أو رابط التصدير من التطبيق)، فيصنع السيرفر الرمز بنفسه. يبقى على السيرفر ولا يظهر بعد حفظه.</span></div>
-            <div class="msg info">${icon('info')}<span>بعد الحفظ تُزامَن رزم أيلول فوراً، ثم كل 6 ساعات تلقائياً. نسبة الربح لكل نظام في «الشركات والرزم» ← تبويب «أيلول».</span></div>
+            <div class="msg info">${icon('info')}<span>بعد الحفظ تُزامَن رزم أيلول فوراً، ثم كل ساعتين تلقائياً. الأرقام المتاحة والسعر يُقرآن من أيلول مباشرة عند كل طلب. نسبة الربح لكل نظام في «الشركات والرزم» ← تبويب «أيلول».</span></div>
             <div id="aylol-msg"></div>
             <div class="btn-row">
               <button class="btn btn-primary" type="submit">${icon('check')}حفظ</button>

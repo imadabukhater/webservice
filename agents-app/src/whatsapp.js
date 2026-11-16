@@ -635,7 +635,8 @@ async function placeShopOrder(jid, body) {
   const shop = S.shopCatalogResponse();
   const minutes = Math.max(1, Math.round(require('./shop').RESERVE_MS / 60_000));
   const pay = shop.jawwalpay?.number ? `ادفع بجوال باي إلى *${shop.jawwalpay.number}*${shop.jawwalpay.name ? ` (${shop.jawwalpay.name})` : ''}` : 'ادفع بجوال باي';
-  return say(jid, [`✅ حجزنا طلبك رقم *${o.code}*`, o.package_label, `المبلغ: *${round(o.amount)} ₪*`, '',
+  // A new subscription: the number comes from the supplier's free numbers, reserved for this order.
+  return say(jid, [`✅ حجزنا طلبك رقم *${o.code}*`, o.package_label, ...(o.esim && o.number ? [`📞 رقمك الجديد: *${o.number}* (محجوز لك حتى الدفع)`] : []), `المبلغ: *${round(o.amount)} ₪*`, '',
     `${pay} خلال ${minutes} دقائق، ثم أرسل هنا *اسم المحوِّل* أو *رقم هاتفه* أو *الرقم المرجعي*، أو *صورة الإشعار*.`,
     'نتحقق من التحويل تلقائياً، ويصلك التفعيل هنا.'].join('\n'));
 }

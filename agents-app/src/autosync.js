@@ -8,15 +8,16 @@ const { now } = require('./util');
 const D = require('./domain');
 
 const DAY_MS = 24 * 60 * 60_000;
-// Aylol, QuickLine and Layan sign in by themselves, so their catalogs are refreshed four times a day. telecom's
-// sign-in waits for a code by e-mail and art-topup's catalog is large: once a day.
+// QuickLine and Layan sign in by themselves, so their catalogs are refreshed four times a day, and Aylol's every two
+// hours. telecom's sign-in waits for a code by e-mail and art-topup's catalog is large: once a day.
+// (Free numbers and the price are read from the supplier at every order, whatever the catalog's age.)
 const OFTEN_MS = 6 * 60 * 60_000;
 const SOON_MS = 30 * 60_000;
 const CHECK_MS = Number(process.env.AUTOSYNC_CHECK_MS) || 60 * 60_000;
 
 const SUPPLIERS = [
   {
-    key: 'ay', name: 'أيلول', every: OFTEN_MS, configured: (s) => s.aylolConfigured, synced: (s) => [s.aylolSyncedCard, s.aylolSyncedInvoice],
+    key: 'ay', name: 'أيلول', every: 2 * 60 * 60_000, configured: (s) => s.aylolConfigured, synced: (s) => [s.aylolSyncedCard, s.aylolSyncedInvoice],
     refs: "art_card_id LIKE 'ay:%'", sync: (kind) => require('./routes/aylol').syncKind(aylolCredentials(), kind),
   },
   {

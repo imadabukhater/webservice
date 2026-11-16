@@ -31,8 +31,10 @@ const packageAttrs = (p, admin = false) => {
     oldPrice: p.old_price ? round(p.old_price) : null,
     esimEnabled: !!p.esim_enabled,
     // ownSim: the number comes with its SIM (a Layan new line), though Layan packages also support eSIM activation (lyEsim).
-    auto: !!ref, pool: /^(qln|lyn):|^ay:esim:/.test(ref), waits: /^(qln?|lyn?|tcn?|ay):/.test(ref), ownSim: /^lyn:/.test(ref),
+    auto: !!ref, pool: /^(qln|lyn):|^ay:(esim|bill):/.test(ref), waits: /^(qln?|lyn?|tcn?|ay):/.test(ref), ownSim: /^lyn:/.test(ref),
     lyEsim: /^lyn:/.test(ref) || !!p.esim_enabled,
+    // Sold as an eSIM only, on a number from the supplier's list (an Aylol new subscription).
+    esimOnly: /^ay:(esim|bill):/.test(ref),
     ...(admin ? { art: !!ref, ql: /^qln:/.test(ref), ...require('../quickline').supplierOfRef(ref) } : {}),
   };
 };
