@@ -18,47 +18,11 @@ const { now, round, normalizePhone, str } = require('./util');
 const qrcode = require('./qr');
 const { forAgent } = require('./privacy');
 
-// ---------- settings ----------
-const get = (k, d = '') => q('SELECT value FROM settings WHERE key = ?').get(k)?.value ?? d;
-const phoneList = (v) => [...new Set(String(v || '').split(/[\s,،;]+/).map(normalizePhone).filter((p) => /^\d{9,13}$/.test(p)))];
-
-// A model of the other service (left over after switching) falls back to this service's default.
-// The models the manager picks from, with list prices in $ per million tokens (input / output; thinking counts as
-// output). Prices change: the manager can set the ones they pay, and a model not listed is counted at the dearest.
-const AI_MODELS = [
-  { id: 'gemini-3.1-flash-lite', providers: ['vertex', 'gemini'], in: 0.25, out: 1.5, label: 'Gemini 3.1 Flash-Lite — الأرخص' },
-  { id: 'gemini-3.5-flash-lite', providers: ['vertex', 'gemini'], in: 0.3, out: 2.5, label: 'Gemini 3.5 Flash-Lite' },
-  { id: 'gemini-3-flash', providers: ['vertex', 'gemini'], in: 0.5, out: 3, label: 'Gemini 3 Flash' },
-  { id: 'gemini-3.5-flash', providers: ['vertex', 'gemini'], in: 1.5, out: 9, label: 'Gemini 3.5 Flash — الأقوى والأغلى' },
-  { id: 'openai/gpt-oss-20b', providers: ['groq'], in: 0, out: 0, label: 'GPT OSS 20B — مجاني على Groq (حتى 1000 سؤال باليوم)' },
-];
-const UNLISTED_PRICE = { in: 1.5, out: 9 };
-function modelFor(provider, model) {
-  if (provider === 'groq') return model && !/^gemini/i.test(model) ? model : 'openai/gpt-oss-20b';
-  return model && /^gemini/i.test(model) ? model : 'gemini-3.1-flash-lite';
-}
-const PROVIDERS = ['gemini', 'groq', 'vertex'];
-const providerOf = (v) => (PROVIDERS.includes(v) ? v : 'gemini');
-// Vertex AI (Google Cloud) answers to the server's own Google identity: no key is kept.
-const aiReady = (c) => c.aiProvider === 'vertex' || !!c.aiKey;
-function config() {
-  return {
-    enabled: get('wa_enabled', '1') !== '0',
-    customers: get('wa_customers', '1') !== '0',
-    admins: phoneList(get('wa_admins')),
-    shopUrl: get('wa_shop_url'),
-    aiKey: get('wa_ai_key'),
-    aiProvider: providerOf(get('wa_ai_provider')),
-    aiModel: modelFor(providerOf(get('wa_ai_provider')), get('wa_ai_model')),
-    welcome: get('wa_welcome'),
-    // At most this much spent on the assistant a day ($); 0 pauses it. Prices: the manager's, else the model's list price.
-    aiDailyUsd: get('wa_ai_daily_usd') === '' ? 0.6 : Math.max(0, Number(get('wa_ai_daily_usd')) || 0),
-    aiPriceIn: get('wa_ai_price_in') === '' ? null : Number(get('wa_ai_price_in')),
-    aiPriceOut: get('wa_ai_price_out') === '' ? null : Number(get('wa_ai_price_out')),
-    // What the manager tells the assistant (opening hours, delivery, policies…): part of every question it answers.
-    knowledge: get('wa_knowledge'),
-  };
-}
+// ---------- settings (src/waconfig.js: changed only on the server by the owner) ----------
+const WC = require('./waconfig');
+const { get, config, priceOf, spendToday, today, costOf, AI_MODELS, aiReady } = WC;
+// Used by the server's own command and the tests; what it returns never carries the key.
+const saveConfig = (body) => { WC.saveConfig(body); return configView(); };
 
 // What the settings screen sees: never the AI key itself.
 function configView() {
@@ -67,39 +31,6 @@ function configView() {
   return { enabled: c.enabled, customers: c.customers, admins: c.admins.join(', '), shopUrl: c.shopUrl, hasAiKey: !!c.aiKey, aiProvider: c.aiProvider, aiModel: c.aiModel,
     welcome: c.welcome, knowledge: c.knowledge, aiDailyUsd: c.aiDailyUsd, aiPriceIn: c.aiPriceIn, aiPriceOut: c.aiPriceOut,
     aiPrice: price, aiModels: AI_MODELS, aiSpend: spendToday() };
-}
-
-function saveConfig(body = {}) {
-  const fail = require('./util').fail;
-  if (body.enabled !== undefined) setSetting('wa_enabled', body.enabled ? '1' : '0');
-  if (body.customers !== undefined) setSetting('wa_customers', body.customers ? '1' : '0');
-  if (body.admins !== undefined) setSetting('wa_admins', phoneList(body.admins).join(','));
-  if (body.shopUrl !== undefined) {
-    const u = str(body.shopUrl, 200);
-    if (u && !/^https?:\/\/[^\s/]+(\/\S*)?$/i.test(u)) fail(400, 'رابط المتجر يبدأ بـ https://');
-    setSetting('wa_shop_url', u.replace(/[#?].*$/, '').replace(/\/+$/, ''));
-  }
-  // A new key, service or model: the last error was about the old one.
-  if (body.aiKey || body.aiKeyClear || (body.aiProvider !== undefined && body.aiProvider !== get('wa_ai_provider')) || (body.aiModel !== undefined && body.aiModel !== get('wa_ai_model'))) state.aiError = '';
-  if (body.aiKey) setSetting('wa_ai_key', String(body.aiKey).replace(/\s+/g, '').slice(0, 200));
-  if (body.aiKeyClear) setSetting('wa_ai_key', '');
-  if (body.aiProvider !== undefined) setSetting('wa_ai_provider', providerOf(body.aiProvider));
-  if (body.aiModel !== undefined) setSetting('wa_ai_model', /^[\w./:-]{3,80}$/.test(String(body.aiModel)) ? String(body.aiModel) : '');
-  if (body.welcome !== undefined) setSetting('wa_welcome', str(body.welcome, 300));
-  if (body.knowledge !== undefined) setSetting('wa_knowledge', str(body.knowledge, 2000));
-  const money = (v, label, max) => {
-    if (v === undefined) return undefined;
-    if (v === '' || v === null) return '';
-    const n = Number(v);
-    if (!Number.isFinite(n) || n < 0 || n > max) fail(400, `${label}: رقم من 0 إلى ${max}`);
-    return String(Math.round(n * 10000) / 10000);
-  };
-  for (const [field, key, label, max] of [['aiDailyUsd', 'wa_ai_daily_usd', 'حد الصرف اليومي', 100],
-    ['aiPriceIn', 'wa_ai_price_in', 'سعر الإدخال', 100], ['aiPriceOut', 'wa_ai_price_out', 'سعر الإخراج', 100]]) {
-    const v = money(body[field], label, max);
-    if (v !== undefined) setSetting(key, v);
-  }
-  return configView();
 }
 
 // ---------- the linked session (kept beside the database, like the suppliers' cookies) ----------
@@ -115,7 +46,10 @@ const linked = () => {
 
 let lib = null; // the loaded library (downloading a receipt photo needs it)
 let downloader = null; // tests: replaces the download
-const state = { sock: null, status: 'off', qr: '', qrAt: 0, phone: '', error: '', starting: false, retries: 0, aiError: '' };
+const state = { sock: null, status: 'off', qr: '', qrAt: 0, phone: '', error: '', starting: false, retries: 0, aiError: '', aiErrorFor: '' };
+// The assistant's last error, shown only while the settings are still the ones it happened with.
+const aiSig = (c = config()) => [c.aiProvider, c.aiModel, c.aiKey.length, c.aiKey.slice(-4), c.aiDailyUsd].join('|');
+const aiErrorNow = () => (state.aiError && state.aiErrorFor === aiSig() ? state.aiError : '');
 let transport = null; // tests: replaces the socket's sendMessage
 
 const SILENT = {
@@ -132,7 +66,7 @@ const connected = () => !!transport || (state.status === 'connected' && !!state.
 function status() {
   return {
     status: state.status, qr: state.status === 'qr' ? state.qr : '', qrAt: state.qrAt, phone: state.phone, error: state.error,
-    linked: linked(), config: configView(), aiError: state.aiError,
+    linked: linked(), config: configView(), aiError: aiErrorNow(),
   };
 }
 
@@ -861,26 +795,15 @@ function aiAllowed(jid) {
   aiCalls.push(Date.now());
   return true;
 }
-// ---------- what the assistant costs: counted per day (Palestine's day), stopped at the manager's limit ----------
-const today = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Gaza', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
-function priceOf(c = config()) {
-  const listed = AI_MODELS.find((m) => m.id === c.aiModel && m.providers.includes(c.aiProvider));
-  const base = listed || UNLISTED_PRICE;
-  return { in: c.aiPriceIn ?? base.in, out: c.aiPriceOut ?? base.out, listed: !!listed };
-}
-function spendToday() {
-  let s = null;
-  try { s = JSON.parse(get('wa_ai_spend') || 'null'); } catch {}
-  return s && s.day === today() ? s : { day: today(), usd: 0, calls: 0, tokensIn: 0, tokensOut: 0, stoppedAt: 0 };
-}
-const costOf = (tokensIn, tokensOut, p) => (tokensIn * p.in + tokensOut * p.out) / 1e6;
+// ---------- what the assistant costs (counted in src/waconfig.js), stopped at the owner's limit ----------
+function setAiError(text) { state.aiError = text; state.aiErrorFor = text ? aiSig() : ''; }
 // Before a question: would it pass the day's limit? (its size from the text, ~2.5 characters a token, a short answer)
 function withinBudget(system, user) {
   const c = config();
   const s = spendToday();
   const est = costOf(Math.ceil((system.length + user.length) / 2.5), 400, priceOf(c));
   if (s.usd + est <= c.aiDailyUsd) return true;
-  state.aiError = c.aiDailyUsd > 0 ? `وصل حد الصرف اليومي (${c.aiDailyUsd}$). يرجع المساعد بكرة، والبوت يرد بالقوائم لحد ذلك.` : 'المساعد موقوف: حد الصرف اليومي 0$.';
+  setAiError(c.aiDailyUsd > 0 ? `وصل حد الصرف اليومي (${c.aiDailyUsd}$). يرجع المساعد بكرة، والبوت يرد بالقوائم لحد ذلك.` : 'المساعد موقوف: حد الصرف اليومي 0$.');
   if (!s.stoppedAt && c.aiDailyUsd > 0) {
     s.stoppedAt = Date.now();
     setSetting('wa_ai_spend', JSON.stringify(s));
@@ -960,17 +883,17 @@ async function askModel(system, user, { temperature = 0.1, timeout = 15_000 } = 
     if (!res.ok) {
       if (vertex && res.status === 401) vertexAuth.token = '';
       const err = await res.json().catch(() => null);
-      state.aiError = `${name} ${res.status}: ${String(err?.error?.message || res.statusText).slice(0, 200)}`;
+      setAiError(`${name} ${res.status}: ${String(err?.error?.message || res.statusText).slice(0, 200)}`);
       return null;
     }
     const data = await res.json();
-    state.aiError = '';
+    setAiError('');
     const out = groq ? data?.choices?.[0]?.message?.content : data?.candidates?.[0]?.content?.parts?.[0]?.text;
     spent(groq ? data?.usage : data?.usageMetadata, system, user, out);
     const v = JSON.parse(String(out || 'null').replace(/^```(?:json)?\s*|\s*```$/g, ''));
     return v && typeof v === 'object' ? v : null;
   } catch (e) {
-    state.aiError = `${name}: ${String(e.message).slice(0, 200)}`;
+    setAiError(`${name}: ${String(e.message).slice(0, 200)}`);
     return null;
   }
 }

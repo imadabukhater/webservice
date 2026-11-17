@@ -150,14 +150,22 @@ test('WhatsApp: agents sell as in the portal; customers buy in the chat, their t
   const cardPkg = cat.packages.find((p) => p.kind === 'card' && p.cost === 47.5);
   assert.ok(esimPkg && cardPkg, 'synced at once');
 
-  // The settings screen: nothing secret comes back, and the WhatsApp agent's options are saved.
+  // The portal only links WhatsApp: its settings (who it answers, the assistant, the daily limit) are changed on the
+  // server by the owner, never from the portal, whoever is signed in. Nothing secret comes back.
   const st = await ok(call(admin, 'GET', '/api/whatsapp'));
   assert.equal(st.status, 'off');
-  const saved = await ok(call(admin, 'PUT', '/api/whatsapp', { admins: '0599000111', shopUrl: 'https://shop.example.com/shop', aiKey: 'secret-ai-key' }));
-  assert.deepEqual([saved.config.admins, saved.config.shopUrl, saved.config.hasAiKey], ['0599000111', 'https://shop.example.com/shop', true]);
+  const refused = await call(admin, 'PUT', '/api/whatsapp', { aiDailyUsd: 50, aiKey: 'stolen', admins: '0500000000' });
+  assert.equal(refused.status, 403);
+  assert.match(refused.body.error, /على السيرفر/);
+  assert.equal((await call(admin, 'POST', '/api/whatsapp/test', { phone: '0599000111' })).status, 404, 'no test message from the portal');
+  assert.equal(wa.config().aiDailyUsd, 0.5, 'half a dollar a day unless the owner changes it');
+  assert.equal(wa.config().aiKey, '');
+  const saved = wa.saveConfig({ admins: '0599000111', shopUrl: 'https://shop.example.com/shop', aiKey: 'secret-ai-key' });
+  assert.deepEqual([saved.admins, saved.shopUrl, saved.hasAiKey], ['0599000111', 'https://shop.example.com/shop', true]);
   assert.equal(JSON.stringify(saved).includes('secret-ai-key'), false);
+  assert.equal(JSON.stringify(await ok(call(admin, 'GET', '/api/whatsapp'))).includes('secret-ai-key'), false);
   assert.equal(JSON.stringify(await ok(call(admin, 'GET', '/api/settings'))).includes('secret-ai-key'), false);
-  await ok(call(admin, 'PUT', '/api/whatsapp', { aiKeyClear: true }));
+  wa.saveConfig({ aiKeyClear: true });
   const agentTok = await ok(call(admin, 'POST', '/api/agents', { name: 'وكيل واتساب', username: 'wa-agent', password: 'secret1', phone: '0599111222', balance: 500 }));
   assert.ok(agentTok);
   const login = (await ok(call(null, 'POST', '/api/login', { username: 'wa-agent', password: 'secret1' }))).token;
@@ -271,7 +279,7 @@ test('WhatsApp: agents sell as in the portal; customers buy in the chat, their t
   assert.equal(sent.length, after, 'sent once');
 
   // Gemini: free text is answered from the shop's own packages and prices, within the conversation, without links.
-  await ok(call(admin, 'PUT', '/api/whatsapp', { aiKey: 'good-key' }));
+  wa.saveConfig({ aiKey: 'good-key' });
   const answer = textOf(await say(C, '0541234567', 'شو أفضل شي عندكم للإنترنت؟'));
   assert.match(answer, new RegExp(`رقم ${esimPkg.id} بسعر 55`));
   assert.equal(/evil\.example|https?:\/\/evil/.test(answer), false, 'no link from the AI');
@@ -342,14 +350,14 @@ test('WhatsApp: agents sell as in the portal; customers buy in the chat, their t
   }
   site.aiReply = null;
   // A wrong key: the menu still answers, and the error shows in the settings.
-  await ok(call(admin, 'PUT', '/api/whatsapp', { aiKey: 'bad-key' }));
+  wa.saveConfig({ aiKey: 'bad-key' });
   assert.match(textOf(await say(C, '0541234567', 'سؤال آخر عن الشبكة')), /اختار الشركة/);
   assert.match((await ok(call(admin, 'GET', '/api/whatsapp'))).aiError, /403.*API key not valid/);
 
   // Groq instead of Gemini, with what the manager taught it from WhatsApp; "I want one" starts that package's order.
   const ADM = '970599000111@s.whatsapp.net';
   assert.match(textOf(await say(ADM, '0599000111', '!تعلم الدعم من 9 صباحاً حتى 10 مساءً')), /حفظت المعلومة/);
-  await ok(call(admin, 'PUT', '/api/whatsapp', { aiProvider: 'groq', aiKey: 'good-key', aiModel: '' }));
+  wa.saveConfig({ aiProvider: 'groq', aiKey: 'good-key', aiModel: '' });
   assert.equal((await ok(call(admin, 'GET', '/api/whatsapp'))).config.aiModel, 'openai/gpt-oss-20b');
   const C3 = '972547654321@s.whatsapp.net';
   assert.match(textOf(await say(C3, '0547654321', 'بدي واحدة الله يخليك')), /اسمك الكامل/);

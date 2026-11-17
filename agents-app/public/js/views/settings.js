@@ -28,8 +28,7 @@ function waStatusHtml(w) {
     ${w.error ? `<div class="msg">${icon('alert')}<span>${esc(w.error)}</span></div>` : ''}
     <div class="btn-row">
       ${w.status === 'connected'
-        ? `<button class="btn" type="button" data-action="wa-test">${icon('send')}رسالة تجريبية</button>
-           <button class="btn" type="button" data-action="wa-logout">${icon('logout')}إلغاء الربط</button>`
+        ? `<button class="btn" type="button" data-action="wa-logout">${icon('logout')}إلغاء الربط</button>`
         : `<button class="btn btn-primary" type="button" data-action="wa-connect" ${busy ? 'disabled' : ''}>${icon('qr')}ربط واتساب</button>
            ${busy ? `<button class="btn" type="button" data-action="wa-connect" data-fresh="1">${icon('refresh')}رمز جديد</button>` : ''}`}
     </div>`;
@@ -42,49 +41,19 @@ function waHtml(w) {
           <p class="muted small">يربط رقم واتساب المتجر بالسيرفر (مثل واتساب ويب). بعدها يرد تلقائياً: <b>الوكيل</b> (رقمه المحفوظ في حسابه) يرى رزمه وأسعاره ورصيده، ويشحن ويفعّل eSIM من رصيده بعد أن يرسل «نعم»، وتصله النتيجة ورمز QR الحقيقي في المحادثة. <b>الزبون</b> يشتري في المحادثة: يختار الشركة ثم الخدمة ثم الباقة، فيُحجز له طلب حقيقي في المتجر، ثم يرسل اسم المحوِّل أو الرقم المرجعي أو صورة الإشعار، فيُفحص التحويل في إشعارات جوال باي، ويصله التفعيل ورمز eSIM في المحادثة. مع المساعد الذكي يرد على الأسئلة الحرة من باقاتك وأسعارك.</p>
           <div id="wa-status">${waStatusHtml(w)}</div>
         </section>
-        <form class="card card-pad form" id="wa-form" novalidate autocomplete="off">
-          <h2 class="dot-title">الرد التلقائي</h2>
-          <label class="switch-row"><span class="grow"><b>الرد على الرسائل</b><small>أوقفه ليبقى واتساب مربوطاً دون رد تلقائي</small></span><input class="switch" type="checkbox" name="enabled" ${c.enabled !== false ? 'checked' : ''}></label>
-          <label class="switch-row"><span class="grow"><b>الرد على الزبائن</b><small>غير الوكلاء: يشترون من المتجر داخل المحادثة، ويُفحص تحويلهم ويصلهم التفعيل</small></span><input class="switch" type="checkbox" name="customers" ${c.customers !== false ? 'checked' : ''}></label>
-          <div class="field"><label for="wa-admins">أرقام المدير</label><input class="input ltr" id="wa-admins" name="admins" inputmode="tel" placeholder="0599123456, 0521234567" value="${esc(c.admins || '')}">
-            <span class="hint">من هذه الأرقام: الطلبات المفتوحة وحالة أي رقم. الوكيل يُعرف من رقم الهاتف في حسابه (الوكلاء ← تعديل).</span></div>
-          <div class="field"><label for="wa-shop">رابط المتجر</label><input class="input ltr" id="wa-shop" name="shopUrl" placeholder="https://www.example.com/shop" value="${esc(c.shopUrl || '')}">
-            <span class="hint">يُرسَل للزبون مع كل باقة ليطلبها ويدفع.</span></div>
-          <div class="field"><label for="wa-welcome">رسالة الترحيب</label><input class="input" id="wa-welcome" name="welcome" maxlength="300" value="${esc(c.welcome || '')}" placeholder="أهلاً بك في متجرنا 👋"></div>
-          <div class="field"><label for="wa-provider">المساعد الذكي (اختياري)</label>
-            <select class="input" id="wa-provider" name="aiProvider">
-              <option value="gemini" ${c.aiProvider !== 'groq' ? 'selected' : ''}>Google Gemini</option>
-              <option value="groq" ${c.aiProvider === 'groq' ? 'selected' : ''}>Groq</option>
-              <option value="vertex" ${c.aiProvider === 'vertex' ? 'selected' : ''}>Google Cloud (Vertex AI) — بلا مفتاح، على حساب الفوترة</option>
-            </select>
-            <span class="hint">بدونه يرد البوت بالقوائم والأوامر فقط. معه يفهم الأسئلة الحرة ويرد من باقاتك وأسعارك. يُرسَل نص الرسالة إلى الخدمة المختارة لفهمها، ولا يُنفَّذ شراء إلا بالخطوات والدفع.</span></div>
-          <div class="field"><label for="wa-ai">مفتاح الخدمة (API key)</label><input class="input ltr" id="wa-ai" name="aiKey" type="password" autocomplete="new-password" placeholder="${c.hasAiKey ? 'محفوظ — اتركه فارغاً للإبقاء' : 'من Google AI Studio أو console.groq.com'}">
-            <span class="hint">مع Google Cloud (Vertex AI) لا حاجة لمفتاح: السيرفر يستعمل هويته في مشروعك، والتكلفة على حساب الفوترة.</span></div>
-          <div class="field"><label for="wa-model">النموذج</label>
-            <select class="input ltr" id="wa-model" name="aiModel">
-              ${(c.aiModels || []).map((m) => `<option value="${esc(m.id)}" ${m.id === c.aiModel ? 'selected' : ''}>${esc(m.label)} · ${m.in ? `$${m.in} / $${m.out} لكل مليون` : 'مجاني'} (${m.providers.includes('groq') ? 'Groq' : 'Gemini / Google Cloud'})</option>`).join('')}
-              ${(c.aiModels || []).some((m) => m.id === c.aiModel) ? '' : `<option value="${esc(c.aiModel || '')}" selected>${esc(c.aiModel || '')} (غير مدرج: يُحسب بأغلى سعر)</option>`}
-            </select>
-            <span class="hint">اختر نموذجاً من الخدمة المختارة فوق. الأسعار أسعار القائمة لكل مليون رمز (إدخال / إخراج)، ويُحسب بها صرف اليوم.</span></div>
-          <div class="row2 stack-xs">
-            <div class="field"><label for="wa-daily">حد الصرف اليومي ($)</label><input class="input ltr" id="wa-daily" name="aiDailyUsd" type="number" min="0" max="100" step="0.05" inputmode="decimal" value="${c.aiDailyUsd ?? 0.6}">
-              <span class="hint">لما يوصله، يوقف المساعد لآخر اليوم (بتوقيت فلسطين) ويكمل البوت بالقوائم، ويوصلك تنبيه. 0 = المساعد موقوف.</span></div>
-            <div class="field"><label>صرف اليوم</label>
-              <div class="input ltr" style="display:flex;align-items:center">${c.aiSpend ? `$${Number(c.aiSpend.usd).toFixed(3)} من $${c.aiDailyUsd} · ${c.aiSpend.calls} سؤال` : '—'}</div>
-              <span class="hint">بسعر ${c.aiPrice ? `$${c.aiPrice.in} / $${c.aiPrice.out}` : '—'} لكل مليون رمز. رقم تقريبي من النظام؛ الفاتورة الأكيدة في Google Cloud.</span></div>
+        <section class="card card-pad form">
+          <h2 class="dot-title">الإعدادات (للعرض فقط)</h2>
+          <div class="msg info">${icon('info')}<span>تُعدَّل إعدادات واتساب والمساعد الذكي وحد الصرف على السيرفر من صاحب الحساب فقط. من هنا تستطيع ربط واتساب وإلغاء ربطه.</span></div>
+          <div class="kv small">
+            <div>الرد على الرسائل</div><div>${c.enabled ? 'يعمل' : 'موقوف'}</div>
+            <div>الرد على الزبائن</div><div>${c.customers ? 'يعمل' : 'موقوف'}</div>
+            <div>أرقام المدير</div><div class="ltr">${esc(c.admins || '—')}</div>
+            <div>المساعد الذكي</div><div>${c.aiProvider === 'vertex' ? 'Google Cloud (Vertex AI)' : c.aiProvider === 'groq' ? 'Groq' : 'Google Gemini'} · <span class="ltr">${esc(c.aiModel || '')}</span>${c.aiProvider !== 'vertex' && !c.hasAiKey ? ' · <b>بلا مفتاح (موقوف)</b>' : ''}</div>
+            <div>حد الصرف اليومي</div><div class="ltr">$${c.aiDailyUsd ?? '—'}</div>
+            <div>صرف اليوم</div><div class="ltr">${c.aiSpend ? `$${Number(c.aiSpend.usd).toFixed(3)} · ${c.aiSpend.calls}` : '—'}</div>
           </div>
-          <div class="row2 stack-xs">
-            <div class="field"><label for="wa-pin">سعرك للإدخال ($ لكل مليون) <span class="opt">(اختياري)</span></label><input class="input ltr" id="wa-pin" name="aiPriceIn" type="number" min="0" step="0.01" inputmode="decimal" value="${c.aiPriceIn ?? ''}" placeholder="من القائمة"></div>
-            <div class="field"><label for="wa-pout">سعرك للإخراج ($ لكل مليون) <span class="opt">(اختياري)</span></label><input class="input ltr" id="wa-pout" name="aiPriceOut" type="number" min="0" step="0.01" inputmode="decimal" value="${c.aiPriceOut ?? ''}" placeholder="من القائمة"></div>
-          </div>
-          <div class="field"><label for="wa-knowledge">معلومات يعرفها المساعد</label>
-            <textarea class="input" id="wa-knowledge" name="knowledge" rows="4" maxlength="2000" placeholder="مثل: الدعم من 9 صباحاً حتى 10 مساءً. شريحة eSIM تعمل على الأجهزة الحديثة فقط.">${esc(c.knowledge || '')}</textarea>
-            <span class="hint">يعتمد عليها في ردوده. تستطيع أيضاً الإضافة من رقم المدير على واتساب: «!تعلم …».</span></div>
           ${w?.aiError ? `<div class="msg">${icon('alert')}<span>آخر خطأ من المساعد: ${esc(w.aiError)}</span></div>` : ''}
-          ${c.hasAiKey ? '<label class="switch-row"><span class="grow"><b>حذف المفتاح المحفوظ</b></span><input class="switch" type="checkbox" name="aiKeyClear"></label>' : ''}
-          <div id="wa-msg"></div>
-          <button class="btn btn-primary" type="submit">${icon('check')}حفظ</button>
-        </form>
+        </section>
 `;
 }
 
@@ -255,26 +224,6 @@ export default {
         } catch {}
       }, 3000);
     }
-    root.querySelector('#wa-form')?.addEventListener('submit', async (e) => {
-      e.preventDefault();
-      const form = e.currentTarget;
-      const msg = root.querySelector('#wa-msg');
-      try {
-        V.wa = await api.put('/api/whatsapp', {
-          enabled: form.elements.enabled.checked, customers: form.elements.customers.checked,
-          admins: field(form, 'admins'), shopUrl: field(form, 'shopUrl'), welcome: field(form, 'welcome'),
-          aiKey: form.elements.aiKey.value, aiKeyClear: !!form.elements.aiKeyClear?.checked, aiModel: field(form, 'aiModel'),
-          aiProvider: form.elements.aiProvider.value, knowledge: form.elements.knowledge.value,
-          aiDailyUsd: field(form, 'aiDailyUsd'), aiPriceIn: field(form, 'aiPriceIn'), aiPriceOut: field(form, 'aiPriceOut'),
-        });
-        form.elements.aiKey.value = '';
-        form.elements.aiModel.value = V.wa?.config?.aiModel || '';
-        msg.innerHTML = '';
-        toast('تم حفظ إعدادات واتساب');
-      } catch (err) {
-        msg.innerHTML = `<div class="msg">${icon('alert')}<span>${esc(err.message)}</span></div>`;
-      }
-    });
     root.querySelector('#art-form')?.addEventListener('submit', async (e) => {
       e.preventDefault();
       const form = e.currentTarget;
@@ -381,16 +330,6 @@ export default {
       btn.disabled = true;
       try { V.wa = await api.post('/api/whatsapp/logout'); } catch (err) { toast(err.message, { error: true }); }
       document.getElementById('wa-status').innerHTML = waStatusHtml(V.wa);
-    },
-    async 'wa-test'() {
-      const phone = prompt('رقم الهاتف الذي تصله الرسالة التجريبية (مثل 0599123456):');
-      if (!phone) return;
-      try {
-        await api.post('/api/whatsapp/test', { phone });
-        toast('أُرسلت الرسالة');
-      } catch (err) {
-        toast(err.message, { error: true });
-      }
     },
     async 'art-check'(btn) {
       const box = document.getElementById('art-msg');

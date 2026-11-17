@@ -1,7 +1,8 @@
 'use strict';
-// The manager links the shop's WhatsApp (QR code), sets who it answers, and sends a test message. Manager only.
+// The manager links and unlinks the shop's WhatsApp (QR code), and sees its state. Its settings (who it answers, the
+// assistant, its daily spending limit) are changed only on the server by the owner: scripts/whatsapp-settings.js.
 const { route, ADMIN } = require('../router');
-const { str } = require('../util');
+const { fail } = require('../util');
 const wa = require('../whatsapp');
 
 // The shop's address, from the address the manager uses, until one is set.
@@ -13,10 +14,7 @@ function shopUrlFrom(req) {
 
 route('GET', '/api/whatsapp', ADMIN, () => wa.status());
 
-route('PUT', '/api/whatsapp', ADMIN, ({ body }) => {
-  wa.saveConfig(body || {});
-  return wa.status();
-});
+route('PUT', '/api/whatsapp', ADMIN, () => fail(403, 'إعدادات واتساب والمساعد تُعدَّل على السيرفر من صاحب الحساب فقط'));
 
 // Starts the link and waits a few seconds for the QR code (or the link, when it was linked before).
 route('POST', '/api/whatsapp/connect', ADMIN, async ({ body, req }) => {
@@ -32,4 +30,3 @@ route('POST', '/api/whatsapp/connect', ADMIN, async ({ body, req }) => {
 
 route('POST', '/api/whatsapp/logout', ADMIN, () => wa.logout());
 
-route('POST', '/api/whatsapp/test', ADMIN, ({ body }) => wa.sendTo(body?.phone, str(body?.text, 500) || '✅ واتساب المتجر مربوط ويعمل. اكتب *مساعدة* لعرض الأوامر.'));
