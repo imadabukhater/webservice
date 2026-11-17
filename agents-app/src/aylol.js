@@ -524,12 +524,13 @@ const billShop = (ref, siteCompany) => billAuto(ref, siteCompany)
 // What a package's line can be on, as the site says (its sim_type): 'esim' (eSIM only, e.g. Hot's), 'sim' (a SIM card
 // only), or 'any' (either). Stored with the package by the sync (and by the shop the first time it asks).
 const simTypeOf = (v) => { const t = String(v || '').trim().toLowerCase(); return t === 'esim' || t === 'sim' ? t : 'any'; };
-// The ways a bill line can be sold here: ['sim'] (the customer's SIM card), ['esim'], or both. An eSIM is ordered only
-// on company 7's form (read from its page); the other companies' lines stay on a SIM card.
+// The ways a bill line can be sold here: ['sim'] (the customer's SIM card), ['esim'], or both. An eSIM is ordered on
+// company 7's form and on company 5's (Sky5G), as their pages do it; the other companies' lines stay on a SIM card.
+const ESIM_LINE_COMPANIES = new Set([7, 5]);
 function lineModes(simType, siteCompany) {
   const t = simTypeOf(simType);
   const modes = t === 'esim' ? ['esim'] : t === 'sim' ? ['sim'] : ['sim', 'esim'];
-  return BILL_COMPANIES.has(Number(siteCompany)) ? modes : modes.filter((m) => m === 'sim');
+  return ESIM_LINE_COMPANIES.has(Number(siteCompany)) ? modes : modes.filter((m) => m === 'sim');
 }
 async function packageInfo(packageId, creds) {
   await ensureSession(creds);
@@ -544,7 +545,8 @@ async function billNumbers(packageId, creds, sim = '', esim = false) {
   const r = parseJson(await ajax('/dashboard/charge-system/available-numbers', { extra: FORM, body: formBody(fields) }));
   if (!r || r.success === false) throw new AylolError(`أيلول: ${(r && r.message) || 'تعذّر جلب الأرقام'}`, { refused: true });
   return (Array.isArray(r.data) ? r.data : [])
-    .map((x) => ({ phone: String(x.number || x.phone || x.phone_number || '').replace(/\D/g, ''), key: String(x.selection_key || x.subscription_key || x.id || '') }))
+    .map((x) => ({ phone: String(x.number || x.phone || x.phone_number || '').replace(/\D/g, ''), key: String(x.selection_key || x.subscription_key || x.id || ''),
+      sim: String(x.sim_number || '').replace(/\D/g, ''), period: String(x.duration_key || '').trim() }))
     .filter((x) => /^05\d{8}$/.test(x.phone) && x.key);
 }
 function splitName(name) {
@@ -555,7 +557,7 @@ function splitName(name) {
 // Company 7's eSIM costs this much more at the site (its page says so: "يوجد تكلفة إضافية قدرها 5 ش على سعر الايسيم").
 // Read from the page before each eSIM order; above what was known, nothing is bought and the manager reviews it.
 const C7_ESIM_FEE = 5;
-function c7EsimFee() {
+function siteEsimFee() {
   const text = String(state.chargeHtml || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
   const m = /تكلفة إضافية قدرها\s*([0-9]+(?:\.[0-9]+)?)/.exec(text);
   return m ? Number(m[1]) : C7_ESIM_FEE;
@@ -581,6 +583,18 @@ async function qrImage(url) {
   }
 }
 
+// The eSIM's QR in whatever form the site gives it: an image link (its storage, or a path on the site such as
+// qr-codes/branded/...), an image itself (data: or raw base64 PNG), or the LPA code (its QR drawn here).
+async function qrFrom(v) {
+  const s = String(v || '').trim();
+  if (!s) return { qr: '', esimCode: '' };
+  if (LPA.test(s)) return { qr: qr.dataUrl(s), esimCode: s };
+  if (/^data:image\/(?:png|jpe?g);base64,/i.test(s)) return { qr: s.length <= QR_MAX_BYTES * 1.4 ? s : '', esimCode: '' };
+  if (/^iVBOR[A-Za-z0-9+/=]+$/.test(s)) return { qr: s.length <= QR_MAX_BYTES * 1.4 ? `data:image/png;base64,${s}` : '', esimCode: '' };
+  const url = /^https?:\/\//i.test(s) ? s : `${BASE()}/${s.replace(/^\/+/, '')}`;
+  return { qr: await qrImage(url), esimCode: '' };
+}
+
 // A new line (company 7) on the customer's SIM card, or as an eSIM (esim: no SIM given; the site gives an empty eSIM
 // for the number picked, and its QR code with the order), as the site's own page sends it.
 async function subscribeBill({ packageId, phone = '', simNumber = '', customerName = '', price = 0, esim = false }, creds) {
@@ -592,11 +606,11 @@ async function subscribeBill({ packageId, phone = '', simNumber = '', customerNa
   if (!modes.includes(esim ? 'esim' : 'sim')) {
     throw new AylolError(esim ? 'هذه الرزمة في أيلول تُفعَّل على شريحة عادية فقط، وليس eSIM' : 'هذه الرزمة في أيلول eSIM فقط — لا تُفعَّل على شريحة عادية', { refused: true });
   }
-  if (SIM_FIRST_COMPANIES.has(Number(info.company_id)) && !BILL_OTHER_CATEGORIES.has(Number(info.category_id))) return subscribeSky({ info, packageId, phone, sim, first, last, price }, creds);
+  if (SIM_FIRST_COMPANIES.has(Number(info.company_id)) && !BILL_OTHER_CATEGORIES.has(Number(info.category_id))) return subscribeSky({ info, packageId, phone, sim, first, last, price, esim }, creds);
   if (!BILL_COMPANIES.has(Number(info.company_id)) || BILL_OTHER_CATEGORIES.has(Number(info.category_id))) throw new AylolError('هذه الرزمة في أيلول تُفعَّل يدوياً حالياً', { refused: true });
   const listed = Number(info.price) || 0;
   if (price && listed > Number(price) + 0.01) throw new AylolError(`سعر أيلول الآن ${listed} ₪ وهو أعلى من المعتمد ${price} ₪`, { refused: true });
-  const fee = esim ? c7EsimFee() : 0;
+  const fee = esim ? siteEsimFee() : 0;
   if (fee > C7_ESIM_FEE) throw new AylolError(`رسوم eSIM في أيلول صارت ${fee} ₪ (كانت ${C7_ESIM_FEE} ₪) — راجع السعر قبل التنفيذ`, { refused: true });
   const numbers = await billNumbers(packageId, creds, '', esim);
   const pick = phone ? numbers.find((n) => n.phone === phone) : numbers[0];
@@ -644,30 +658,55 @@ async function subscribeBill({ packageId, phone = '', simNumber = '', customerNa
 
 // Company 5 (Sky5G), as its page sends it (read from the site): the numbers offered for this SIM, one picked (with its
 // key), the package's period (its one-month option, or its own), the names, sent as JSON.
-async function subscribeSky({ info, packageId, phone, sim, first, last, price }, creds) {
+// As an eSIM (esim): one of the site's eSIMs for the package, each with its number, its SIM number, its key and at times
+// its own period; the QR comes back with the order, or is asked for it as the page asks (company5/qr-code).
+async function subscribeSky({ info, packageId, phone, sim, first, last, price, esim = false }, creds) {
   const listed = Number(info.price) || 0;
   if (price && listed > Number(price) + 0.01) throw new AylolError(`سعر أيلول الآن ${listed} ₪ وهو أعلى من المعتمد ${price} ₪`, { refused: true });
-  const numbers = await billNumbers(packageId, creds, sim);
+  const fee = esim ? siteEsimFee() : 0;
+  if (fee > C7_ESIM_FEE) throw new AylolError(`رسوم eSIM في أيلول صارت ${fee} ₪ (كانت ${C7_ESIM_FEE} ₪) — راجع السعر قبل التنفيذ`, { refused: true });
+  const numbers = (await billNumbers(packageId, creds, esim ? '' : sim, esim)).filter((n) => !esim || /^\d{18,22}$/.test(n.sim));
   const pick = phone ? numbers.find((n) => n.phone === phone) : numbers[0];
-  if (!pick) throw new AylolError(phone ? `الرقم ${phone} لم يعد متاحاً لهذه الشريحة في أيلول` : 'لا أرقام متاحة في أيلول لهذه الشريحة الآن', { refused: true });
+  if (!pick) throw new AylolError(phone ? `الرقم ${phone} لم يعد متاحاً ${esim ? 'كـ eSIM' : 'لهذه الشريحة'} في أيلول` : `لا أرقام متاحة في أيلول ${esim ? 'كـ eSIM لهذه الرزمة' : 'لهذه الشريحة'} الآن`, { refused: true });
+  if (esim) sim = pick.sim;
   const months = Number(info.month_number) > 0 ? Number(info.month_number) : 1;
   const options = Array.isArray(info.duration_options) ? info.duration_options : [];
-  const period = String(info.period_id || options.find((o) => Number(o.value) === months)?.id || options[0]?.id || '');
+  const period = String((esim && pick.period && pick.period !== '0' ? pick.period : '') || info.period_id || options.find((o) => Number(o.value) === months)?.id || options[0]?.id || '');
   if (!period || period === '0') throw new AylolError('أيلول: الرزمة بلا مدة محددة الآن — حاول بعد قليل', { refused: true });
   const body = {
     _token: state.csrf, action: 'subscription', package_id: String(packageId), company_id: String(info.company_id), subscriber_id: pick.key,
     first_name: first, last_name: last, phone: pick.phone, company9_number_id: '', sim_number: sim, sub_sim_select: sim,
-    customer_price: String(listed), price: String(listed), period_id: period, duration: String(months), block_shipping_for_other_agents: '0', esim: 0, is_esim: 0,
+    customer_price: String(listed), price: String(listed), period_id: period, duration: String(months), block_shipping_for_other_agents: '0', esim: esim ? 1 : 0, is_esim: esim ? 1 : 0,
   };
-  const raw = await ajax('/dashboard/charge-system/subscribe', { extra: ['-H', 'Content-Type: application/json', '-H', 'Accept: application/json'], body: JSON.stringify(body) });
+  const JSON_H = ['-H', 'Content-Type: application/json', '-H', 'Accept: application/json'];
+  const raw = await ajax('/dashboard/charge-system/subscribe', { extra: JSON_H, body: JSON.stringify(body) });
   const res = parseJson(raw);
   if (!res) throw new AylolError(`أيلول: رد غير مفهوم (${raw.slice(0, 120)})`);
   if (!res.success) throw new AylolError(res.message || 'أيلول رفض تفعيل الخط', { refused: true });
   const d = res.data || {};
-  return {
+  const out = {
     ok: true, message: res.message || 'تم إنشاء الخط الجديد', phoneNumber: String(d.mobile_number || d.phone || pick.phone).replace(/\D/g, ''),
-    simNumber: String(d.sim_number || sim), subscriptionId: d.subscription_id || '', status: d.status || '', price: listed,
+    simNumber: String(d.sim_number || sim), subscriptionId: d.subscription_id || '', status: d.status || '', price: listed + fee,
   };
+  if (esim) {
+    let given = d.qr_file || d.esim_qr || d.qr_payload || '';
+    if (!given) {
+      try {
+        const q = parseJson(await ajax('/dashboard/subscriptions/company5/qr-code', { extra: JSON_H,
+          body: JSON.stringify({ company_id: Number(info.company_id) || 5, package: String(packageId), iccid: String(out.simNumber), subscription_key: pick.key }) }));
+        const row = (q && q.success && Array.isArray(q.data) && q.data[0]) || {};
+        given = row.qr_file || row.qrFile || row.esim_qr || '';
+      } catch (e) {
+        console.error('aylol qr', e.message);
+      }
+    }
+    const got = await qrFrom(given);
+    out.isEsim = true;
+    out.qr = got.qr;
+    out.esimCode = got.esimCode || esimCodeAndQr(d, res).esimCode;
+    if (!out.qr) out.message = `${out.message} — ${given ? `رمز QR في أيلول: ${/^(?:https?:|\/|qr-codes)/i.test(String(given)) ? given : 'بصيغة غير معروفة'}` : 'أيلول لم يُرجع رمز QR بعد'}`;
+  }
+  return out;
 }
 
 async function executeOrder({ ref, phoneNumber = '', price = 0, simNumber = '', useEsim = false, retrieveNewNumber = false, note = '', customerName = '' }, creds) {

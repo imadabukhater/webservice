@@ -16,7 +16,7 @@ const { decodeQrDataUrl } = require('./qr-decode');
 const SEED = 'abcdef0123456789abcdef0123456789';
 const STOCK = { id: 900, phone: '0531112222', sim_number: '8997210000000000900', qr_code: 'LPA:1$smdp.hot.example$STOCK-SECRET' };
 const STOCK2 = { id: 901, phone: '0532223333', sim_number: '8997210000000000901', qr_code: 'LPA:1$smdp.hot.example$STOCK-901' };
-const site = { signedIn: new Set(), badSignatures: 0, purchases: [], subscribes: [], logins: 0, cardPrice: 47.5, cardListed: true, hotEsim: false, emptySims: [] };
+const site = { signedIn: new Set(), badSignatures: 0, purchases: [], subscribes: [], logins: 0, cardPrice: 47.5, cardListed: true, hotEsim: false, emptySims: [], skyQr: [] };
 // The QR code image of an eSIM, as the site's storage serves it (a real PNG: one pixel).
 const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=', 'base64');
 
@@ -37,7 +37,7 @@ const server = http.createServer((req, res) => {
       res.writeHead(302, { Location: '/dashboard/charge-system' });
       return res.end();
     }
-    if (u.pathname.startsWith('/qr/')) { res.writeHead(200, { 'Content-Type': 'image/png' }); return res.end(PNG); }
+    if (u.pathname.startsWith('/qr/') || u.pathname.startsWith('/qr-codes/branded/')) { res.writeHead(200, { 'Content-Type': 'image/png' }); return res.end(PNG); }
     if (!site.signedIn.has(sid)) { res.writeHead(302, { Location: '/login' }); return res.end(); }
     if (u.pathname === '/dashboard/charge-system') {
       return html(`<html><head><meta name="csrf-token" content="CSRF-APP"></head><body>رصيدك: 412.50 ₪<script>window.cfg = { seed: "${SEED}" };</script></body></html>`);
@@ -88,7 +88,11 @@ const server = http.createServer((req, res) => {
     if (u.pathname === '/dashboard/charge-system/available-numbers' && req.method === 'POST') {
       const f = new URLSearchParams(body);
       site.numberLookups = (site.numberLookups || 0) + 1;
-      // Company 5: the numbers offered for the SIM given.
+      // Company 5: the numbers offered for the SIM given; as eSIMs, the site's eSIMs (each with its SIM number and key).
+      if (f.get('package_id') === '88' && f.get('is_esim') === '1' && f.get('sim_type') === 'esim') {
+        return json({ success: true, data: [{ id: 7852297, number: '0555000780', phone: '0555000780', phone_number: '0555000780', sim_number: '8997250000000000121', selection_key: '7852297',
+          subscription_key: '7852297', is_esim: 'true', status: 'available', package_id: '88', duration_key: '10' }] });
+      }
       if (f.get('package_id') === '88') {
         if (f.get('type') !== 'sim_number' || !/^\d{18,22}$/.test(f.get('sim_number') || '')) return json({ success: true, data: [{ id: 1, number: '0500000001', selection_key: '1', sim_number: '8997250408008240211' }] });
         return json({ success: true, data: [{ id: 760026, number: '0555037832', phone: '0555037832', selection_key: '760026', sim_number: f.get('sim_number'), status: 'available', package_id: 88 }] });
@@ -104,13 +108,18 @@ const server = http.createServer((req, res) => {
         { id: 'k-2', number: '0512000002', phone: '0512000002', selection_key: 'k-2', status: 'available', package_id: 77 },
         { id: 'k-3', number: '0512000003', phone: '0512000003', selection_key: 'k-3', status: 'available', package_id: 77 }] });
     }
+    if (u.pathname === '/dashboard/subscriptions/company5/qr-code' && req.method === 'POST') {
+      const b = JSON.parse(body);
+      site.skyQr.push(b);
+      return json({ success: true, data: [{ qr_file: `qr-codes/branded/${b.iccid}.png` }] });
+    }
     if (u.pathname === '/dashboard/charge-system/subscribe' && req.method === 'POST') {
       const f = String(req.headers['content-type'] || '').includes('application/json') ? { ...JSON.parse(body), json: true } : Object.fromEntries(new URLSearchParams(body));
       site.subscribes.push(f);
       if (f.action === 'subscription') {
-        const isEsim = f.esim === 'on';
+        const isEsim = f.esim === 'on' || f.esim === 1;
         return json({ success: true, message: 'تم إنشاء الخط الجديد بنجاح', data: { subscription_id: 33832, status: 'active', mobile_number: f.phone, phone: f.phone, sim_number: f.sim_number,
-          esim_qr: isEsim ? f.company7_esim_image_url : null, is_esim: isEsim, company_id: 7 } });
+          esim_qr: isEsim && f.company7_esim_image_url ? f.company7_esim_image_url : null, is_esim: isEsim, company_id: Number(f.company_id) } });
       }
       return json({ success: true, message: 'تم الشحن' });
     }
@@ -405,7 +414,25 @@ test('Aylol lines in the shop: on the customer SIM or as an eSIM with its QR, eS
   assert.equal(wrong.ok, false);
   assert.deepEqual(wrong.line_types, ['esim']);
 
+  // Pelephone (company 5, Sky5G) as an eSIM: one of the site's eSIMs, sent as its page sends it (JSON, esim 1, the
+  // eSIM's own SIM number, key and period); the QR asked as the page asks it, and kept as an image.
+  const pelePkg = (await ok(call(admin, 'GET', '/api/catalog'))).packages.find((p) => p.supplier === 'ay' && p.cost === 30);
+  const peleShop = (await ok(call(null, 'GET', '/api/shop'))).packages.find((p) => p.id === pelePkg.id);
+  assert.deepEqual(peleShop.lineModes, ['sim', 'esim']);
+  const po = await ok(call(null, 'POST', '/api/shop/orders', { packageId: pelePkg.id, kind: 'new', lineEsim: true, customerName: 'Rana Saleh' }));
+  const prow = dbq('SELECT * FROM shop_orders WHERE code = ?').get(po.code);
+  assert.deepEqual([prow.esim, prow.sim, prow.number, prow.amount], [1, '', '0555000780', 45 + fee]);
+  dbq(`INSERT INTO payment_mails (uid_validity, uid, message_id, trusted, from_addr, subject, received_at, amount, reference, sender_phone, sender_name, body, created_at)
+       VALUES (1, 8004, '<pelesim@jp>', 1, 'noreply@jawwalpay.ps', 'Jawwal Pay', ?, ?, 'REF7002', '', '', 'incoming', ?)`).run(Date.now(), 45 + fee, Date.now());
+  await ok(call(null, 'POST', `/api/shop/orders/${po.code}/proof`, { payReference: 'REF7002' }));
+  const skySub = await until(() => site.subscribes.find((x) => x.json && x.esim === 1));
+  assert.deepEqual([skySub.package_id, skySub.company_id, skySub.phone, skySub.subscriber_id, skySub.sim_number, skySub.sub_sim_select, skySub.period_id, skySub.is_esim, skySub.first_name, skySub.last_name],
+    ['88', '5', '0555000780', '7852297', '8997250000000000121', '8997250000000000121', '10', 1, 'Rana', 'Saleh']);
+  const pdone = await until(async () => { const v = await ok(call(null, 'GET', `/api/shop/orders/${po.code}`)); return v.stage === 'done' && v; });
+  assert.deepEqual(site.skyQr, [{ company_id: 5, package: '88', iccid: '8997250000000000121', subscription_key: '7852297' }]);
+  assert.equal(pdone.esimQr, `data:image/png;base64,${PNG.toString('base64')}`);
+
   // The customer's new number never on curl's command line (the eSIM is asked with it in the request's body).
   const argv = fs.readFileSync(path.join(dataDir, 'argv.log'), 'utf8');
-  for (const secret of ['0513000001', '0513000002', 'Haddad', 'Nasser']) assert.equal(argv.includes(secret), false, `${secret} on the command line`);
+  for (const secret of ['0513000001', '0513000002', '0555000780', 'Haddad', 'Nasser', 'Rana']) assert.equal(argv.includes(secret), false, `${secret} on the command line`);
 });

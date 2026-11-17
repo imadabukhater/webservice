@@ -94,7 +94,7 @@ function servedEsim(ref, number) {
 async function billFreeNumbers(ref, sim = '', esim = false) {
   if (!getSettings().aylolConfigured) fail(503, 'الأرقام غير متاحة الآن. تواصل مع المدير.');
   const row = q('SELECT supplier_company FROM packages WHERE art_card_id = ?').get(ref);
-  if (!(sim ? ay.billShop(ref, row?.supplier_company) : ay.billAuto(ref, row?.supplier_company))) fail(404, 'رقم هذه الرزمة يختاره المدير عند التنفيذ');
+  if (!(sim || esim ? ay.billShop(ref, row?.supplier_company) : ay.billAuto(ref, row?.supplier_company))) fail(404, 'رقم هذه الرزمة يختاره المدير عند التنفيذ');
   let list;
   try {
     list = await ay.billNumbers(ref.split(':')[3], aylolCredentials(), sim, esim);
