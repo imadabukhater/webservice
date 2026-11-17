@@ -60,8 +60,23 @@ function waHtml(w) {
             <span class="hint">بدونه يرد البوت بالقوائم والأوامر فقط. معه يفهم الأسئلة الحرة ويرد من باقاتك وأسعارك. يُرسَل نص الرسالة إلى الخدمة المختارة لفهمها، ولا يُنفَّذ شراء إلا بالخطوات والدفع.</span></div>
           <div class="field"><label for="wa-ai">مفتاح الخدمة (API key)</label><input class="input ltr" id="wa-ai" name="aiKey" type="password" autocomplete="new-password" placeholder="${c.hasAiKey ? 'محفوظ — اتركه فارغاً للإبقاء' : 'من Google AI Studio أو console.groq.com'}">
             <span class="hint">مع Google Cloud (Vertex AI) لا حاجة لمفتاح: السيرفر يستعمل هويته في مشروعك، والتكلفة على حساب الفوترة.</span></div>
-          <div class="field"><label for="wa-model">النموذج</label><input class="input ltr" id="wa-model" name="aiModel" value="${esc(c.aiModel || '')}" placeholder="gemini-2.5-flash أو openai/gpt-oss-20b">
-            <span class="hint">اتركه فارغاً للنموذج الافتراضي للخدمة المختارة.</span></div>
+          <div class="field"><label for="wa-model">النموذج</label>
+            <select class="input ltr" id="wa-model" name="aiModel">
+              ${(c.aiModels || []).map((m) => `<option value="${esc(m.id)}" ${m.id === c.aiModel ? 'selected' : ''}>${esc(m.label)} · ${m.in ? `$${m.in} / $${m.out} لكل مليون` : 'مجاني'} (${m.providers.includes('groq') ? 'Groq' : 'Gemini / Google Cloud'})</option>`).join('')}
+              ${(c.aiModels || []).some((m) => m.id === c.aiModel) ? '' : `<option value="${esc(c.aiModel || '')}" selected>${esc(c.aiModel || '')} (غير مدرج: يُحسب بأغلى سعر)</option>`}
+            </select>
+            <span class="hint">اختر نموذجاً من الخدمة المختارة فوق. الأسعار أسعار القائمة لكل مليون رمز (إدخال / إخراج)، ويُحسب بها صرف اليوم.</span></div>
+          <div class="row2 stack-xs">
+            <div class="field"><label for="wa-daily">حد الصرف اليومي ($)</label><input class="input ltr" id="wa-daily" name="aiDailyUsd" type="number" min="0" max="100" step="0.05" inputmode="decimal" value="${c.aiDailyUsd ?? 0.6}">
+              <span class="hint">لما يوصله، يوقف المساعد لآخر اليوم (بتوقيت فلسطين) ويكمل البوت بالقوائم، ويوصلك تنبيه. 0 = المساعد موقوف.</span></div>
+            <div class="field"><label>صرف اليوم</label>
+              <div class="input ltr" style="display:flex;align-items:center">${c.aiSpend ? `$${Number(c.aiSpend.usd).toFixed(3)} من $${c.aiDailyUsd} · ${c.aiSpend.calls} سؤال` : '—'}</div>
+              <span class="hint">بسعر ${c.aiPrice ? `$${c.aiPrice.in} / $${c.aiPrice.out}` : '—'} لكل مليون رمز. رقم تقريبي من النظام؛ الفاتورة الأكيدة في Google Cloud.</span></div>
+          </div>
+          <div class="row2 stack-xs">
+            <div class="field"><label for="wa-pin">سعرك للإدخال ($ لكل مليون) <span class="opt">(اختياري)</span></label><input class="input ltr" id="wa-pin" name="aiPriceIn" type="number" min="0" step="0.01" inputmode="decimal" value="${c.aiPriceIn ?? ''}" placeholder="من القائمة"></div>
+            <div class="field"><label for="wa-pout">سعرك للإخراج ($ لكل مليون) <span class="opt">(اختياري)</span></label><input class="input ltr" id="wa-pout" name="aiPriceOut" type="number" min="0" step="0.01" inputmode="decimal" value="${c.aiPriceOut ?? ''}" placeholder="من القائمة"></div>
+          </div>
           <div class="field"><label for="wa-knowledge">معلومات يعرفها المساعد</label>
             <textarea class="input" id="wa-knowledge" name="knowledge" rows="4" maxlength="2000" placeholder="مثل: الدعم من 9 صباحاً حتى 10 مساءً. شريحة eSIM تعمل على الأجهزة الحديثة فقط.">${esc(c.knowledge || '')}</textarea>
             <span class="hint">يعتمد عليها في ردوده. تستطيع أيضاً الإضافة من رقم المدير على واتساب: «!تعلم …».</span></div>
@@ -250,6 +265,7 @@ export default {
           admins: field(form, 'admins'), shopUrl: field(form, 'shopUrl'), welcome: field(form, 'welcome'),
           aiKey: form.elements.aiKey.value, aiKeyClear: !!form.elements.aiKeyClear?.checked, aiModel: field(form, 'aiModel'),
           aiProvider: form.elements.aiProvider.value, knowledge: form.elements.knowledge.value,
+          aiDailyUsd: field(form, 'aiDailyUsd'), aiPriceIn: field(form, 'aiPriceIn'), aiPriceOut: field(form, 'aiPriceOut'),
         });
         form.elements.aiKey.value = '';
         form.elements.aiModel.value = V.wa?.config?.aiModel || '';

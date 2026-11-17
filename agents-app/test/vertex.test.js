@@ -26,7 +26,8 @@ const google = http.createServer((req, res) => {
     seen.calls.push({ url: req.url, auth: req.headers.authorization, body: body ? JSON.parse(body) : null });
     if (req.headers.authorization !== 'Bearer tok-1') { res.writeHead(401, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ error: { message: 'bad token' } })); }
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ candidates: [{ content: { parts: [{ text: JSON.stringify({ intro: 'أهلين فيك' }) }] } }] }));
+    res.end(JSON.stringify({ candidates: [{ content: { parts: [{ text: JSON.stringify({ intro: 'أهلين فيك' }) }] } }],
+      usageMetadata: { promptTokenCount: 1000, candidatesTokenCount: 100, thoughtsTokenCount: 50 } }));
   });
 });
 
@@ -43,11 +44,11 @@ test('Vertex AI: no key, the server\'s token and project; the instructions apart
   const saved = wa.saveConfig({ aiProvider: 'vertex', aiModel: '' });
   assert.equal(saved.aiProvider, 'vertex');
   assert.equal(saved.hasAiKey, false, 'no key is needed or kept');
-  assert.equal(saved.aiModel, 'gemini-2.5-flash');
+  assert.equal(saved.aiModel, 'gemini-3.1-flash-lite');
   const v = await wa._test.askModel('تعليمات', 'بيانات');
   assert.deepEqual(v, { intro: 'أهلين فيك' });
   const call = seen.calls.at(-1);
-  assert.equal(call.url, '/v1/projects/agents-portal-test/locations/global/publishers/google/models/gemini-2.5-flash:generateContent');
+  assert.equal(call.url, '/v1/projects/agents-portal-test/locations/global/publishers/google/models/gemini-3.1-flash-lite:generateContent');
   assert.equal(call.auth, 'Bearer tok-1');
   assert.equal(call.body.systemInstruction.parts[0].text, 'تعليمات');
   assert.equal(call.body.contents[0].parts[0].text, 'بيانات');
@@ -60,6 +61,43 @@ test('Vertex AI: no key, the server\'s token and project; the instructions apart
   assert.match(wa.status().aiError, /Vertex AI 401/);
   assert.equal(wa._test.vertexAuth.token, '');
   // A model of another service left over falls back to Gemini's.
-  assert.equal(wa.saveConfig({ aiModel: 'openai/gpt-oss-20b' }).aiModel, 'gemini-2.5-flash');
+  assert.equal(wa.saveConfig({ aiModel: 'openai/gpt-oss-20b' }).aiModel, 'gemini-3.1-flash-lite');
   assert.equal(wa.saveConfig({ aiModel: 'gemini-3.8-flash' }).aiModel, 'gemini-3.8-flash');
 });
+
+test('the spend of the day is counted from what each answer used; the assistant stops at the manager limit', async () => {
+  const wa = require('../src/whatsapp');
+  const { q } = require('../src/db');
+  q("DELETE FROM settings WHERE key = 'wa_ai_spend'").run();
+  wa.saveConfig({ aiProvider: 'vertex', aiModel: 'gemini-3.1-flash-lite', aiDailyUsd: 0.0015, aiPriceIn: '', aiPriceOut: '' });
+  vertexReset(wa);
+  // 1000 tokens in at $0.25, 150 out (thinking included) at $1.50 a million: $0.000475 a question.
+  assert.ok(await wa._test.askModel('تعليمات', 'بيانات'));
+  assert.ok(await wa._test.askModel('تعليمات', 'بيانات'));
+  const s = wa._test.spendToday();
+  assert.deepEqual([s.calls, s.tokensIn, s.tokensOut, s.usd], [2, 2000, 300, 0.00095]);
+  // The next one would pass $0.0015 (counted before it is asked, at a long answer): not asked; the manager is told once.
+  const before = seen.calls.length;
+  assert.equal(await wa._test.askModel('تعليمات', 'بيانات'), null);
+  assert.equal(await wa._test.askModel('تعليمات', 'بيانات'), null);
+  assert.equal(seen.calls.length, before, 'nothing sent past the limit');
+  assert.match(wa.status().aiError, /حد الصرف اليومي/);
+  assert.equal(q("SELECT COUNT(*) AS n FROM notifications WHERE title = 'حد صرف المساعد الذكي'").get().n, 1);
+  // What the settings screen shows.
+  const view = wa.configView();
+  assert.equal(view.aiSpend.calls, 2);
+  assert.ok(view.aiModels.some((m) => m.id === 'gemini-3.1-flash-lite' && m.in === 0.25));
+  // A higher limit lets it go on; 0 pauses it.
+  wa.saveConfig({ aiDailyUsd: 0.6 });
+  assert.ok(await wa._test.askModel('تعليمات', 'بيانات'));
+  wa.saveConfig({ aiDailyUsd: 0 });
+  assert.equal(await wa._test.askModel('تعليمات', 'بيانات'), null);
+  assert.match(wa.status().aiError, /موقوف/);
+  // A model not on the list is counted at the dearest price; the manager's own prices win.
+  wa.saveConfig({ aiDailyUsd: 0.6, aiModel: 'gemini-9-experimental' });
+  assert.deepEqual(wa._test.priceOf(), { in: 1.5, out: 9, listed: false });
+  wa.saveConfig({ aiPriceIn: 0.1, aiPriceOut: 0.4 });
+  assert.deepEqual(wa._test.priceOf(), { in: 0.1, out: 0.4, listed: false });
+  assert.throws(() => wa.saveConfig({ aiDailyUsd: -1 }), /حد الصرف اليومي/);
+});
+function vertexReset(wa) { wa._test.vertexAuth.token = ''; seen.tokens = 0; }

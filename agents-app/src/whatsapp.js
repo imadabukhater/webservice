@@ -23,9 +23,19 @@ const get = (k, d = '') => q('SELECT value FROM settings WHERE key = ?').get(k)?
 const phoneList = (v) => [...new Set(String(v || '').split(/[\s,،;]+/).map(normalizePhone).filter((p) => /^\d{9,13}$/.test(p)))];
 
 // A model of the other service (left over after switching) falls back to this service's default.
+// The models the manager picks from, with list prices in $ per million tokens (input / output; thinking counts as
+// output). Prices change: the manager can set the ones they pay, and a model not listed is counted at the dearest.
+const AI_MODELS = [
+  { id: 'gemini-3.1-flash-lite', providers: ['vertex', 'gemini'], in: 0.25, out: 1.5, label: 'Gemini 3.1 Flash-Lite — الأرخص' },
+  { id: 'gemini-3.5-flash-lite', providers: ['vertex', 'gemini'], in: 0.3, out: 2.5, label: 'Gemini 3.5 Flash-Lite' },
+  { id: 'gemini-3-flash', providers: ['vertex', 'gemini'], in: 0.5, out: 3, label: 'Gemini 3 Flash' },
+  { id: 'gemini-3.5-flash', providers: ['vertex', 'gemini'], in: 1.5, out: 9, label: 'Gemini 3.5 Flash — الأقوى والأغلى' },
+  { id: 'openai/gpt-oss-20b', providers: ['groq'], in: 0, out: 0, label: 'GPT OSS 20B — مجاني على Groq (حتى 1000 سؤال باليوم)' },
+];
+const UNLISTED_PRICE = { in: 1.5, out: 9 };
 function modelFor(provider, model) {
   if (provider === 'groq') return model && !/^gemini/i.test(model) ? model : 'openai/gpt-oss-20b';
-  return model && /^gemini/i.test(model) ? model : 'gemini-2.5-flash';
+  return model && /^gemini/i.test(model) ? model : 'gemini-3.1-flash-lite';
 }
 const PROVIDERS = ['gemini', 'groq', 'vertex'];
 const providerOf = (v) => (PROVIDERS.includes(v) ? v : 'gemini');
@@ -41,6 +51,10 @@ function config() {
     aiProvider: providerOf(get('wa_ai_provider')),
     aiModel: modelFor(providerOf(get('wa_ai_provider')), get('wa_ai_model')),
     welcome: get('wa_welcome'),
+    // At most this much spent on the assistant a day ($); 0 pauses it. Prices: the manager's, else the model's list price.
+    aiDailyUsd: get('wa_ai_daily_usd') === '' ? 0.6 : Math.max(0, Number(get('wa_ai_daily_usd')) || 0),
+    aiPriceIn: get('wa_ai_price_in') === '' ? null : Number(get('wa_ai_price_in')),
+    aiPriceOut: get('wa_ai_price_out') === '' ? null : Number(get('wa_ai_price_out')),
     // What the manager tells the assistant (opening hours, delivery, policies…): part of every question it answers.
     knowledge: get('wa_knowledge'),
   };
@@ -49,8 +63,10 @@ function config() {
 // What the settings screen sees: never the AI key itself.
 function configView() {
   const c = config();
+  const price = priceOf(c);
   return { enabled: c.enabled, customers: c.customers, admins: c.admins.join(', '), shopUrl: c.shopUrl, hasAiKey: !!c.aiKey, aiProvider: c.aiProvider, aiModel: c.aiModel,
-    welcome: c.welcome, knowledge: c.knowledge };
+    welcome: c.welcome, knowledge: c.knowledge, aiDailyUsd: c.aiDailyUsd, aiPriceIn: c.aiPriceIn, aiPriceOut: c.aiPriceOut,
+    aiPrice: price, aiModels: AI_MODELS, aiSpend: spendToday() };
 }
 
 function saveConfig(body = {}) {
@@ -69,6 +85,18 @@ function saveConfig(body = {}) {
   if (body.aiModel !== undefined) setSetting('wa_ai_model', /^[\w./:-]{3,80}$/.test(String(body.aiModel)) ? String(body.aiModel) : '');
   if (body.welcome !== undefined) setSetting('wa_welcome', str(body.welcome, 300));
   if (body.knowledge !== undefined) setSetting('wa_knowledge', str(body.knowledge, 2000));
+  const money = (v, label, max) => {
+    if (v === undefined) return undefined;
+    if (v === '' || v === null) return '';
+    const n = Number(v);
+    if (!Number.isFinite(n) || n < 0 || n > max) fail(400, `${label}: رقم من 0 إلى ${max}`);
+    return String(Math.round(n * 10000) / 10000);
+  };
+  for (const [field, key, label, max] of [['aiDailyUsd', 'wa_ai_daily_usd', 'حد الصرف اليومي', 100],
+    ['aiPriceIn', 'wa_ai_price_in', 'سعر الإدخال', 100], ['aiPriceOut', 'wa_ai_price_out', 'سعر الإخراج', 100]]) {
+    const v = money(body[field], label, max);
+    if (v !== undefined) setSetting(key, v);
+  }
   return configView();
 }
 
@@ -830,6 +858,49 @@ function aiAllowed(jid) {
   aiCalls.push(Date.now());
   return true;
 }
+// ---------- what the assistant costs: counted per day (Palestine's day), stopped at the manager's limit ----------
+const today = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Gaza', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+function priceOf(c = config()) {
+  const listed = AI_MODELS.find((m) => m.id === c.aiModel && m.providers.includes(c.aiProvider));
+  const base = listed || UNLISTED_PRICE;
+  return { in: c.aiPriceIn ?? base.in, out: c.aiPriceOut ?? base.out, listed: !!listed };
+}
+function spendToday() {
+  let s = null;
+  try { s = JSON.parse(get('wa_ai_spend') || 'null'); } catch {}
+  return s && s.day === today() ? s : { day: today(), usd: 0, calls: 0, tokensIn: 0, tokensOut: 0, stoppedAt: 0 };
+}
+const costOf = (tokensIn, tokensOut, p) => (tokensIn * p.in + tokensOut * p.out) / 1e6;
+// Before a question: would it pass the day's limit? (its size from the text, ~2.5 characters a token, a short answer)
+function withinBudget(system, user) {
+  const c = config();
+  const s = spendToday();
+  const est = costOf(Math.ceil((system.length + user.length) / 2.5), 400, priceOf(c));
+  if (s.usd + est <= c.aiDailyUsd) return true;
+  state.aiError = c.aiDailyUsd > 0 ? `وصل حد الصرف اليومي (${c.aiDailyUsd}$). يرجع المساعد بكرة، والبوت يرد بالقوائم لحد ذلك.` : 'المساعد موقوف: حد الصرف اليومي 0$.';
+  if (!s.stoppedAt && c.aiDailyUsd > 0) {
+    s.stoppedAt = Date.now();
+    setSetting('wa_ai_spend', JSON.stringify(s));
+    const text = `المساعد الذكي وصل حد الصرف اليومي: ${s.usd.toFixed(3)}$ من ${c.aiDailyUsd}$ (${s.calls} سؤال). يرجع بكرة، والبوت يكمل بالقوائم. تغيّر الحد من الإعدادات ← واتساب.`;
+    try { require('./domain').notify({ role: 'admin', kind: 'task', title: 'حد صرف المساعد الذكي', body: text, link: '#/settings' }); } catch {}
+    tellAdmins(`⚠️ ${text}`).catch(() => {});
+  }
+  return false;
+}
+function spent(usage, system, user, answer) {
+  const p = priceOf();
+  // Gemini / Vertex: usageMetadata (thinking billed as output); Groq: usage. Missing: counted from the text.
+  const u = usage || {};
+  const tokensIn = Number(u.promptTokenCount ?? u.prompt_tokens) || Math.ceil((system.length + user.length) / 2.5);
+  const tokensOut = (Number(u.candidatesTokenCount ?? u.completion_tokens) || Math.ceil(String(answer || '').length / 2.5)) + (Number(u.thoughtsTokenCount) || 0);
+  const s = spendToday();
+  s.usd = Math.round((s.usd + costOf(tokensIn, tokensOut, p)) * 1e6) / 1e6;
+  s.calls += 1;
+  s.tokensIn += tokensIn;
+  s.tokensOut += tokensOut;
+  setSetting('wa_ai_spend', JSON.stringify(s));
+}
+
 // The server's Google identity (the Compute Engine metadata server): a short-lived token and the project, cached.
 const vertexAuth = { token: '', until: 0, project: '' };
 async function vertexAccess() {
@@ -859,6 +930,7 @@ async function askModel(system, user, { temperature = 0.1, timeout = 15_000 } = 
   const groq = cfg.aiProvider === 'groq';
   const vertex = cfg.aiProvider === 'vertex';
   const name = groq ? 'Groq' : vertex ? 'Vertex AI' : 'Gemini';
+  if (!withinBudget(system, user)) return null;
   try {
     // Groq: OpenAI-style chat; Gemini and Vertex AI: generateContent. All asked for JSON only; the instructions apart from the data.
     const geminiBody = JSON.stringify({ systemInstruction: { parts: [{ text: system }] }, contents: [{ role: 'user', parts: [{ text: user }] }], generationConfig: { temperature, responseMimeType: 'application/json' } });
@@ -891,6 +963,7 @@ async function askModel(system, user, { temperature = 0.1, timeout = 15_000 } = 
     const data = await res.json();
     state.aiError = '';
     const out = groq ? data?.choices?.[0]?.message?.content : data?.candidates?.[0]?.content?.parts?.[0]?.text;
+    spent(groq ? data?.usage : data?.usageMetadata, system, user, out);
     const v = JSON.parse(String(out || 'null').replace(/^```(?:json)?\s*|\s*```$/g, ''));
     return v && typeof v === 'object' ? v : null;
   } catch (e) {
@@ -1141,5 +1214,5 @@ if (linked()) setTimeout(() => start().catch((e) => console.error('whatsapp star
 
 module.exports = {
   start, logout, status, config, configView, saveConfig, sendTo, taskResolved, handle, tellAdmins,
-  _test: { askModel, vertexAuth, safeIntro, safeReply, aiCallsByChat, askedAbout, setTransport: (fn) => { transport = fn; }, setDownloader: (fn) => { downloader = fn; }, sessions, recent, norm, onRaw, jidOf, watchShop, history },
+  _test: { askModel, vertexAuth, spendToday, priceOf, safeIntro, safeReply, aiCallsByChat, askedAbout, setTransport: (fn) => { transport = fn; }, setDownloader: (fn) => { downloader = fn; }, sessions, recent, norm, onRaw, jidOf, watchShop, history },
 };
