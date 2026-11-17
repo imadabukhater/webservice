@@ -195,14 +195,18 @@ const say = async (jid, text) => {
   remember2(jid, 'model', text);
   return send(jid, { text: String(text).slice(0, 4000) });
 };
-// The last messages of each chat (30 minutes), so Gemini answers within the conversation.
+// Each chat's whole conversation, from its first message: the assistant forgets nothing said (a name, a number, the
+// package chosen). A conversation ends after 10 minutes without a message; the next one starts afresh.
+const CONVERSATION_IDLE_MS = Number(process.env.WA_CONVERSATION_IDLE_MS) || 10 * 60_000;
+const CONVERSATION_MAX = 120; // messages kept in one conversation (a very long one keeps its last ones)
 const history = new Map();
 function remember2(jid, role, text) {
   const t = Date.now();
-  const list = (history.get(jid) || []).filter((x) => t - x.at < 30 * 60_000);
-  list.push({ role, text: String(text || '').slice(0, 600), at: t });
-  history.set(jid, list.slice(-8));
-  if (history.size > 3000) for (const [k, v] of history) if (!v.some((x) => t - x.at < 30 * 60_000)) history.delete(k);
+  let list = history.get(jid) || [];
+  if (list.length && t - list.at(-1).at >= CONVERSATION_IDLE_MS) list = [];
+  list.push({ role, text: String(text || '').slice(0, 2000), at: t });
+  history.set(jid, list.slice(-CONVERSATION_MAX));
+  if (history.size > 3000) for (const [k, v] of history) if (!v.length || t - v.at(-1).at >= CONVERSATION_IDLE_MS) history.delete(k);
 }
 
 // A message to any number (the settings screen's test).
@@ -936,8 +940,9 @@ ${context}`;
 }
 
 // ---------- the assistant talks with customers; the shop (the code) answers its questions ----------
-// Gemini on the owner's Google Cloud gets every customer message, with four tools it can ask the shop: the packages and
-// prices, a new order, an order's state, a payment check. The code carries each one out with the shop's own checks and
+// Gemini on the owner's Google Cloud gets every customer message with the whole shop in front of it (companies,
+// packages, prices, eSIM fees, how to pay) and the whole conversation so far, and three tools it asks the code for:
+// a new order, an order's state, a payment check. The code carries each one out with the shop's own checks and
 // alone decides prices, orders, payments and activations; an order's details (its number, amount, how to pay, its
 // state) are written by the code under the reply, never by the model. What the model writes goes through the same
 // guard as before (no claim, no price or phone number that is not the shop's, no link); refused with nothing from the
@@ -945,13 +950,9 @@ ${context}`;
 const AGENT_STEPS = 4;
 const SVC = { esim: 'eSIM', card: 'شحن رصيد لرقم موجود', line: 'خط جديد على شريحة' };
 const AGENT_TOOLS = [{ functionDeclarations: [
-  { name: 'list_packages', description: 'الشركات والباقات وأسعارها من المتجر. بدون company: الشركات وخدماتها. مع company: باقات هالشركة.',
-    parameters: { type: 'OBJECT', properties: {
-      company: { type: 'STRING', description: 'اسم الشركة زي ما كتبه الزبون (هوت، سلكوم، بارتنر…)' },
-      service: { type: 'STRING', enum: ['esim', 'card', 'line'], description: 'esim شريحة إلكترونية، card شحن رصيد لرقم موجود، line خط جديد على شريحة' } } } },
   { name: 'create_order', description: 'يعمل طلب حقيقي بالمتجر للباقة اللي اختارها الزبون وأكدها. eSIM بدها customer_name، الشحن بدّه phone_number، الخط على شريحة بدّه sim_number و phone_number، والخط الجديد اللي رقمه من المتجر (new_number_from_shop) بدّه sim_number و customer_name (الاسم والعائلة) بس.',
     parameters: { type: 'OBJECT', properties: {
-      package_id: { type: 'INTEGER', description: 'رقم الباقة من list_packages' },
+      package_id: { type: 'INTEGER', description: 'رقم الباقة من قائمة الباقات بالتعليمات' },
       customer_name: { type: 'STRING', description: 'اسم الزبون الكامل (لشريحة eSIM)' },
       phone_number: { type: 'STRING', description: 'الرقم اللي بدّه يشحنه أو رقم الخط (05XXXXXXXX)' },
       sim_number: { type: 'STRING', description: 'رقم الشريحة ICCID (18 لـ 22 رقم) للخط على شريحة' } }, required: ['package_id'] } },
@@ -963,13 +964,33 @@ const AGENT_TOOLS = [{ functionDeclarations: [
       payer: { type: 'STRING', description: 'اسم اللي حوّل أو رقم تلفونه أو الرقم المرجعي' } }, required: ['payer'] } },
 ] }];
 
+// The whole shop, as the assistant is given it from the first message: every package on sale, with its price.
+function shopSheet(shop) {
+  const minutes = Math.max(1, Math.round(require('./shop').RESERVE_MS / 60_000));
+  const lines = [];
+  for (const c of shopCompanies(shop)) {
+    lines.push(`\n${c.name}:`);
+    for (const p of shop.packages.filter((x) => x.companyId === c.id).slice(0, 40)) {
+      const svc = serviceOf(p);
+      const fee = svc === 'esim' ? round(p.esimFee || 0) : 0;
+      const specs = [p.dataGb ? `${p.dataGb} جيجا` : '', p.minutes ? `${p.minutes} دقيقة` : '', `${p.days || 30} يوم`].filter(Boolean).join('، ');
+      const how = p.simLine ? 'خط جديد على شريحة الزبون، والرقم بيعطيه المتجر' : SVC[svc];
+      lines.push(`- #${p.id} ${p.name} (${specs}) — ${how} — ${svc === 'esim' ? `${round(p.price)} ₪ + رسوم eSIM ${fee} ₪ = ${round(p.price + fee)} ₪` : `${round(p.price)} ₪`}`);
+    }
+  }
+  return `الباقات المتوفرة هلأ بالمتجر (رقم الباقة، الاسم، الخدمة، السعر):${lines.join('\n')}
+الدفع: بجوال باي${shop.jawwalpay?.number ? ` على ${shop.jawwalpay.number}${shop.jawwalpay.name ? ` (${shop.jawwalpay.name})` : ''}` : ''} خلال ${minutes} دقايق من الطلب. التفعيل بيصير لحاله بعد ما المتجر يتأكد من التحويل، وبيوصل الزبون هون (وللـ eSIM رمز QR).`;
+}
+
 function agentSystem(shop, cfg) {
   const k = cfg.knowledge;
   return `أنت موظف مبيعات بمتجر ${shop.shopName} (شرائح eSIM، خطوط جديدة، وكروت شحن)، وبتحكي مع الزباين على واتساب.
 ${DIALECT}
+${shop.packages ? shopSheet(shop) : ''}
 كيف بتشتغل:
-- أي شي عن الشركات والباقات والأسعار خدُه من الأداة list_packages، ولا تجاوب عن باقة أو سعر من راسك.
-- لما الزبون يختار باقة ويأكدها، اسأله عن اللي ناقص (eSIM: اسمه الكامل؛ شحن رصيد: الرقم اللي بدّه يشحنه؛ خط على شريحة: رقم الشريحة ورقم الهاتف)، وبعدين اطلب create_order.
+- كل الباقات والأسعار قدامك فوق: جاوب منها بس، بأرقامها وأسعارها زي ما هي، ولا تخترع غيرها.
+- تذكّر كل شي حكاه الزبون بالمحادثة (اسمه، رقمه، رقم الشريحة، الباقة اللي اختارها) ولا تسأله عنه مرة تانية.
+- لما الزبون يختار باقة ويأكدها، اسأله عن اللي ناقص بس (eSIM: اسمه الكامل؛ شحن رصيد: الرقم اللي بدّه يشحنه؛ خط على شريحة: رقم الشريحة ورقم الهاتف؛ خط جديد رقمه من المتجر: رقم الشريحة واسمه الكامل)، وبعدين اطلب create_order.
 - لما يسأل عن طلبه أو ليش تأخر: order_status. لما يقول إنه حوّل ويعطيك اسم اللي حوّل أو رقمه أو الرقم المرجعي: submit_payment.
 - النظام بيضيف تحت ردّك لحاله تفاصيل الطلب (رقمه، المبلغ، رقم الدفع، وحالته). لا تكتبهم إنت ولا تعيدهم، ولا تحكي إنه الدفع أو التفعيل أو الطلب تم أو صار جاهز: هاد النظام بس بيقرره.
 - الدفع بجوال باي، والتفعيل بيصير لحاله بعد ما النظام يتأكد من التحويل.
@@ -980,7 +1001,8 @@ ${DIALECT}
 - لا تخترع باقة أو سعر أو موعد أو رقم هاتف أو رقم دفع، ولا تحط روابط.${k ? `\nمعلومات من المتجر (اعتمد عليها): ${k}` : ''}`;
 }
 
-// The conversation so far (30 minutes), as Gemini takes it: turns alternating customer / shop, ending with this message.
+// The whole conversation so far (until 10 minutes without a message), as Gemini takes it: turns alternating customer /
+// shop, ending with this message.
 function agentContents(jid, raw) {
   const turns = [];
   for (const m of (history.get(jid) || []).slice(0, -1)) { // the last one recorded is this message

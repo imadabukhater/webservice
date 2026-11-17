@@ -301,20 +301,20 @@ test('WhatsApp: agents sell as in the portal; customers buy in the chat, their t
   };
   const toolAnswer = (call) => call.body.contents.at(-1).parts[0].functionResponse;
 
-  // It asks the shop for the packages, and answers from them in the customer's dialect.
-  let r = await ask('شو عندكم لهوت؟', [{ call: 'list_packages', args: { company: 'هوت' } }, { text: 'أهلين فيك! عنا شحن هوت 50 ₪ وeSIM هوت 55 ₪، شو بتحب؟' }]);
+  // The whole shop is in front of it from the first message (packages, prices, eSIM fees, how to pay): it answers at once.
+  let r = await ask('شو عندكم لهوت؟', [{ text: 'أهلين فيك! عنا شحن هوت 50 ₪ وeSIM هوت 55 ₪، شو بتحب؟' }]);
   assert.match(r.got, /أهلين فيك! عنا شحن هوت 50 ₪/);
-  assert.equal(r.calls.length, 2);
+  assert.equal(r.calls.length, 1, 'one question: nothing to ask the shop for the packages');
   assert.match(r.calls[0].url, /^\/v1\/projects\/agents-portal-test\/locations\/global\/publishers\/google\/models\/gemini-3\.1-flash-lite:generateContent$/);
   assert.equal(r.calls[0].auth, 'Bearer server-token');
-  assert.deepEqual(r.calls[0].body.tools[0].functionDeclarations.map((f) => f.name).sort(), ['create_order', 'list_packages', 'order_status', 'submit_payment']);
+  assert.deepEqual(r.calls[0].body.tools[0].functionDeclarations.map((f) => f.name).sort(), ['create_order', 'order_status', 'submit_payment']);
+  const sheet = r.calls[0].body.systemInstruction.parts[0].text;
+  assert.match(sheet, new RegExp(`#${cardPkg.id} .*— 50 ₪`));
+  assert.match(sheet, new RegExp(`#${esimPkg.id} .*55 ₪ \\+ رسوم eSIM \\d+ ₪ = \\d+ ₪`));
+  assert.match(sheet, /0599000000/, 'how to pay');
   assert.match(r.calls[0].body.systemInstruction.parts[0].text, /العامية الفلسطينية/);
   assert.equal(r.calls[0].body.contents.at(-1).parts[0].text, 'شو عندكم لهوت؟', 'the customer\'s words as theirs, apart from the instructions');
   assert.equal(r.calls[0].body.systemInstruction.parts[0].text.includes('شو عندكم'), false);
-  const listed = toolAnswer(r.calls[1]);
-  assert.equal(listed.name, 'list_packages');
-  assert.ok(listed.response.packages.some((p) => p.id === cardPkg.id && p.price === 50 && p.service === 'card'), JSON.stringify(listed.response));
-  assert.ok(listed.response.packages.some((p) => p.id === esimPkg.id && p.price === 55 && p.service === 'esim'));
 
   // The customer picks one: what is missing is asked first; then the shop makes the order, and its number, amount and
   // how to pay are written under the reply by the code.
@@ -370,6 +370,16 @@ test('WhatsApp: agents sell as in the portal; customers buy in the chat, their t
   assert.match(r.got, /اختار الشركة/);
   assert.match((await ok(call(admin, 'GET', '/api/whatsapp'))).aiError, /Vertex AI 403.*Permission denied/);
   site.vertexDenied = false;
+
+  // It keeps the whole conversation, from its first message: nothing said is forgotten (here, twelve messages later).
+  r = await ask('اسمي سامي خالد ورقمي 0597771234', [{ text: 'أهلين يا سامي 👋' }]);
+  for (let i = 0; i < 11; i++) r = await ask(`سؤال رقم ${i}`, [{ text: 'تكرم' }]);
+  assert.ok(JSON.stringify(r.calls[0].body.contents).includes('اسمي سامي خالد ورقمي 0597771234'), 'the name from the start is still there');
+  // A conversation ends after 10 minutes without a message: the next one starts afresh.
+  for (const m of wa._test.history.get(C5)) m.at -= 11 * 60_000;
+  r = await ask('مرحبا من جديد', [{ text: 'أهلين فيك!' }]);
+  assert.equal(r.calls[0].body.contents.length, 1);
+  assert.equal(JSON.stringify(r.calls[0].body.contents).includes('سامي'), false);
 
   // What the manager taught it from WhatsApp goes with its instructions.
   const ADM = '970599000111@s.whatsapp.net';
