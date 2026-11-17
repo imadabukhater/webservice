@@ -134,13 +134,23 @@ function createLine(user, body) {
     if (!require('./telecom').servedEsim(tcRef.packageId, number)) fail(400, 'اختر رقم الهاتف من قائمة الأرقام المتاحة');
     tcJob = { esim: true, email: str(body.customerEmail, 120), phone: str(body.customerPhone, 20) };
   }
-  // An Aylol new subscription (an eSIM package, or a bill line) on one of the site's ready eSIM numbers: the number
-  // comes from the site's own list, never typed, and the line is carried out there automatically once sold.
-  const ayRef = kind === 'new' && /^ay:(esim|bill):/.test(pkg.art_card_id || '') ? pkg.art_card_id : '';
+  // An Aylol eSIM on one of the site's ready eSIM numbers: the number comes from the site's own list, never typed.
+  const ayRef = kind === 'new' && /^ay:esim:/.test(pkg.art_card_id || '') ? pkg.art_card_id : '';
   if (ayRef) {
-    if (!esim) fail(400, 'هذه الرزمة اشتراك جديد على eSIM برقم من المورّد: اختر eSIM');
+    if (!esim) fail(400, 'هذه الرزمة شريحة eSIM: اختر eSIM');
     if (port) fail(400, 'هذه الرزمة لا تدعم تحويل الرقم مع eSIM');
     if (!require('./aylol').servedEsim(ayRef, number)) fail(400, 'اختر رقم الهاتف من قائمة الأرقام المتاحة');
+  }
+  // An Aylol bill line: a new number on the customer's SIM card, as the site sells it. For the companies whose order is
+  // known, the number is one Aylol offered for the package, and the customer's first and family names go with it.
+  const ayBill = kind === 'new' && /^ay:bill:/.test(pkg.art_card_id || '') ? pkg.art_card_id : '';
+  if (ayBill) {
+    if (esim) fail(400, 'هذه الرزمة تُفعَّل على شريحة عادية: أدخل رقم الشريحة، بدون eSIM');
+    if (port) fail(400, 'هذه الرزمة خط جديد برقم من أيلول، ولا تدعم تحويل رقم');
+    if (require('../aylol').BILL_COMPANIES.has(Number(pkg.supplier_company))) {
+      if (str(body.customerName, 80).split(/\s+/).filter(Boolean).length < 2) fail(400, 'اكتب اسم الزبون كاملاً (الاسم والعائلة) — مطلوب لتفعيل الخط');
+      if (!require('./aylol').servedEsim(ayBill, number)) fail(400, 'اختر رقم الهاتف من قائمة الأرقام المتاحة');
+    }
   }
   if (kind === 'new' && !esim && !lyRef) {
     if (isBlank(body.sim) && !body.simId) fail(400, 'أدخل رقم الشريحة أو اخترها من المخزون');
@@ -159,7 +169,8 @@ function createLine(user, body) {
   // or through QuickLine for its packages. A QuickLine new line is never "direct": it must be activated there.
   // Anything sold on a QuickLine package (a new line, or an extension sold as a recharge) is carried out there.
   // A telecom new line is a request the manager carries out there, whoever sold it.
-  const viaQl = !!qlRef || !!lyRef || /^(ql|ly|tcn?):/.test(pkg.art_card_id || '');
+  // An Aylol bill line too: carried out at Aylol (or by the manager), never active before that, whoever sold it.
+  const viaQl = !!qlRef || !!lyRef || /^(ql|ly|tcn?):/.test(pkg.art_card_id || '') || !!ayBill;
   const direct = D.directCompany(pkg.company_id) && !port && !esim && !viaQl;
   const manual = !direct && !port && !esim && !isAdmin;
   // The eSIM's QR code is kept with the task; it is shown on the line once QuickLine has activated it.

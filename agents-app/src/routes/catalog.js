@@ -22,6 +22,8 @@ function amount(v, label) {
 // What every screen needs to sell a package. The supplier behind it (who activates it) is the manager's only, so an
 // agent gets what the selling screens need, never a name: auto (a supplier carries it out for "auto" companies),
 // pool (its number is picked from a list of free numbers) and waits (never activated directly: it waits for the supplier).
+// Aylol bill lines sold automatically: only for the site's companies whose order form is known (see aylol.js).
+const ayBillAuto = (p) => /^ay:bill:/.test(p.art_card_id || '') && require('../aylol').BILL_COMPANIES.has(Number(p.supplier_company));
 const packageAttrs = (p, admin = false) => {
   const ref = p.art_card_id || '';
   return {
@@ -31,10 +33,12 @@ const packageAttrs = (p, admin = false) => {
     oldPrice: p.old_price ? round(p.old_price) : null,
     esimEnabled: !!p.esim_enabled,
     // ownSim: the number comes with its SIM (a Layan new line), though Layan packages also support eSIM activation (lyEsim).
-    auto: !!ref, pool: /^(qln|lyn):|^ay:(esim|bill):/.test(ref), waits: /^(qln?|lyn?|tcn?|ay):/.test(ref), ownSim: /^lyn:/.test(ref),
+    auto: !!ref, pool: /^(qln|lyn):|^ay:esim:/.test(ref) || ayBillAuto(p), waits: /^(qln?|lyn?|tcn?|ay):/.test(ref), ownSim: /^lyn:/.test(ref),
+    // An Aylol bill line: a new number from Aylol's list, on the customer's SIM card (never an eSIM).
+    simOnly: /^ay:bill:/.test(ref),
     lyEsim: /^lyn:/.test(ref) || !!p.esim_enabled,
     // Sold as an eSIM only, on a number from the supplier's list (an Aylol new subscription).
-    esimOnly: /^ay:(esim|bill):/.test(ref),
+    esimOnly: /^ay:esim:/.test(ref),
     ...(admin ? { art: !!ref, ql: /^qln:/.test(ref), ...require('../quickline').supplierOfRef(ref) } : {}),
   };
 };

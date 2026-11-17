@@ -49,8 +49,10 @@ function job(taskId) {
   const line = q('SELECT number, package_id, sim, customer_name, customer_price FROM lines WHERE id = ?').get(t.line_id);
   if (!line) return null;
   const packageId = t.type === 'renew' ? JSON.parse(t.payload || '{}').packageId : line.package_id;
-  const p = q(`SELECT p.art_card_id, p.cost, p.art_price, c.activation FROM packages p JOIN companies c ON c.id = p.company_id WHERE p.id = ?`).get(packageId);
+  const p = q(`SELECT p.art_card_id, p.cost, p.art_price, p.supplier_company, c.activation FROM packages p JOIN companies c ON c.id = p.company_id WHERE p.id = ?`).get(packageId);
   if (!p || p.activation !== 'auto') return null;
+  // An Aylol bill line of a company whose order form is not known yet: a request the manager carries out.
+  if (/^ay:bill:/.test(p.art_card_id || '') && !aylol.BILL_COMPANIES.has(Number(p.supplier_company))) return null;
   // Recharges and renewals: art-topup cards and QuickLine extensions. Activations (a new line, an eSIM, a ported
   // number): QuickLine new lines only — art-topup's invoices (inv:) stay requests for the manager.
   const ref = p.art_card_id;
@@ -777,7 +779,7 @@ async function sendAy(taskId, j) {
   try {
     r = await aylol.executeOrder({
       ref: j.ref, phoneNumber: retrieveNewNumber ? '' : number, price: j.price, simNumber: j.line?.sim || '',
-      useEsim: isEsim, retrieveNewNumber, note: j.t.note || '',
+      useEsim: isEsim, retrieveNewNumber, note: j.t.note || '', customerName: j.line?.customer_name || '',
     }, creds);
   } catch (e) {
     if (e.refused) {

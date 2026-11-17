@@ -195,8 +195,8 @@ function step3() {
     <h2 class="dot-title">إعدادات الشريحة ورقم الهاتف</h2>
     ${ownSim() && !canEsimOnOwnSim ? `<div class="msg info">${icon('sim')}<span>اختر الرقم من القائمة: شريحته جاهزة معه، ولا حاجة لمسح شريحة.</span></div>` : `<div class="switches">
       <label class="switch-row"><span class="tile sm cyan">${icon('qr')}</span><span class="grow"><b>eSIM — تفعيل شريحة إلكترونية</b><small>بدون شريحة بلاستيكية — يظهر رمز QR فوراً بعد التفعيل${fee ? ` · رسوم كود QR للشركة ${fmtMoney(fee)}` : ' · مجاناً'}</small></span>
-        <input class="switch" type="checkbox" id="wz-esim" ${W.esim ? 'checked' : ''} ${pkg()?.esimOnly ? 'disabled' : ''}></label>
-      ${ownSim() || pkg()?.esimOnly ? '' : `<label class="switch-row"><span class="tile sm amber">${icon('repeat')}</span><span class="grow"><b>تحويل رقم</b><small>الزبون ينقل رقمه من شركة أخرى</small></span>
+        <input class="switch" type="checkbox" id="wz-esim" ${W.esim ? 'checked' : ''} ${pkg()?.esimOnly || pkg()?.simOnly ? 'disabled' : ''}></label>
+      ${ownSim() || pkg()?.esimOnly || pkg()?.simOnly ? '' : `<label class="switch-row"><span class="tile sm amber">${icon('repeat')}</span><span class="grow"><b>تحويل رقم</b><small>الزبون ينقل رقمه من شركة أخرى</small></span>
         <input class="switch" type="checkbox" id="wz-port" ${W.port ? 'checked' : ''}></label>`}
     </div>`}
     ${(W.esim || W.port) && !qlSale() && !canEsimOnOwnSim ? `<div class="msg warn">${icon('clock')}<span>يُرسَل الطلب إلى المدير لتنفيذه، ويبدأ احتساب مدة الرزمة من لحظة التنفيذ. يُسترد المبلغ كاملاً إن رُفض الطلب.</span></div>` : ''}
@@ -480,6 +480,7 @@ export default {
       if (changedPkg) { resetQl(); if (wasQl || pkg()?.pool) { W.number = ''; W.numberState = 'idle'; } }
       // A new subscription on the supplier's own number: always an eSIM, never a ported number.
       if (pkg()?.esimOnly) { W.esim = true; W.port = false; }
+      if (pkg()?.simOnly) { W.esim = false; W.port = false; }
       W.offerId = btn.dataset.offer ? Number(btn.dataset.offer) : null;
       W.step = 3;
       ctx.rerender();

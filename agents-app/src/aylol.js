@@ -373,7 +373,7 @@ async function syncAll(creds, types = ['credit', 'bill']) {
               got++;
               const name = String(p.display_name || p.name || p.title || '').trim();
               items.push({
-                id: p.id, ref: `ay:${type}:${cid}:${p.id}`, name, company: c.name, companyId: cid, type,
+                id: p.id, ref: `ay:${type}:${cid}:${p.id}`, name, company: c.name, companyId: cid, type, siteCompany: Number(p.company_id) || null,
                 kind: type === 'bill' ? 'invoice' : 'card', price: Number(p.price ?? p.cost ?? p.distributor_price ?? p.customer_price ?? 0),
                 dataGb: extractGb(p, name), minutes: Number(p.minutes ?? p.call ?? 0) || 0, sms: Number(p.sms ?? 0) || 0,
                 days: Number(p.days || (p.month_number ? Number(p.month_number) * 30 : 30)) || 30, description: String(p.description || '').trim(),
@@ -500,13 +500,70 @@ async function lookupAvailableNumbers({ ref = '', companyId = '', packageId = ''
 }
 
 // Carries an order out at the site (it is charged there). ref: ay:<credit|bill|esim>:<categoryId>:<packageId>.
-async function executeOrder({ ref, phoneNumber = '', price = 0, simNumber = '', useEsim = false, retrieveNewNumber = false, note = '' }, creds) {
+// ---------- a new line on a SIM card (bills) ----------
+// As the site's own charge page does it (checked on the real site, WE 500 GB on a SIM): the package's details, the
+// numbers it offers for that package (one is picked), then "subscribe" with the SIM's number, the customer's first and
+// family names, the number and its key, and the package's duration. Only the site's company 7 (WE and its kind) is
+// known this way; other companies' forms differ, so their sales are not sent automatically (the manager does them).
+const BILL_COMPANIES = new Set([7]);
+async function packageInfo(packageId, creds) {
+  await ensureSession(creds);
+  const r = parseJson(await ajax(`/dashboard/charge-system/package/${encodeURIComponent(packageId)}`));
+  if (!r || !r.success || !r.data) throw new AylolError('أيلول: الرزمة غير متوفرة الآن', { refused: true });
+  return r.data;
+}
+const FORM = ['-H', 'Content-Type: application/x-www-form-urlencoded; charset=UTF-8'];
+async function billNumbers(packageId, creds) {
+  await ensureSession(creds);
+  const r = parseJson(await ajax('/dashboard/charge-system/available-numbers', { extra: FORM, body: formBody({ package_id: packageId, is_esim: 0, sim_type: 'sim', _token: state.csrf }) }));
+  if (!r || r.success === false) throw new AylolError(`أيلول: ${(r && r.message) || 'تعذّر جلب الأرقام'}`, { refused: true });
+  return (Array.isArray(r.data) ? r.data : [])
+    .map((x) => ({ phone: String(x.number || x.phone || x.phone_number || '').replace(/\D/g, ''), key: String(x.selection_key || x.subscription_key || x.id || '') }))
+    .filter((x) => /^05\d{8}$/.test(x.phone) && x.key);
+}
+function splitName(name) {
+  const parts = String(name || '').trim().split(/\s+/).filter(Boolean);
+  if (parts.length < 2) throw new AylolError('اكتب اسم الزبون كاملاً (الاسم والعائلة) — أيلول يطلبهما', { refused: true });
+  return { first: parts[0], last: parts.slice(1).join(' ') };
+}
+async function subscribeBill({ packageId, phone = '', simNumber = '', customerName = '', price = 0 }, creds) {
+  const sim = String(simNumber || '').replace(/\D/g, '');
+  if (!/^\d{18,22}$/.test(sim)) throw new AylolError('رقم الشريحة (ICCID) مطلوب لخط أيلول', { refused: true });
+  const { first, last } = splitName(customerName);
+  const info = await packageInfo(packageId, creds);
+  if (!BILL_COMPANIES.has(Number(info.company_id))) throw new AylolError('هذه الشركة في أيلول تُفعَّل يدوياً حالياً', { refused: true });
+  const listed = Number(info.price) || 0;
+  if (price && listed > Number(price) + 0.01) throw new AylolError(`سعر أيلول الآن ${listed} ₪ وهو أعلى من المعتمد ${price} ₪`, { refused: true });
+  const numbers = await billNumbers(packageId, creds);
+  const pick = phone ? numbers.find((n) => n.phone === phone) : numbers[0];
+  if (!pick) throw new AylolError(phone ? `الرقم ${phone} لم يعد متاحاً في أيلول — اختر رقماً آخر` : 'لا أرقام متاحة في أيلول لهذه الرزمة الآن', { refused: true });
+  const months = Number(info.month_number) > 0 ? Number(info.month_number) : 1;
+  const body = {
+    _token: state.csrf, action: 'subscription', package_id: String(packageId), company_id: String(info.company_id), subscriber_id: '',
+    category_id: String(info.category_id ?? ''), first_name: first, last_name: last, phone: pick.phone, company7_available_number_id: pick.key,
+    company7_esim_image_url: '', sim_number: sim, customer_price: String(listed), period_id: info.period_id ? String(info.period_id) : '',
+    block_shipping_for_other_agents: '0', customer_paid: 'true', company7_number_option: 'new', duration: String(months), price: String(listed),
+  };
+  const raw = await ajax('/dashboard/charge-system/subscribe', { extra: FORM, body: formBody(body) });
+  const res = parseJson(raw);
+  if (!res) throw new AylolError(`أيلول: رد غير مفهوم (${raw.slice(0, 120)})`);
+  if (!res.success) throw new AylolError(res.message || 'أيلول رفض تفعيل الخط', { refused: true });
+  const d = res.data || {};
+  return {
+    ok: true, message: res.message || 'تم إنشاء الخط الجديد', phoneNumber: String(d.mobile_number || d.phone || pick.phone).replace(/\D/g, ''),
+    simNumber: String(d.sim_number || sim), subscriptionId: d.subscription_id || '', status: d.status || '', price: listed,
+  };
+}
+
+async function executeOrder({ ref, phoneNumber = '', price = 0, simNumber = '', useEsim = false, retrieveNewNumber = false, note = '', customerName = '' }, creds) {
   await ensureSession(creds);
   const parts = String(ref || '').split(':');
   if (parts[0] !== 'ay' || parts.length < 4) throw new AylolError('رزمة أيلول غير صالحة', { refused: true });
   const [, type, companyId, packageId] = parts;
   const cleanPhone = String(phoneNumber || '').replace(/\D/g, '');
   const needNewNum = !cleanPhone || /^050{7,8}$/.test(cleanPhone) || retrieveNewNumber;
+
+  if (type === 'bill') return subscribeBill({ packageId, phone: needNewNum ? '' : cleanPhone, simNumber, customerName, price, note }, creds);
 
   if (type === 'esim') {
     const catNum = mapToEsimCategoryId(companyId);
@@ -602,7 +659,7 @@ async function executeOrderCounted(args, creds) {
 }
 
 module.exports = {
-  knownBalance, exBalance, executeOrder: executeOrderCounted,
+  knownBalance, exBalance, executeOrder: executeOrderCounted, billNumbers, packageInfo, subscribeBill, splitName, BILL_COMPANIES,
   AylolError, login, balance, esimAgentPrice, listedPrice, parseCategoriesFromHtml, fetchPackages, syncAll, fetchEsimPage, fetchEsimPackages, fetchEsimReadyStocks,
   purchaseEsim, lookupAvailableNumbers, currentPrice, mapToEsimCategoryId, esimCodeAndQr, twoFactorForm, twoFactorFields, _state: state,
 };

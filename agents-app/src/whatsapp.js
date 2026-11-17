@@ -509,6 +509,7 @@ async function agentNewLine(jid, user, packageId, esim) {
   const p = cat.packages.find((x) => x.id === packageId);
   if (!p) return say(jid, `لا رزمة #${packageId} عندك. اكتب *باقات esim*.`);
   if (!p.pool) return say(jid, `#${p.id} لا تختار رقمها من قائمة: بِعها من البوابة.`);
+  if (p.simOnly) return say(jid, `#${p.id} خط جديد على شريحة عادية (يحتاج رقم الشريحة): بِعه من البوابة.`);
   if (!esim && !p.ownSim) return say(jid, `#${p.id} تُفعَّل كـ eSIM: اكتب *esim ${p.id}*`);
   await say(jid, '⏳ أجلب الأرقام المتاحة…');
   const list = (await require('./routes/quickline').freeNumbersFor(p.id, esim)).slice(0, 10);

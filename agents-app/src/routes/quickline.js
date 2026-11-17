@@ -211,8 +211,9 @@ function freeNumbersFor(packageId, esim = false, exclude = []) {
   // A Layan new line picks one of the dealer's suspended numbers (or Layan's free eSIM numbers when esim).
   const lyRef = require('../layan').parseRef(art);
   if (lyRef?.system === 'lyn') return require('./layan').freeNumbers(lyRef, esim);
-  // An Aylol eSIM picks one of the site's ready eSIM numbers.
-  if (/^ay:(esim|bill):/.test(art)) return require('./aylol').freeNumbers(art);
+  // An Aylol eSIM picks one of the site's ready eSIM numbers; a bill line one of the numbers it offers for the package.
+  if (/^ay:esim:/.test(art)) return require('./aylol').freeNumbers(art);
+  if (/^ay:bill:/.test(art)) return require('./aylol').billFreeNumbers(art);
   const ref = newLinePackage(packageId);
   return agentWrap(async (creds) => {
     const list = await ql.freeNumbers(creds, { packageId: ref.packageId, exclude, esim });

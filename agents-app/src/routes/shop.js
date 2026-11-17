@@ -31,7 +31,7 @@ function esimPackage(id) {
                WHERE p.id = ? AND p.active = 1 AND p.shop_price > 0`).get(Number(id));
   const art = p?.art_card_id || '';
   // Aylol's eSIMs too: one of the site's ready numbers, bought there once the order is paid.
-  const aylol = /^ay:(esim|bill):/.test(art);
+  const aylol = /^ay:esim:/.test(art);
   const hasRef = p && (isEsimRef(art, p.company_name) || aylol);
   const ref = !hasRef ? null : aylol ? { system: 'ay', art } : /^qln:/.test(art) ? ql.parseRef(art) : /^lyn:/.test(art) ? ly.parseRef(art) : tc.parseRef(art);
   if (!p || (!ref && !p.esim_enabled)) fail(404, 'الباقة غير متوفرة');
@@ -133,7 +133,7 @@ function byCode(code, ip) {
 function shopCatalogResponse() {
   const s = getSettings();
   const packages = s.shopEnabled ? q(`SELECT p.*, c.name AS company_name, c.esim_fee AS company_esim_fee FROM packages p JOIN companies c ON c.id = p.company_id
-      WHERE p.active = 1 AND p.shop_price > 0 ORDER BY c.sort, c.id, p.sort, p.id`).all() : [];
+      WHERE p.active = 1 AND p.shop_price > 0 AND p.art_card_id NOT LIKE 'ay:bill:%' ORDER BY c.sort, c.id, p.sort, p.id`).all() : [];
   const ids = new Set(packages.map((p) => p.company_id));
   return {
     // Every order is paid and verified before it is carried out: there is no instant (unpaid) activation.
@@ -266,7 +266,7 @@ function createOrder(body, { ip, clientId = '' }) {
 
   if (body.kind === 'esim' || body.esim) return esimOrder(body, ip, clientId);
   const p = q(`SELECT p.*, c.name AS company_name, c.esim_fee AS company_esim_fee FROM packages p JOIN companies c ON c.id = p.company_id
-               WHERE p.id = ? AND p.active = 1 AND p.shop_price > 0`).get(Number(body.packageId));
+               WHERE p.id = ? AND p.active = 1 AND p.shop_price > 0 AND p.art_card_id NOT LIKE 'ay:bill:%'`).get(Number(body.packageId));
   if (!p) fail(404, 'الباقة غير متوفرة');
   require('./aylol').ensureBalanceFor(p);
   const kind = body.kind === 'new' ? 'new' : 'recharge';
