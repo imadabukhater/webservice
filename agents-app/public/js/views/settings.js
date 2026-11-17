@@ -55,9 +55,11 @@ function waHtml(w) {
             <select class="input" id="wa-provider" name="aiProvider">
               <option value="gemini" ${c.aiProvider !== 'groq' ? 'selected' : ''}>Google Gemini</option>
               <option value="groq" ${c.aiProvider === 'groq' ? 'selected' : ''}>Groq</option>
+              <option value="vertex" ${c.aiProvider === 'vertex' ? 'selected' : ''}>Google Cloud (Vertex AI) — بلا مفتاح، على حساب الفوترة</option>
             </select>
             <span class="hint">بدونه يرد البوت بالقوائم والأوامر فقط. معه يفهم الأسئلة الحرة ويرد من باقاتك وأسعارك. يُرسَل نص الرسالة إلى الخدمة المختارة لفهمها، ولا يُنفَّذ شراء إلا بالخطوات والدفع.</span></div>
-          <div class="field"><label for="wa-ai">مفتاح الخدمة (API key)</label><input class="input ltr" id="wa-ai" name="aiKey" type="password" autocomplete="new-password" placeholder="${c.hasAiKey ? 'محفوظ — اتركه فارغاً للإبقاء' : 'من Google AI Studio أو console.groq.com'}"></div>
+          <div class="field"><label for="wa-ai">مفتاح الخدمة (API key)</label><input class="input ltr" id="wa-ai" name="aiKey" type="password" autocomplete="new-password" placeholder="${c.hasAiKey ? 'محفوظ — اتركه فارغاً للإبقاء' : 'من Google AI Studio أو console.groq.com'}">
+            <span class="hint">مع Google Cloud (Vertex AI) لا حاجة لمفتاح: السيرفر يستعمل هويته في مشروعك، والتكلفة على حساب الفوترة.</span></div>
           <div class="field"><label for="wa-model">النموذج</label><input class="input ltr" id="wa-model" name="aiModel" value="${esc(c.aiModel || '')}" placeholder="gemini-2.5-flash أو openai/gpt-oss-20b">
             <span class="hint">اتركه فارغاً للنموذج الافتراضي للخدمة المختارة.</span></div>
           <div class="field"><label for="wa-knowledge">معلومات يعرفها المساعد</label>

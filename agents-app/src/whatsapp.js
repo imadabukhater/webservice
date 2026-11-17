@@ -27,6 +27,10 @@ function modelFor(provider, model) {
   if (provider === 'groq') return model && !/^gemini/i.test(model) ? model : 'openai/gpt-oss-20b';
   return model && /^gemini/i.test(model) ? model : 'gemini-2.5-flash';
 }
+const PROVIDERS = ['gemini', 'groq', 'vertex'];
+const providerOf = (v) => (PROVIDERS.includes(v) ? v : 'gemini');
+// Vertex AI (Google Cloud) answers to the server's own Google identity: no key is kept.
+const aiReady = (c) => c.aiProvider === 'vertex' || !!c.aiKey;
 function config() {
   return {
     enabled: get('wa_enabled', '1') !== '0',
@@ -34,8 +38,8 @@ function config() {
     admins: phoneList(get('wa_admins')),
     shopUrl: get('wa_shop_url'),
     aiKey: get('wa_ai_key'),
-    aiProvider: get('wa_ai_provider') === 'groq' ? 'groq' : 'gemini',
-    aiModel: modelFor(get('wa_ai_provider') === 'groq' ? 'groq' : 'gemini', get('wa_ai_model')),
+    aiProvider: providerOf(get('wa_ai_provider')),
+    aiModel: modelFor(providerOf(get('wa_ai_provider')), get('wa_ai_model')),
     welcome: get('wa_welcome'),
     // What the manager tells the assistant (opening hours, delivery, policies…): part of every question it answers.
     knowledge: get('wa_knowledge'),
@@ -61,7 +65,7 @@ function saveConfig(body = {}) {
   }
   if (body.aiKey) setSetting('wa_ai_key', String(body.aiKey).trim().slice(0, 200));
   if (body.aiKeyClear) setSetting('wa_ai_key', '');
-  if (body.aiProvider !== undefined) setSetting('wa_ai_provider', body.aiProvider === 'groq' ? 'groq' : 'gemini');
+  if (body.aiProvider !== undefined) setSetting('wa_ai_provider', providerOf(body.aiProvider));
   if (body.aiModel !== undefined) setSetting('wa_ai_model', /^[\w./:-]{3,80}$/.test(String(body.aiModel)) ? String(body.aiModel) : '');
   if (body.welcome !== undefined) setSetting('wa_welcome', str(body.welcome, 300));
   if (body.knowledge !== undefined) setSetting('wa_knowledge', str(body.knowledge, 2000));
@@ -826,13 +830,46 @@ function aiAllowed(jid) {
   aiCalls.push(Date.now());
   return true;
 }
+// The server's Google identity (the Compute Engine metadata server): a short-lived token and the project, cached.
+const vertexAuth = { token: '', until: 0, project: '' };
+async function vertexAccess() {
+  const meta = process.env.METADATA_BASE || 'http://metadata.google.internal';
+  const get = async (p) => {
+    const r = await fetch(`${meta}/computeMetadata/v1/${p}`, { headers: { 'Metadata-Flavor': 'Google' }, signal: AbortSignal.timeout(3_000) });
+    if (!r.ok) throw new Error(`هوية السيرفر في Google Cloud غير متاحة (${r.status})`);
+    return r;
+  };
+  if (!vertexAuth.project) vertexAuth.project = String(await (await get('project/project-id')).text()).trim();
+  if (!vertexAuth.token || Date.now() > vertexAuth.until) {
+    const t = await (await get('instance/service-accounts/default/token')).json();
+    vertexAuth.token = t.access_token;
+    vertexAuth.until = Date.now() + Math.max(60, Number(t.expires_in) - 120) * 1000;
+  }
+  return vertexAuth;
+}
+const VERTEX_LOCATION = () => process.env.VERTEX_LOCATION || 'global';
+function vertexUrl(project, model) {
+  const loc = VERTEX_LOCATION();
+  const base = process.env.VERTEX_BASE || `https://${loc === 'global' ? '' : `${loc}-`}aiplatform.googleapis.com`;
+  return `${base}/v1/projects/${encodeURIComponent(project)}/locations/${loc}/publishers/google/models/${encodeURIComponent(model)}:generateContent`;
+}
+
 async function askModel(system, user, { temperature = 0.1, timeout = 15_000 } = {}) {
   const cfg = config();
   const groq = cfg.aiProvider === 'groq';
-  const name = groq ? 'Groq' : 'Gemini';
+  const vertex = cfg.aiProvider === 'vertex';
+  const name = groq ? 'Groq' : vertex ? 'Vertex AI' : 'Gemini';
   try {
-    // Groq: OpenAI-style chat; Gemini: generateContent. Both asked for JSON only; the instructions apart from the data.
-    const res = groq
+    // Groq: OpenAI-style chat; Gemini and Vertex AI: generateContent. All asked for JSON only; the instructions apart from the data.
+    const geminiBody = JSON.stringify({ systemInstruction: { parts: [{ text: system }] }, contents: [{ role: 'user', parts: [{ text: user }] }], generationConfig: { temperature, responseMimeType: 'application/json' } });
+    const res = vertex
+      ? await (async () => {
+        const a = await vertexAccess();
+        return fetch(vertexUrl(a.project, cfg.aiModel), {
+          method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${a.token}` }, body: geminiBody, signal: AbortSignal.timeout(timeout),
+        });
+      })()
+      : groq
       ? await fetch(`${process.env.GROQ_BASE || 'https://api.groq.com/openai/v1'}/chat/completions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${cfg.aiKey}` },
@@ -842,10 +879,11 @@ async function askModel(system, user, { temperature = 0.1, timeout = 15_000 } = 
       : await fetch(`${process.env.GEMINI_BASE || 'https://generativelanguage.googleapis.com'}/v1beta/models/${encodeURIComponent(cfg.aiModel)}:generateContent`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-goog-api-key': cfg.aiKey },
-        body: JSON.stringify({ systemInstruction: { parts: [{ text: system }] }, contents: [{ role: 'user', parts: [{ text: user }] }], generationConfig: { temperature, responseMimeType: 'application/json' } }),
+        body: geminiBody,
         signal: AbortSignal.timeout(timeout),
       });
     if (!res.ok) {
+      if (vertex && res.status === 401) vertexAuth.token = '';
       const err = await res.json().catch(() => null);
       state.aiError = `${name} ${res.status}: ${String(err?.error?.message || res.statusText).slice(0, 200)}`;
       return null;
@@ -869,7 +907,7 @@ const conversation = (jid, who) => (history.get(jid) || []).slice(0, -1).map((m)
 
 async function understand(t, raw, kind, context = '', jid = '', guard = {}) {
   const cfg = config();
-  if (!cfg.aiKey || !raw || !aiAllowed(jid)) return null;
+  if (!aiReady(cfg) || !raw || !aiAllowed(jid)) return null;
   const actions = kind === 'agent'
     ? '"balance" | "recharge" (needs number and packageId) | "esim" (needs packageId) | "packages" (company, kind: card|esim|"") | "answer"'
     : '"packages" (company) | "buy" (packageId: the customer wants that package) | "verify" (orderCode, payer: name, phone or reference of the transfer) | "status" (the customer asks what happened with their order, or why it is late) | "answer"';
@@ -902,7 +940,7 @@ function safeIntro(intro) {
 }
 async function warmIntro(jid, raw, reply) {
   const cfg = config();
-  if (!cfg.aiKey || !raw || !aiAllowed(jid)) return '';
+  if (!aiReady(cfg) || !raw || !aiAllowed(jid)) return '';
   const k = cfg.knowledge;
   const system = `أنت موظف لطيف في متجر خطوط وشرائح eSIM وكروت شحن، بترد على واتساب. نظام المتجر جهّز الرسالة اللي رح تنبعت للزبون، ومهمتك بس تكتب جملة افتتاحية قصيرة (سطر أو سطرين) قبلها، بتناسب آخر رسالة من الزبون وبتمهّد للرسالة.
 ${DIALECT}
@@ -1103,5 +1141,5 @@ if (linked()) setTimeout(() => start().catch((e) => console.error('whatsapp star
 
 module.exports = {
   start, logout, status, config, configView, saveConfig, sendTo, taskResolved, handle, tellAdmins,
-  _test: { safeIntro, safeReply, aiCallsByChat, askedAbout, setTransport: (fn) => { transport = fn; }, setDownloader: (fn) => { downloader = fn; }, sessions, recent, norm, onRaw, jidOf, watchShop, history },
+  _test: { askModel, vertexAuth, safeIntro, safeReply, aiCallsByChat, askedAbout, setTransport: (fn) => { transport = fn; }, setDownloader: (fn) => { downloader = fn; }, sessions, recent, norm, onRaw, jidOf, watchShop, history },
 };
