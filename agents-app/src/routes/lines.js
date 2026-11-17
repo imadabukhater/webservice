@@ -147,7 +147,7 @@ function createLine(user, body) {
   if (ayBill) {
     if (esim) fail(400, 'هذه الرزمة تُفعَّل على شريحة عادية: أدخل رقم الشريحة، بدون eSIM');
     if (port) fail(400, 'هذه الرزمة خط جديد برقم من أيلول، ولا تدعم تحويل رقم');
-    if (require('../aylol').BILL_COMPANIES.has(Number(pkg.supplier_company))) {
+    if (require('../aylol').billAuto(ayBill, pkg.supplier_company)) {
       if (str(body.customerName, 80).split(/\s+/).filter(Boolean).length < 2) fail(400, 'اكتب اسم الزبون كاملاً (الاسم والعائلة) — مطلوب لتفعيل الخط');
       if (!require('./aylol').servedEsim(ayBill, number)) fail(400, 'اختر رقم الهاتف من قائمة الأرقام المتاحة');
     }

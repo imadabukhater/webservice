@@ -52,7 +52,7 @@ function job(taskId) {
   const p = q(`SELECT p.art_card_id, p.cost, p.art_price, p.supplier_company, c.activation FROM packages p JOIN companies c ON c.id = p.company_id WHERE p.id = ?`).get(packageId);
   if (!p || p.activation !== 'auto') return null;
   // An Aylol bill line of a company whose order form is not known yet: a request the manager carries out.
-  if (/^ay:bill:/.test(p.art_card_id || '') && !aylol.BILL_COMPANIES.has(Number(p.supplier_company))) return null;
+  if (/^ay:bill:/.test(p.art_card_id || '') && !aylol.billAuto(p.art_card_id, p.supplier_company)) return null;
   // Recharges and renewals: art-topup cards and QuickLine extensions. Activations (a new line, an eSIM, a ported
   // number): QuickLine new lines only — art-topup's invoices (inv:) stay requests for the manager.
   const ref = p.art_card_id;

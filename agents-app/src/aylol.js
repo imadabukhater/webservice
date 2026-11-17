@@ -506,6 +506,14 @@ async function lookupAvailableNumbers({ ref = '', companyId = '', packageId = ''
 // family names, the number and its key, and the package's duration. Only the site's company 7 (WE and its kind) is
 // known this way; other companies' forms differ, so their sales are not sent automatically (the manager does them).
 const BILL_COMPANIES = new Set([7]);
+// Within company 7's form, these categories show no list of numbers (the site gives the number itself, e.g. Partner's
+// and 019's bills): not known yet, so not sent automatically.
+const BILL_OTHER_CATEGORIES = new Set([24, 27, 102]);
+// A bill line Aylol can be sent automatically: its company's form is known, and its category is not one of those.
+const billAuto = (ref, siteCompany) => {
+  const cat = Number(String(ref || '').split(':')[2]);
+  return /^ay:bill:/.test(ref || '') && BILL_COMPANIES.has(Number(siteCompany)) && !BILL_OTHER_CATEGORIES.has(cat);
+};
 async function packageInfo(packageId, creds) {
   await ensureSession(creds);
   const r = parseJson(await ajax(`/dashboard/charge-system/package/${encodeURIComponent(packageId)}`));
@@ -531,7 +539,7 @@ async function subscribeBill({ packageId, phone = '', simNumber = '', customerNa
   if (!/^\d{18,22}$/.test(sim)) throw new AylolError('رقم الشريحة (ICCID) مطلوب لخط أيلول', { refused: true });
   const { first, last } = splitName(customerName);
   const info = await packageInfo(packageId, creds);
-  if (!BILL_COMPANIES.has(Number(info.company_id))) throw new AylolError('هذه الشركة في أيلول تُفعَّل يدوياً حالياً', { refused: true });
+  if (!BILL_COMPANIES.has(Number(info.company_id)) || BILL_OTHER_CATEGORIES.has(Number(info.category_id))) throw new AylolError('هذه الرزمة في أيلول تُفعَّل يدوياً حالياً', { refused: true });
   const listed = Number(info.price) || 0;
   if (price && listed > Number(price) + 0.01) throw new AylolError(`سعر أيلول الآن ${listed} ₪ وهو أعلى من المعتمد ${price} ₪`, { refused: true });
   const numbers = await billNumbers(packageId, creds);
@@ -659,7 +667,7 @@ async function executeOrderCounted(args, creds) {
 }
 
 module.exports = {
-  knownBalance, exBalance, executeOrder: executeOrderCounted, billNumbers, packageInfo, subscribeBill, splitName, BILL_COMPANIES,
+  knownBalance, exBalance, executeOrder: executeOrderCounted, billNumbers, packageInfo, subscribeBill, splitName, BILL_COMPANIES, billAuto,
   AylolError, login, balance, esimAgentPrice, listedPrice, parseCategoriesFromHtml, fetchPackages, syncAll, fetchEsimPage, fetchEsimPackages, fetchEsimReadyStocks,
   purchaseEsim, lookupAvailableNumbers, currentPrice, mapToEsimCategoryId, esimCodeAndQr, twoFactorForm, twoFactorFields, _state: state,
 };

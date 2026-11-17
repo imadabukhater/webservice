@@ -23,7 +23,7 @@ function amount(v, label) {
 // agent gets what the selling screens need, never a name: auto (a supplier carries it out for "auto" companies),
 // pool (its number is picked from a list of free numbers) and waits (never activated directly: it waits for the supplier).
 // Aylol bill lines sold automatically: only for the site's companies whose order form is known (see aylol.js).
-const ayBillAuto = (p) => /^ay:bill:/.test(p.art_card_id || '') && require('../aylol').BILL_COMPANIES.has(Number(p.supplier_company));
+const ayBillAuto = (p) => require('../aylol').billAuto(p.art_card_id, p.supplier_company);
 const packageAttrs = (p, admin = false) => {
   const ref = p.art_card_id || '';
   return {
