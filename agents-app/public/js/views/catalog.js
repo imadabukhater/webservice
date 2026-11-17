@@ -165,7 +165,10 @@ export function openPackageForm(p, companyId, kind = 'invoice') {
         <div class="field"><label for="pk-sms">الرسائل</label><input class="input ltr" id="pk-sms" name="sms" list="unlimited" value="${esc(amountVal(p?.sms))}" placeholder="5000"></div></div>
       <datalist id="unlimited"><option value="غير محدود"></option></datalist>
       <div class="field"><label for="pk-desc">وصف قصير <span class="opt">(اختياري)</span></label><input class="input" id="pk-desc" name="description" value="${esc(p?.description || '')}"></div>
-      <div class="row2"><div class="field"><label for="pk-cost">التكلفة عليك (₪)</label><input class="input ltr" id="pk-cost" name="cost" type="number" min="0" step="0.01" inputmode="decimal" value="${p ? round(p.cost) : ''}"></div>
+      <div class="row2"><div class="field">${p && isAy(p)
+        ? `<label for="pk-cost">سعر أيلول للزبون (₪)</label><input class="input ltr" id="pk-cost" name="cost" type="number" value="${round(p.cost)}" readonly>
+           <span class="hint">من أيلول نفسه، ويُرسل معه الطلب. سعرك منه: ${p.supplierCost !== null && p.supplierCost !== undefined ? `<b>${fmtMoney(p.supplierCost)}</b>` : 'غير معروف بعد'}</span>`
+        : `<label for="pk-cost">التكلفة عليك (₪)</label><input class="input ltr" id="pk-cost" name="cost" type="number" min="0" step="0.01" inputmode="decimal" value="${p ? round(p.cost) : ''}">`}</div>
         <div class="field"><label for="pk-price">سعر الوكيل (₪)</label><input class="input ltr" id="pk-price" name="price" type="number" min="0" step="0.01" inputmode="decimal" value="${p ? round(p.price) : ''}"></div></div>
       <div class="row2">
         <div class="field"><label for="pk-shop">سعر الزبون في المتجر (₪)</label>
@@ -185,7 +188,7 @@ export function openPackageForm(p, companyId, kind = 'invoice') {
       }));
     },
     onInput(form) {
-      const cost = Number(field(form, 'cost')) || 0;
+      const cost = p && isAy(p) ? realCost(p) : Number(field(form, 'cost')) || 0;
       const price = Number(field(form, 'price')) || 0;
       const box = form.querySelector('#pk-margin');
       box.className = `hint ${price - cost < 0 ? 'bad' : 'ok'}`;
@@ -481,13 +484,22 @@ function openSimilar(ctx) {
   });
 }
 
+// Aylol's charge page lists the customer's price; what it really takes is supplierCost, when the site says so.
+// The manager sees both and earns on the real one; the agents' price is the manager's own.
+const isAy = (p) => p.supplier === 'ay';
+const realCost = (p) => (isAy(p) && p.supplierCost !== null && p.supplierCost !== undefined ? p.supplierCost : p.cost);
+
 function packageCardAdmin(p) {
   return `<article class="pkg-card ${p.active ? '' : 'inactive'}" style="cursor:default">
     <div class="pkg-head"><span class="pkg-name">${esc(p.name)}</span>${p.supplier === 'ql' ? `<span class="pill ${p.kind === 'card' ? 's-active' : 'plain'}">${p.kind === 'card' ? 'تمديد' : 'خط جديد'}</span>` : ''}${p.active ? '' : p.gone ? `<span class="pill s-expiring" title="تعود تلقائياً عند أول مزامنة يظهر فيها">لم تعد عند ${supplierName(p)}</span>` : '<span class="pill">مخفية عن الوكلاء</span>'}${!p.price ? '<span class="pill s-expiring">حدد السعر</span>' : ''}${p.artPending ? `<span class="pill s-expiring">سعر ${supplierName(p)} الجديد: ${fmtMoney(p.artPrice)}</span>` : ''}</div>
     ${p.dataGb ? `<div class="pkg-data"><b>${fmtNum(p.dataGb)}</b><span>GB</span></div>` : ''}
     ${specs(p) ? `<div class="pkg-specs">${specs(p)}</div>` : ''}
     <div class="kv small"><div>المدة</div><div>${p.days ? `${p.days} يوماً` : 'شهرية'}</div>
-      <div>التكلفة</div><div>${money(p.cost)}</div><div>سعر الوكيل</div><div>${money(p.price)}</div><div>ربحك</div><div class="${p.price - p.cost < 0 ? 'minus' : 'plus'}">${money(p.price - p.cost)}</div>
+      ${isAy(p)
+        ? `<div>سعر أيلول للزبون</div><div>${money(p.cost)}</div><div>سعرك من أيلول</div><div>${p.supplierCost !== null && p.supplierCost !== undefined ? `<b>${money(p.supplierCost)}</b>` : '<span class="muted">غير معروف — يظهر بعد أول عملية</span>'}</div>`
+        : `<div>التكلفة</div><div>${money(p.cost)}</div>`}
+      <div>سعر الوكيل</div><div>${p.price ? money(p.price) : '<span class="muted">لم تحدده بعد</span>'}</div>
+      ${p.price ? `<div>ربحك</div><div class="${p.price - realCost(p) < 0 ? 'minus' : 'plus'}">${money(p.price - realCost(p))}</div>` : ''}
       ${p.artCode ? `<div>رمز ${supplierName(p)}</div><div class="mono ltr">${esc(p.artCode)}${p.edited ? ' · <span class="muted">معدّلة</span>' : ''}</div>` : ''}</div>
     <div class="item-actions" style="padding-bottom:16px">
       <button class="btn btn-sm ${p.active ? '' : 'btn-soft'}" data-action="toggle-package" data-id="${p.id}">${icon(p.active ? 'eyeOff' : 'eye')}${p.active ? 'إخفاء' : 'إظهار للوكلاء'}</button>
@@ -499,7 +511,7 @@ function packageCardAdmin(p) {
 
 // One package as a compact row: what it is, what it costs and earns, and its actions.
 function packageRowAdmin(p) {
-  const profit = p.price - p.cost;
+  const profit = p.price - realCost(p);
   const checked = V.selected.has(p.id);
   const pills = [
     p.active ? '' : p.gone ? `<span class="pill s-expiring">لم تعد عند ${supplierName(p)}</span>` : '<span class="pill">مخفية</span>',
@@ -513,7 +525,10 @@ function packageRowAdmin(p) {
       <input type="checkbox" class="pk-check" data-action="check-package" data-id="${p.id}" ${checked ? 'checked' : ''} style="width:18px;height:18px;accent-color:var(--brand);cursor:pointer;margin-top:2px" aria-label="تحديد ${esc(p.name)}">
       <div class="grow"><b class="item-title">${esc(p.name)}</b> ${pills}
       <div class="item-sub">${p.dataGb ? `<span><b>${fmtNum(p.dataGb)}</b> GB</span>` : ''}<span>${p.days ? `${p.days} يوماً` : 'شهرية'}</span>
-        <span>التكلفة ${money(p.cost)}</span><span>للوكيل <b>${money(p.price)}</b></span><span class="${profit < 0 ? 'minus' : 'plus'}">ربح ${money(profit)}</span>
+        ${isAy(p)
+          ? `<span>أيلول للزبون ${money(p.cost)}</span><span>سعرك منه ${p.supplierCost !== null && p.supplierCost !== undefined ? `<b>${money(p.supplierCost)}</b>` : 'غير معروف'}</span>`
+          : `<span>التكلفة ${money(p.cost)}</span>`}
+        ${p.price ? `<span>للوكيل <b>${money(p.price)}</b></span><span class="${profit < 0 ? 'minus' : 'plus'}">ربح ${money(profit)}</span>` : '<span class="pill s-expiring">حدد سعر الوكيل</span>'}
         ${p.artCode ? `<span class="mono ltr">${esc(p.artCode)}</span>` : ''}${p.edited ? '<span>معدّلة</span>' : ''}</div></div>
       <div class="item-actions">
         <button class="icon-btn pk-act" data-action="toggle-package" data-id="${p.id}" title="${p.active ? 'إخفاء عن الوكلاء' : 'إظهار للوكلاء'}" aria-label="${p.active ? 'إخفاء' : 'إظهار'}">${icon(p.active ? 'eyeOff' : 'eye')}</button>

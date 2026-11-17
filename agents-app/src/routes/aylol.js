@@ -72,12 +72,37 @@ async function freeNumbers(ref) {
 }
 
 // What the site sells, by system. Only what it lists, at its own price: nothing is made up when a sync fails.
+// The agent's own price of the site's packages, from its eSIM list (the charge page shows the customer's price only).
+// Keyed by eSIM category and package id; only trusted where the customer's price matches the charge page's.
+const AGENT_PRICE_CATS = [1, 2, 3, 4, 10, 28];
+async function agentPrices(creds) {
+  const map = new Map();
+  for (const cat of AGENT_PRICE_CATS) {
+    for (const purchaseType of ['loaded_esim', 'new_esim']) {
+      let r = null;
+      try { r = await ay.fetchEsimPackages({ categoryId: cat, purchaseType }, creds); } catch { continue; }
+      for (const p of (r && r.success && Array.isArray(r.data)) ? r.data : []) {
+        const agent = Number(p.package_agent_price);
+        if (agent > 0) map.set(`${cat}:${p.id}`, { customer: Number(p.package_customer_price) || 0, agent: round(agent) });
+      }
+    }
+  }
+  return map;
+}
+
 async function collectItems(creds, kind) {
   const synced = await ay.syncAll(creds, [kind === 'card' ? 'credit' : 'bill']);
+  const prices = await agentPrices(creds);
+  const agentCost = (ref, cost) => {
+    const [, , cid, pid] = String(ref).split(':');
+    const a = prices.get(`${ay.mapToEsimCategoryId(cid)}:${pid}`);
+    return a && Math.abs(a.customer - cost) < 0.01 ? a.agent : null;
+  };
   const items = synced.items.map((x) => ({
     ref: x.ref, name: x.name, company: x.company, cost: Number(x.price) || 0, dataGb: x.dataGb || null, minutes: x.minutes || null,
     sms: x.sms || null, days: x.days || 30, description: String(x.description || '').slice(0, 400), esim: kind === 'card' ? 0 : 1,
   }));
+  for (const i of items) i.supplierCost = agentCost(i.ref, i.cost);
   if (kind === 'invoice') {
     for (const cat of ESIM_CATS) {
       for (const purchaseType of ['loaded_esim', 'new_esim']) {
@@ -87,8 +112,10 @@ async function collectItems(creds, kind) {
           if (items.some((i) => i.ref === ref)) continue;
           items.push({
             ref, name: `${cat.name} eSIM — ${String(p.display_name || p.name || p.title || '').trim()}`, company: cat.name,
-            cost: Number(p.price ?? p.cost ?? 0) || 0, dataGb: Number(p.data_gb || p.internet || 0) || null, minutes: Number(p.minutes || p.call || 0) || null,
-            sms: Number(p.sms || 0) || null, days: Number(p.days || 30) || 30, description: String(p.description || '').slice(0, 400), esim: 1,
+            cost: ay.listedPrice(p) || 0, dataGb: Number(p.data_gb || p.internet || 0) || null, minutes: Number(p.minutes || p.call || 0) || null,
+            sms: Number(p.sms || 0) || null, days: Number(p.days || (p.month_number ? p.month_number * 30 : 30)) || 30, description: String(p.description || '').slice(0, 400), esim: 1,
+            // The eSIM list's own price is already the agent's (package and eSIM fee).
+            supplierCost: ay.listedPrice(p) || null,
           });
         }
       }
@@ -97,8 +124,10 @@ async function collectItems(creds, kind) {
   return items.filter((i) => i.cost > 0);
 }
 
-// New packages: cost = the site's price, agents' price = cost + this system's percentage. Existing packages keep
-// their price, name and visibility: only the site's current price is recorded, and a difference awaits the manager.
+// New packages: cost = the site's price (what is sent with the order), supplier_cost = what the site really takes,
+// when it says so. Agents' price is the manager's own: a new package comes with none, so agents do not see it until
+// the manager sets one. Existing packages keep their price, name and visibility: only the site's current price is
+// recorded, and a difference awaits the manager.
 async function syncKind(creds, kind) {
   const items = await collectItems(creds, kind);
   if (!items.length) fail(502, 'أيلول: لم أجد رزماً');
@@ -117,7 +146,8 @@ async function syncKind(creds, kind) {
       const row = q('SELECT id, gone_at FROM packages WHERE art_card_id = ?').get(p.ref);
       if (row) {
         if (row.gone_at) restored++;
-        q('UPDATE packages SET art_price = ?, active = CASE WHEN gone_at IS NOT NULL THEN 1 ELSE active END, gone_at = NULL WHERE id = ?').run(p.cost, row.id);
+        q('UPDATE packages SET art_price = ?, supplier_cost = ?, active = CASE WHEN gone_at IS NOT NULL THEN 1 ELSE active END, gone_at = NULL WHERE id = ?')
+          .run(p.cost, p.supplierCost ?? null, row.id);
         updated++;
         continue;
       }
@@ -125,9 +155,9 @@ async function syncKind(creds, kind) {
       if (names.has(`${companyId}|${name}`) || q('SELECT 1 FROM packages WHERE company_id = ? AND name = ? AND kind = ?').get(companyId, name, kind)) name = `${name} (${p.ref.split(':').pop()})`;
       names.add(`${companyId}|${name}`);
       const sort = q('SELECT COALESCE(MAX(sort), 0) + 1 AS s FROM packages WHERE company_id = ?').get(companyId).s;
-      q(`INSERT INTO packages (company_id, name, cost, price, active, sort, data_gb, minutes, sms, description, art_card_id, kind, days, art_price, esim_enabled)
-         VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-        .run(companyId, name, p.cost, withMarkup(p.cost, kind), sort, p.dataGb, p.minutes, p.sms, p.description, p.ref, kind, p.days, p.cost, p.esim);
+      q(`INSERT INTO packages (company_id, name, cost, price, active, sort, data_gb, minutes, sms, description, art_card_id, kind, days, art_price, esim_enabled, supplier_cost)
+         VALUES (?, ?, ?, 0, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        .run(companyId, name, p.cost, sort, p.dataGb, p.minutes, p.sms, p.description, p.ref, kind, p.days, p.cost, p.esim, p.supplierCost ?? null);
       added++;
     }
     // Gone from the site: hidden as the sync's doing (back by itself when listed again); removed after a week if unused.

@@ -530,7 +530,9 @@ async function executeOrder({ ref, phoneNumber = '', price = 0, simNumber = '', 
 
 // The site's price for a package right now (read from its own listing), or null when it no longer lists it.
 // Asked before every sale, so nothing is bought above the price the manager approved.
-const listedPrice = (p) => Number(p.price ?? p.cost ?? p.distributor_price ?? p.customer_price ?? 0) || null;
+// The site's eSIM list has no `price`: what the agent pays is total_agent_price (the package plus the eSIM's fee).
+const esimAgentPrice = (p) => Number(p.total_agent_price ?? p.package_agent_price ?? 0) || 0;
+const listedPrice = (p) => Number(p.price ?? p.cost ?? (esimAgentPrice(p) || undefined) ?? p.distributor_price ?? p.customer_price ?? 0) || null;
 async function currentPrice(ref, creds) {
   await ensureSession(creds);
   const [head, type, cid, pid] = String(ref || '').split(':');
@@ -564,6 +566,6 @@ async function balance(creds) {
 }
 
 module.exports = {
-  AylolError, login, balance, parseCategoriesFromHtml, fetchPackages, syncAll, fetchEsimPage, fetchEsimPackages, fetchEsimReadyStocks,
+  AylolError, login, balance, esimAgentPrice, listedPrice, parseCategoriesFromHtml, fetchPackages, syncAll, fetchEsimPage, fetchEsimPackages, fetchEsimReadyStocks,
   purchaseEsim, lookupAvailableNumbers, executeOrder, currentPrice, mapToEsimCategoryId, esimCodeAndQr, twoFactorForm, twoFactorFields, _state: state,
 };

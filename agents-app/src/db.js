@@ -402,6 +402,9 @@ ensureColumn('companies', 'esim_fee', 'esim_fee REAL');
 ensureColumn('packages', 'popular', 'popular INTEGER NOT NULL DEFAULT 0');
 ensureColumn('packages', 'old_price', 'old_price REAL');
 ensureColumn('packages', 'esim_enabled', 'esim_enabled INTEGER NOT NULL DEFAULT 0');
+// What the supplier really takes from the account for the package, when it says so (Aylol lists only the customer's
+// price on its charge page; its eSIM list gives the agent's price of the same packages). Shown to the manager only.
+ensureColumn('packages', 'supplier_cost', 'supplier_cost REAL');
 ensureColumn('shop_orders', 'esim_fee', 'esim_fee REAL NOT NULL DEFAULT 0');
 ensureColumn('shop_orders', 'esim_code', "esim_code TEXT NOT NULL DEFAULT ''");
 ensureColumn('shop_orders', 'proof_tries', 'proof_tries INTEGER NOT NULL DEFAULT 0');

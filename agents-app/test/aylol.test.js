@@ -110,6 +110,14 @@ test.before(async () => {
 });
 test.after(() => { app.close(); server.close(); fs.rmSync(dataDir, { recursive: true, force: true }); });
 
+// The manager prices Aylol's packages: a synced package has no agents' price until then (here, cost + the system's %).
+const priceAylol = () => {
+  const { q, getSettings } = require('../src/db');
+  const s = getSettings();
+  q("UPDATE packages SET price = ROUND(cost * (1 + ? / 100.0), 2) WHERE art_card_id LIKE 'ay:%' AND kind = 'card' AND price = 0").run(s.aylolMarkupCard);
+  q("UPDATE packages SET price = ROUND(cost * (1 + ? / 100.0), 2) WHERE art_card_id LIKE 'ay:%' AND kind != 'card' AND price = 0").run(s.aylolMarkupInvoice);
+};
+
 test('Aylol: credentials only from the settings, real supplier catalog, eSIM numbers picked without buying, sale carried out with a real QR', async () => {
   const admin = (await ok(call(null, 'POST', '/api/login', { username: 'admin', password: 'admin-pass' }))).token;
 
@@ -137,6 +145,9 @@ test('Aylol: credentials only from the settings, real supplier catalog, eSIM num
   assert.equal(ayPkgs.some((p) => /empty|استرداد/i.test(p.name)), false, 'no made-up packages');
   const esimPkg = ayPkgs.find((p) => p.esimEnabled && p.cost === 40);
   assert.ok(esimPkg);
+  // No agents' price of its own yet: the manager sets it, and agents do not see the package until then.
+  assert.deepEqual(ayPkgs.map((p) => p.price), [0, 0, 0]);
+  priceAylol();
 
   // The cookie jar lives beside the data, never in the app folder.
   assert.ok(fs.existsSync(path.join(dataDir, 'cookies.txt')));
