@@ -77,12 +77,13 @@ PrivateTmp=true
 WantedBy=multi-user.target
 EOF
 
+# As served since October: the bare IP over http goes to the site; both host names are served directly.
 cat > /etc/caddy/Caddyfile <<EOF
-http://34.56.162.217, hotesim.shop {
+http://34.56.162.217 {
   redir https://www.hotesim.shop{uri} permanent
 }
 
-www.hotesim.shop, 34-56-162-217.sslip.io {
+hotesim.shop, www.hotesim.shop, 34-56-162-217.sslip.io {
   encode gzip
   reverse_proxy 127.0.0.1:3000
 }
