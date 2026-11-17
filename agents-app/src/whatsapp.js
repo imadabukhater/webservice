@@ -328,6 +328,7 @@ const RE = {
   esim: /(esim|اي سيم|ايسيم|شريحه الكترونيه)/,
   line: /^(تفعيل|فعل) خط(\s|$)/,
   status: /^(حاله|فحص|استعلام)(\s|$)/,
+  whereOrder: /^(وين|شو صار|ايش صار|شو صار مع|شو وضع|كيف وضع)?\s*(طلبي|طلبيتي|طلباتي|طلبيه|الطلبيه|طلبي وين)[؟?!. ]*$|(وين|شو صار|ايش صار|شو وضع|ليش ما|ما وصل|لسا ما|امتى|متى|طول|طولت|طولتو|تاخر|تاخرت)\s.*(طلب|طلبي|طلبيه|طلبيتي|الطلب|الشريحه|الباقه|الكود|التفعيل|الشحن|الرصيد)/,
   code: /^#?(\d{1,6})$/,
 };
 const pkgIdIn = (t) => Number((t.replace(PHONE_RE, ' ').match(/#?\b(\d{1,6})\b/) || [])[1]) || 0;
@@ -581,8 +582,8 @@ function shopLink(id, esim) {
 // page's own, with its checks) → the customer pays and sends the payer's name, phone, reference or receipt photo → the
 // transfer is checked against the payment e-mails → the activation (and the eSIM's QR) comes back here by itself.
 const SERVICES = [
-  ['esim', 'شريحة إلكترونية eSIM — تُفعَّل بعد الدفع ويصلك رمز QR هنا', (p) => p.esim],
-  ['card', 'شحن رصيد / تجديد لرقم موجود', (p) => p.kind === 'card'],
+  ['esim', 'شريحة eSIM — بتتفعّل بعد الدفع وبيوصلك رمز QR هون', (p) => p.esim],
+  ['card', 'شحن رصيد / تجديد لرقم موجود عندك', (p) => p.kind === 'card'],
   ['line', 'خط جديد على شريحة عادية', (p) => p.kind !== 'card' && !p.esim],
 ];
 const SERVICE_TITLE = { esim: 'باقات eSIM', card: 'باقات الشحن والتجديد', line: 'خطوط جديدة على شريحة' };
@@ -609,14 +610,14 @@ const priceText = (p, svc) => (svc === 'esim' && p.esimFee ? `${round(p.price)} 
 function companiesMenu(jid, shop, cfg) {
   const list = shopCompanies(shop);
   remember(jid, { step: 'co', ids: list.map((c) => c.id) });
-  return say(jid, [cfg.welcome || `أهلاً بك في ${shop.shopName} 👋`, '', 'اختر الشركة:', ...list.map((c, i) => `*${i + 1}.* ${c.name}`), '',
-    '👈 أرسل رقم الشركة أو اسمها.', 'دفعت؟ أرسل *رقم طلبك* للتحقق من التحويل.', ...(cfg.shopUrl ? ['', `🛒 ${cfg.shopUrl}`] : [])].join('\n'));
+  return say(jid, [cfg.welcome || `أهلين فيك بـ ${shop.shopName} 👋`, '', 'اختار الشركة:', ...list.map((c, i) => `*${i + 1}.* ${c.name}`), '',
+    '👈 ابعت رقم الشركة أو اسمها.', 'عندك طلب؟ اكتب *وين طلبي* أو ابعت *رقم طلبك* ومنشيكلك عليه.', ...(cfg.shopUrl ? ['', `🛒 ${cfg.shopUrl}`] : [])].join('\n'));
 }
 function servicesMenu(jid, shop, co) {
   const opts = SERVICES.filter(([, , has]) => shop.packages.some((p) => p.companyId === co.id && has(p)));
   if (opts.length === 1) return packagesMenu(jid, shop, co, opts[0][0]);
   remember(jid, { step: 'svc', coId: co.id, opts: opts.map(([k]) => k) });
-  return say(jid, [`*${co.name}* ✅`, 'شو الخدمة اللي بدك إياها؟', ...opts.map(([, label], i) => `*${i + 1}.* ${label}`), '', '👈 أرسل الرقم (0 للرجوع).'].join('\n'));
+  return say(jid, [`*${co.name}* ✅`, 'شو الخدمة اللي بدك ياها؟', ...opts.map(([, label], i) => `*${i + 1}.* ${label}`), '', '👈 ابعت الرقم (0 لترجع).'].join('\n'));
 }
 function packagesMenu(jid, shop, co, svc) {
   const has = SERVICES.find(([k]) => k === svc)[2];
@@ -624,15 +625,15 @@ function packagesMenu(jid, shop, co, svc) {
   if (!list.length) return servicesMenu(jid, shop, co);
   remember(jid, { step: 'pkg', coId: co.id, svc, ids: list.map((p) => p.id) });
   return say(jid, [`🛒 *${co.name}* — ${SERVICE_TITLE[svc]}`, '',
-    ...list.map((p, i) => `*${i + 1}.* ${p.name}${p.dataGb ? ` · ${p.dataGb}GB` : ''}${p.days && p.days !== 30 ? ` · ${p.days} يوماً` : ''}\n   💰 *${priceText(p, svc)}*`),
-    '', '👈 أرسل رقم الباقة (0 للرجوع).'].join('\n'));
+    ...list.map((p, i) => `*${i + 1}.* ${p.name}${p.dataGb ? ` · ${p.dataGb}GB` : ''}${p.days && p.days !== 30 ? ` · ${p.days} يوم` : ''}\n   💰 *${priceText(p, svc)}*`),
+    '', '👈 ابعت رقم الباقة (0 لترجع).'].join('\n'));
 }
 function startOrder(jid, p, svc = serviceOf(p)) {
   const head = `*${p.companyName} — ${p.name}*\nالسعر: *${priceText(p, svc)}*`;
-  if (svc === 'esim') { remember(jid, { step: 'name', pkgId: p.id, svc }); return say(jid, `${head}\n\nاكتب *اسمك الكامل* (لتسجيل الخط):`); }
-  if (svc === 'card') { remember(jid, { step: 'number', pkgId: p.id, svc }); return say(jid, `${head}\n\nاكتب *رقم الهاتف* الذي تريد شحنه (05XXXXXXXX):`); }
+  if (svc === 'esim') { remember(jid, { step: 'name', pkgId: p.id, svc }); return say(jid, `${head}\n\nاكتبلي *اسمك الكامل* (عشان نسجّل الخط عليه):`); }
+  if (svc === 'card') { remember(jid, { step: 'number', pkgId: p.id, svc }); return say(jid, `${head}\n\nاكتبلي *رقم الهاتف* اللي بدك تشحنه (05XXXXXXXX):`); }
   remember(jid, { step: 'iccid', pkgId: p.id, svc });
-  return say(jid, `${head}\n\nاكتب *رقم الشريحة* (ICCID: 18 إلى 22 رقماً مكتوبة على الشريحة):`);
+  return say(jid, `${head}\n\nاكتبلي *رقم الشريحة* (ICCID: من 18 لـ 22 رقم، مكتوب على الشريحة):`);
 }
 
 // A real shop order: reserved for this chat (one at a time), paid by Jawwal Pay, checked against the payment e-mails.
@@ -645,11 +646,11 @@ async function placeShopOrder(jid, body) {
   remember(jid, { step: 'proof', orderId: o.id });
   const shop = S.shopCatalogResponse();
   const minutes = Math.max(1, Math.round(require('./shop').RESERVE_MS / 60_000));
-  const pay = shop.jawwalpay?.number ? `ادفع بجوال باي إلى *${shop.jawwalpay.number}*${shop.jawwalpay.name ? ` (${shop.jawwalpay.name})` : ''}` : 'ادفع بجوال باي';
+  const pay = shop.jawwalpay?.number ? `حوّل بجوال باي على *${shop.jawwalpay.number}*${shop.jawwalpay.name ? ` (${shop.jawwalpay.name})` : ''}` : 'حوّل بجوال باي';
   // A new subscription: the number comes from the supplier's free numbers, reserved for this order.
-  return say(jid, [`✅ حجزنا طلبك رقم *${o.code}*`, o.package_label, ...(o.esim && o.number ? [`📞 رقمك الجديد: *${o.number}* (محجوز لك حتى الدفع)`] : []), `المبلغ: *${round(o.amount)} ₪*`, '',
-    `${pay} خلال ${minutes} دقائق، ثم أرسل هنا *اسم المحوِّل* أو *رقم هاتفه* أو *الرقم المرجعي*، أو *صورة الإشعار*.`,
-    'نتحقق من التحويل تلقائياً، ويصلك التفعيل هنا.'].join('\n'));
+  return say(jid, [`✅ حجزنالك طلب رقم *${o.code}*`, o.package_label, ...(o.esim && o.number ? [`📞 رقمك الجديد: *${o.number}* (محجوزلك لحد ما تدفع)`] : []), `المبلغ: *${round(o.amount)} ₪*`, '',
+    `${pay} خلال ${minutes} دقايق، وبعدها ابعتلي هون *اسم اللي حوّل* أو *رقم تلفونه* أو *الرقم المرجعي*، أو *صورة الإشعار*.`,
+    'منفحص التحويل لحالنا، وبيوصلك التفعيل هون. وإذا بدك تعرف وين صار، اكتب *وين طلبي*.'].join('\n'));
 }
 
 // Continues the purchase; false when the message is something else.
@@ -673,20 +674,20 @@ async function orderStep(jid, phone, s, t, raw, shop) {
   const contact = /^05\d{8}$/.test(phone) ? phone : '';
   if (s.step === 'name') {
     const name = str(raw, 80);
-    if (name.length < 2 || /\d/.test(name)) return say(jid, 'اكتب اسمك الكامل (حروف فقط):');
+    if (name.length < 2 || /\d/.test(name)) return say(jid, 'اكتبلي اسمك الكامل (حروف بس):');
     return placeShopOrder(jid, { packageId: p.id, kind: 'new', esim: true, customerName: name, contactPhone: contact });
   }
   if (s.step === 'number' || s.step === 'lineNumber') {
     const number = phoneIn(t);
-    if (!number) return say(jid, 'اكتب رقم هاتف صحيحاً، مثل 0599123456:');
+    if (!number) return say(jid, 'اكتبلي رقم تلفون صحيح، زي 0599123456:');
     if (s.step === 'number') return placeShopOrder(jid, { packageId: p.id, kind: 'recharge', number, contactPhone: contact || number });
     return placeShopOrder(jid, { packageId: p.id, kind: 'new', number, sim: s.sim, contactPhone: contact || number });
   }
   if (s.step === 'iccid') {
     const sim = t.replace(/\D/g, '');
-    if (!/^\d{18,22}$/.test(sim)) return say(jid, 'رقم الشريحة من 18 إلى 22 رقماً. اكتبه كما هو على الشريحة:');
+    if (!/^\d{18,22}$/.test(sim)) return say(jid, 'رقم الشريحة من 18 لـ 22 رقم. اكتبه زي ما هو على الشريحة:');
     remember(jid, { ...s, step: 'lineNumber', sim });
-    return say(jid, 'والآن اكتب *رقم الهاتف* الخاص بهذه الشريحة (05XXXXXXXX):');
+    return say(jid, 'هلأ اكتبلي *رقم التلفون* تبع هالشريحة (05XXXXXXXX):');
   }
   return false;
 }
@@ -694,14 +695,16 @@ async function orderStep(jid, phone, s, t, raw, shop) {
 async function customerSays(jid, t, raw, phone = '') {
   const shop = require('./routes/shop').shopCatalogResponse();
   const cfg = config();
-  if (!shop.enabled) return say(jid, `${cfg.welcome || `أهلاً بك في ${shop.shopName}`}\nالمتجر مغلق الآن. سنرد عليك قريباً.`);
+  if (!shop.enabled) return say(jid, `${cfg.welcome || `أهلين فيك بـ ${shop.shopName}`}\nالمتجر مسكّر هلأ، ومنرد عليك بأقرب وقت.`);
   const s = session(jid);
   // Back to the start, or cancel what was begun.
   if (/^(0|رجوع|بدايه|القائمه|الشركات|متجر)$/.test(t) || RE.help.test(t)) return companiesMenu(jid, shop, cfg);
-  if (RE.no.test(t)) { sessions.delete(jid); return say(jid, 'تم الإلغاء. أرسل *0* للقائمة.'); }
+  if (RE.no.test(t)) { sessions.delete(jid); return say(jid, 'تمام، لغيناها. ابعت *0* للقائمة.'); }
   // An order number: its state, and the payment check.
   const code = orderCodeIn(raw);
   if (code) return customerOrder(jid, code, raw);
+  // "Where is my order?" without its number: this chat's own orders (asked before a payer's name is expected).
+  if (RE.whereOrder.test(t)) return myOrders(jid);
   if (s) {
     // The payment details for the order just made (a name, a phone or a reference — not a menu word).
     if (s.step === 'proof') {
@@ -721,7 +724,7 @@ async function customerSays(jid, t, raw, phone = '') {
   const asked = (RE.code.test(t) && Number(t.replace('#', ''))) || ((RE.esim.test(t) || RE.recharge.test(t) || /^(تفعيل|اطلب|شراء)/.test(t)) && pkgIdIn(t));
   if (asked) {
     const p = shop.packages.find((x) => x.id === asked);
-    return p ? startOrder(jid, p) : say(jid, 'لا باقة بهذا الرقم. أرسل *0* للقائمة.');
+    return p ? startOrder(jid, p) : say(jid, 'ما في باقة بهالرقم. ابعت *0* للقائمة.');
   }
   if (RE.packages.test(t)) return companiesMenu(jid, shop, cfg);
   const ai = await understand(t, raw, 'customer', shopContext(shop), jid, shopGuard(shop));
@@ -734,6 +737,7 @@ async function customerSays(jid, t, raw, phone = '') {
     return c ? servicesMenu(jid, shop, c) : companiesMenu(jid, shop, cfg);
   }
   if (ai?.action === 'verify' && orderCodeIn(String(ai.orderCode || ''))) return customerOrder(jid, orderCodeIn(String(ai.orderCode)), `${ai.orderCode} ${ai.payer || ''}`);
+  if (ai?.action === 'status') return myOrders(jid);
   if (ai?.action === 'answer' && ai.reply) return say(jid, `${String(ai.reply).slice(0, 1500)}\n\n👈 للشراء ابعت *0* لقائمة الشركات.`, { plain: true });
   return companiesMenu(jid, shop, cfg);
 }
@@ -744,15 +748,15 @@ async function customerImage(jid, getImage) {
   const s = session(jid);
   const orderId = (s?.step === 'proof' && s.orderId) || q(`SELECT w.order_id FROM wa_shop w JOIN shop_orders o ON o.id = w.order_id
      WHERE w.jid = ? AND o.status IN ('awaiting_payment','verifying','review') ORDER BY w.created_at DESC LIMIT 1`).get(jid)?.order_id;
-  if (!orderId) return say(jid, 'وصلت الصورة. إن كانت إشعار دفع، أرسل أولاً *رقم طلبك*.');
+  if (!orderId) return say(jid, 'وصلت الصورة 👍 إذا هي إشعار دفع، ابعتلي أول *رقم طلبك*.');
   let img;
-  try { img = await getImage(); } catch { return say(jid, 'تعذّر تنزيل الصورة. أرسل اسم المحوِّل أو الرقم المرجعي بدلاً منها.'); }
-  if (!img?.buffer?.length || img.buffer.length > 1_400_000) return say(jid, 'الصورة كبيرة أو فارغة. أرسل اسم المحوِّل أو الرقم المرجعي بدلاً منها.');
+  try { img = await getImage(); } catch { return say(jid, 'ما قدرت أنزّل الصورة. ابعتلي اسم اللي حوّل أو الرقم المرجعي بدالها.'); }
+  if (!img?.buffer?.length || img.buffer.length > 1_400_000) return say(jid, 'الصورة كبيرة أو فاضية. ابعتلي اسم اللي حوّل أو الرقم المرجعي بدالها.');
   const o = q('SELECT * FROM shop_orders WHERE id = ?').get(orderId);
   const v = await S.submitProof(o, { receipt: `data:${img.mime || 'image/jpeg'};base64,${img.buffer.toString('base64')}` });
   follow(jid, o, v.stage);
   remember(jid, { step: 'proof', orderId: o.id });
-  return say(jid, `📎 استلمنا صورة الإشعار لطلب *${o.code}*.\n${STAGE_TEXT[v.stage] || v.stage}\nلتسريع التحقق أرسل أيضاً *اسم المحوِّل* أو *الرقم المرجعي*.`);
+  return say(jid, `📎 وصلتنا صورة الإشعار لطلب *${o.code}*.\n${STAGE_TEXT[v.stage] || v.stage}\nعشان نخلّص أسرع، ابعت كمان *اسم اللي حوّل* أو *الرقم المرجعي*.`);
 }
 
 // ---------- optional: free text understood by Gemini (it only chooses among the actions above) ----------
@@ -807,7 +811,7 @@ function safeReply(reply, { prices = [], phones = [] } = {}) {
   for (const m of plain.matchAll(/(?:₪|nis|ils)\s*(\d+(?:[.,]\d+)?)/gi)) if (!okPrices.has(amount(m[1]))) return '';
   return text;
 }
-const AI_ACTIONS = { agent: ['balance', 'recharge', 'esim', 'packages', 'answer'], customer: ['packages', 'buy', 'package', 'verify', 'answer'] };
+const AI_ACTIONS = { agent: ['balance', 'recharge', 'esim', 'packages', 'answer'], customer: ['packages', 'buy', 'package', 'verify', 'status', 'answer'] };
 
 // One question to the model, within the allowances (200 an hour in all, 20 per chat). Its JSON answer, or null.
 function aiAllowed(jid) {
@@ -868,7 +872,7 @@ async function understand(t, raw, kind, context = '', jid = '', guard = {}) {
   if (!cfg.aiKey || !raw || !aiAllowed(jid)) return null;
   const actions = kind === 'agent'
     ? '"balance" | "recharge" (needs number and packageId) | "esim" (needs packageId) | "packages" (company, kind: card|esim|"") | "answer"'
-    : '"packages" (company) | "buy" (packageId: the customer wants that package) | "verify" (orderCode, payer: name, phone or reference of the transfer) | "answer"';
+    : '"packages" (company) | "buy" (packageId: the customer wants that package) | "verify" (orderCode, payer: name, phone or reference of the transfer) | "status" (the customer asks what happened with their order, or why it is late) | "answer"';
   const who = kind === 'agent' ? 'الوكيل' : 'الزبون';
   const system = `أنت مساعد متجر خطوط وشرائح eSIM وكروت شحن، ترد على واتساب. مهمتك أن تفهم ما يريده ${who} وتختار إجراءً من القائمة، وأن تعيد JSON فقط:
 {"action": ${actions}, "packageId": 0, "number": "", "company": "", "kind": "", "orderCode": "", "payer": "", "reply": ""}
@@ -912,6 +916,43 @@ ${k ? `معلومات من المتجر: ${k}\n` : ''}أعد JSON فقط: {"intr
 }
 
 // ---------- customers' shop orders: the payment check, and every change sent to the chat ----------
+// This chat's orders (followed here, or made from this chat), newest first. A customer asking about them gets each
+// one's state as the shop has it; one waiting long on its payment check is brought to the manager, once an hour.
+const ORDER_WAIT_MS = 15 * 60_000;
+const askedAbout = new Map();
+function chatOrders(jid) {
+  return q(`SELECT o.* FROM shop_orders o
+            WHERE o.id IN (SELECT order_id FROM wa_shop WHERE jid = ?) OR o.ip = ?
+            ORDER BY o.created_at DESC LIMIT 3`).all(jid, `wa:${jid}`.slice(0, 64));
+}
+async function myOrders(jid) {
+  const S = require('./routes/shop');
+  const list = chatOrders(jid);
+  if (!list.length) {
+    return say(jid, 'ما لقيت طلبات من هالرقم 🤔\nابعتلي *رقم الطلب* (موجود برسالة الحجز أو بصفحة طلبك عالمتجر) ومنشيكلك عليه.');
+  }
+  if (list.length === 1) {
+    const o = list[0];
+    await nudgeManager(o, S.orderView(o));
+    return customerOrder(jid, o.code, o.code);
+  }
+  const lines = [];
+  for (const o of list) {
+    const v = S.orderView(o);
+    follow(jid, o, v.stage);
+    await nudgeManager(o, v);
+    lines.push(`• طلب *${o.code}* — ${o.package_label}\n  ${STAGE_TEXT[v.stage] || v.stage}`);
+  }
+  return say(jid, ['📋 *طلباتك:*', ...lines, '', 'لتفاصيل طلب واحد ابعت رقمه.'].join('\n'));
+}
+async function nudgeManager(o, v) {
+  if (!['verifying', 'review', 'paid_issue'].includes(v.stage) || now() - o.created_at < ORDER_WAIT_MS) return;
+  if (now() - (askedAbout.get(o.id) || 0) < 60 * 60_000) return;
+  askedAbout.set(o.id, now());
+  const mins = Math.round((now() - o.created_at) / 60_000);
+  await tellAdmins(`🔔 زبون بيسأل عن طلب ${o.code} — ${o.package_label} — ${round(o.amount)} ₪\nصارله ${mins} دقيقة، وحالته: ${STAGE_TEXT[v.stage] || v.stage}\nمن البوابة: متجر الزبائن.`);
+}
+
 const orderCodeIn = (text) => {
   const m = String(text || '').toUpperCase().match(/(?:^|[^A-Z0-9])([A-Z0-9]{8})(?![A-Z0-9])/g) || [];
   for (const x of m) {
@@ -921,15 +962,15 @@ const orderCodeIn = (text) => {
   return '';
 };
 const STAGE_TEXT = {
-  awaiting_payment: '⏳ بانتظار الدفع.',
-  verifying: '⏳ نتحقق من التحويل: لم يصل إشعاره بعد. نعيد الفحص تلقائياً ويصلك الرد هنا.',
-  review: '🔎 الطلب عند المدير لمراجعة الدفع يدوياً. يصلك الرد هنا.',
-  processing: '✅ تم التحقق من الدفع. جارٍ التفعيل، ويصلك رمز التفعيل هنا.',
-  paid_issue: '✅ تم التحقق من الدفع. التفعيل يحتاج تدخل المدير، ويصلك الرمز هنا فور تجهيزه.',
-  done: '✅ تم التفعيل.',
-  failed: '❌ تعذّر التفعيل. سيتواصل معك المتجر.',
-  rejected: '❌ رُفض الطلب.',
-  cancelled: '⌛ انتهت مهلة الطلب وأُلغي. يمكنك طلب باقة جديدة.',
+  awaiting_payment: '⏳ لسا مستنيين الدفع.',
+  verifying: '⏳ عم نفحص التحويل: إشعاره لسا ما وصل. منضل نفحص لحالنا، وبيوصلك الرد هون.',
+  review: '🔎 الطلب عند المدير ليراجع الدفع بإيده. بيوصلك الرد هون.',
+  processing: '✅ تأكدنا من الدفع. عم نفعّل هلأ، وبيوصلك رمز التفعيل هون.',
+  paid_issue: '✅ تأكدنا من الدفع. التفعيل بدّه المدير يتدخل، وبيوصلك الرمز هون أول ما يجهز.',
+  done: '✅ خلص التفعيل.',
+  failed: '❌ ما زبط التفعيل. المتجر رح يتواصل معك.',
+  rejected: '❌ الطلب انرفض.',
+  cancelled: '⌛ خلصت مهلة الطلب وانلغى. فيك تطلب باقة جديدة وقت ما بدك.',
 };
 function follow(jid, o, stage) {
   q(`INSERT INTO wa_shop (order_id, jid, stage, created_at) VALUES (?, ?, ?, ?)
@@ -946,7 +987,7 @@ async function customerOrder(jid, code, raw) {
   follow(jid, o, v.stage);
   if (o.status === 'awaiting_payment') {
     remember(jid, { step: 'proof', orderId: o.id });
-    return say(jid, `طلب *${o.code}* — ${o.package_label} — *${round(o.amount)} ₪*\n${STAGE_TEXT.awaiting_payment}\n\nبعد التحويل بجوال باي أرسل *اسم المحوِّل* أو *رقم هاتفه* أو *الرقم المرجعي* للتحويل.`);
+    return say(jid, `طلب *${o.code}* — ${o.package_label} — *${round(o.amount)} ₪*\n${STAGE_TEXT.awaiting_payment}\n\nبعد ما تحوّل بجوال باي، ابعتلي *اسم اللي حوّل* أو *رقم تلفونه* أو *الرقم المرجعي*.`);
   }
   return orderUpdate(jid, o, v);
 }
@@ -966,10 +1007,10 @@ async function orderUpdate(jid, o, v) {
     const m = /^data:image\/(?:png|jpe?g);base64,(.+)$/.exec(v.esimQr || '');
     if (m) image = Buffer.from(m[1], 'base64');
     else if (/^LPA:/i.test(code)) image = qrcode.png(code, { scale: 8 });
-    const caption = `✅ تم تفعيل eSIM لطلبك *${o.code}*${v.number ? ` — الرقم *${v.number}*` : ''}\n\nامسح الرمز من الهاتف: الإعدادات ← الشبكة الخلوية ← إضافة eSIM.`;
+    const caption = `✅ تفعّلت الـ eSIM لطلبك *${o.code}*${v.number ? ` — الرقم *${v.number}*` : ''}\n\nامسح الرمز من التلفون: الإعدادات ← الشبكة الخلوية ← إضافة eSIM.`;
     if (image) await send(jid, { image, caption });
-    else await say(jid, `${caption}\nالرمز في صفحة طلبك على المتجر.`);
-    if (code) await say(jid, `رمز التفعيل اليدوي:\n${code}`);
+    else await say(jid, `${caption}\nالرمز موجود بصفحة طلبك عالمتجر.`);
+    if (code) await say(jid, `وإذا الكاميرا ما زبطت، هاد رمز التفعيل اليدوي:\n${code}`);
     return undefined;
   }
   return say(jid, `طلب *${o.code}* — ${o.package_label}\n${STAGE_TEXT[v.stage] || v.stage}`);
@@ -1062,5 +1103,5 @@ if (linked()) setTimeout(() => start().catch((e) => console.error('whatsapp star
 
 module.exports = {
   start, logout, status, config, configView, saveConfig, sendTo, taskResolved, handle,
-  _test: { safeIntro, safeReply, aiCallsByChat, setTransport: (fn) => { transport = fn; }, setDownloader: (fn) => { downloader = fn; }, sessions, recent, norm, onRaw, jidOf, watchShop, history },
+  _test: { safeIntro, safeReply, aiCallsByChat, askedAbout, setTransport: (fn) => { transport = fn; }, setDownloader: (fn) => { downloader = fn; }, sessions, recent, norm, onRaw, jidOf, watchShop, history },
 };
