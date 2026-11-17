@@ -315,9 +315,22 @@ const RE = {
   code: /^#?(\d{1,6})$/,
 };
 const pkgIdIn = (t) => Number((t.replace(PHONE_RE, ' ').match(/#?\b(\d{1,6})\b/) || [])[1]) || 0;
+// The phone number in a message: a word that is one ("0599123456", "0599-123-456", "+972599123456"), or a run of
+// number words that together make exactly one ("059 912 3456"). A run that makes something longer (an ICCID written in
+// groups) gives none; a number next to another word ("شحن 0599123456 12") is still found.
+const WHOLE_PHONE = /^(?:(?:\+|00)?(?:972|970)5\d{8}|05\d{8})$/;
 const phoneIn = (t) => {
-  const m = t.replace(/[\s-]/g, '').match(PHONE_RE);
-  return m ? normalizePhone(m[0]) : '';
+  const words = String(t || '').split(/\s+/).map((w) => w.replace(/-/g, ''));
+  const isNum = (w) => /^\+?\d+$/.test(w);
+  for (let i = 0; i < words.length; i++) {
+    if (!isNum(words[i]) || (i > 0 && isNum(words[i - 1]))) continue; // the start of a run of number words
+    let j = i;
+    while (j + 1 < words.length && isNum(words[j + 1])) j++;
+    const run = words.slice(i, j + 1);
+    if (WHOLE_PHONE.test(run.join(''))) return normalizePhone(run.join(''));
+    for (const w of run) if (WHOLE_PHONE.test(w)) return normalizePhone(w);
+  }
+  return '';
 };
 
 async function handle({ jid, phone, text = '', image = null }) {
