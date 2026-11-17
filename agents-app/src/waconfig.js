@@ -14,7 +14,6 @@ const phoneList = (v) => [...new Set(String(v || '').split(/[\s,،;]+/).map(norm
 const AI_MODELS = [
   { id: 'gemini-3.1-flash-lite', providers: ['vertex'], in: 0.25, out: 1.5, label: 'Gemini 3.1 Flash-Lite — الأرخص' },
   { id: 'gemini-3.5-flash-lite', providers: ['vertex'], in: 0.3, out: 2.5, label: 'Gemini 3.5 Flash-Lite' },
-  { id: 'gemini-3-flash', providers: ['vertex'], in: 0.5, out: 3, label: 'Gemini 3 Flash' },
   { id: 'gemini-3.5-flash', providers: ['vertex'], in: 1.5, out: 9, label: 'Gemini 3.5 Flash — الأقوى والأغلى' },
 ];
 const UNLISTED_PRICE = { in: 1.5, out: 9 };

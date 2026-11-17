@@ -807,8 +807,8 @@ function withinBudget(system, user) {
   }
   return false;
 }
-function spent(usage, system, user, answer) {
-  const p = priceOf();
+function spent(usage, system, user, answer, model = '') {
+  const p = priceOf(model ? { ...config(), aiModel: model } : config());
   // Vertex AI's usageMetadata (thinking billed as output). Missing: counted from the text.
   const u = usage || {};
   const tokensIn = Number(u.promptTokenCount) || Math.ceil((system.length + user.length) / 2.5);
@@ -845,6 +845,32 @@ function vertexUrl(project, model) {
   return `${base}/v1/projects/${encodeURIComponent(project)}/locations/${loc}/publishers/google/models/${encodeURIComponent(model)}:generateContent`;
 }
 
+// Google answers 429 (resource exhausted) or 503 when Gemini is busy for everyone: the same question is asked again a
+// moment later, then once more on another model (the fallback), before giving up (the menus answer then).
+const FALLBACK_MODEL = 'gemini-3.5-flash-lite';
+const BUSY = new Set([429, 503]);
+const pause = (ms) => new Promise((r) => setTimeout(r, Number(process.env.VERTEX_RETRY_MS ?? ms)));
+async function vertexGenerate(payload, timeout) {
+  const cfg = config();
+  const models = [cfg.aiModel, ...(cfg.aiModel !== FALLBACK_MODEL ? [FALLBACK_MODEL] : [])];
+  let res = null;
+  let model = cfg.aiModel;
+  for (const m of models) {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const a = await vertexAccess();
+      model = m;
+      res = await fetch(vertexUrl(a.project, m), {
+        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${a.token}` },
+        body: JSON.stringify(payload), signal: AbortSignal.timeout(timeout),
+      });
+      if (!BUSY.has(res.status)) return { res, model };
+      state.aiBusy = (state.aiBusy || 0) + 1;
+      await pause(attempt ? 2500 : 1000);
+    }
+  }
+  return { res, model };
+}
+
 // One question to Gemini on the owner's Google Cloud project (Vertex AI), by the server's own identity: JSON only,
 // the instructions apart from the person's words. Its answer, or null (nothing made up when it fails).
 async function askModel(system, user, { temperature = 0.1, timeout = 15_000 } = {}) {
@@ -852,13 +878,7 @@ async function askModel(system, user, { temperature = 0.1, timeout = 15_000 } = 
   const name = 'Vertex AI';
   if (!withinBudget(system, user)) return null;
   try {
-    const a = await vertexAccess();
-    const res = await fetch(vertexUrl(a.project, cfg.aiModel), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${a.token}` },
-      body: JSON.stringify({ systemInstruction: { parts: [{ text: system }] }, contents: [{ role: 'user', parts: [{ text: user }] }], generationConfig: { temperature, responseMimeType: 'application/json' } }),
-      signal: AbortSignal.timeout(timeout),
-    });
+    const { res, model } = await vertexGenerate({ systemInstruction: { parts: [{ text: system }] }, contents: [{ role: 'user', parts: [{ text: user }] }], generationConfig: { temperature, responseMimeType: 'application/json' } }, timeout);
     if (!res.ok) {
       if (res.status === 401) vertexAuth.token = '';
       const err = await res.json().catch(() => null);
@@ -868,7 +888,7 @@ async function askModel(system, user, { temperature = 0.1, timeout = 15_000 } = 
     const data = await res.json();
     setAiError('');
     const out = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-    spent(data?.usageMetadata, system, user, out);
+    spent(data?.usageMetadata, system, user, out, model);
     const v = JSON.parse(String(out || 'null').replace(/^```(?:json)?\s*|\s*```$/g, ''));
     return v && typeof v === 'object' ? v : null;
   } catch (e) {
@@ -973,14 +993,8 @@ async function askAgent(system, contents) {
   const size = JSON.stringify(contents) + JSON.stringify(AGENT_TOOLS);
   if (!withinBudget(system, size)) return null;
   try {
-    const a = await vertexAccess();
-    const res = await fetch(vertexUrl(a.project, cfg.aiModel), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${a.token}` },
-      body: JSON.stringify({ systemInstruction: { parts: [{ text: system }] }, contents, tools: AGENT_TOOLS,
-        toolConfig: { functionCallingConfig: { mode: 'AUTO' } }, generationConfig: { temperature: 0.4, maxOutputTokens: 700 } }),
-      signal: AbortSignal.timeout(20_000),
-    });
+    const { res, model } = await vertexGenerate({ systemInstruction: { parts: [{ text: system }] }, contents, tools: AGENT_TOOLS,
+      toolConfig: { functionCallingConfig: { mode: 'AUTO' } }, generationConfig: { temperature: 0.4, maxOutputTokens: 700 } }, 20_000);
     if (!res.ok) {
       if (res.status === 401) vertexAuth.token = '';
       const err = await res.json().catch(() => null);
@@ -990,7 +1004,7 @@ async function askAgent(system, contents) {
     const data = await res.json();
     setAiError('');
     const parts = Array.isArray(data?.candidates?.[0]?.content?.parts) ? data.candidates[0].content.parts : [];
-    spent(data?.usageMetadata, system, size, parts.map((x) => x.text || '').join(''));
+    spent(data?.usageMetadata, system, size, parts.map((x) => x.text || '').join(''), model);
     return { parts };
   } catch (e) {
     setAiError(`Vertex AI: ${String(e.message).slice(0, 200)}`);

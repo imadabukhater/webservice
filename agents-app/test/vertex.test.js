@@ -2,6 +2,7 @@
 // Vertex AI (Google Cloud): the WhatsApp assistant asks Gemini by the server's own Google identity, with no key kept.
 process.env.DB_FILE = ':memory:';
 process.env.ADMIN_PASSWORD = 'admin-pass';
+process.env.VERTEX_RETRY_MS = '0';
 process.env.WA_DATA = require('node:path').join(require('node:os').tmpdir(), `wa-vertex-${process.pid}`);
 
 const test = require('node:test');
@@ -24,6 +25,7 @@ const google = http.createServer((req, res) => {
       }
     }
     seen.calls.push({ url: req.url, auth: req.headers.authorization, body: body ? JSON.parse(body) : null });
+    if (seen.busy > 0) { seen.busy--; res.writeHead(429, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ error: { message: 'Resource exhausted. Please try again later.' } })); }
     if (req.headers.authorization !== 'Bearer tok-1') { res.writeHead(401, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ error: { message: 'bad token' } })); }
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ candidates: [{ content: { parts: [{ text: JSON.stringify({ intro: 'أهلين فيك' }) }] } }],
@@ -100,3 +102,26 @@ test('the spend of the day is counted from what each answer used; the assistant 
   assert.throws(() => wa.saveConfig({ aiDailyUsd: -1 }), /حد الصرف اليومي/);
 });
 function vertexReset(wa) { wa._test.vertexAuth.token = ''; seen.tokens = 0; }
+
+test('Google busy (429): asked again a moment later, then on the fallback model, then the menus', async () => {
+  const wa = require('../src/whatsapp');
+  wa.saveConfig({ aiModel: 'gemini-3.1-flash-lite', aiDailyUsd: 0.6, aiPriceIn: '', aiPriceOut: '' });
+  wa._test.vertexAuth.token = '';
+  seen.tokens = 0;
+  // Busy once: the same model, again.
+  let from = seen.calls.length;
+  seen.busy = 1;
+  assert.ok(await wa._test.askModel('تعليمات', 'بيانات'));
+  assert.deepEqual(seen.calls.slice(from).map((c) => c.url.split('/models/')[1]), ['gemini-3.1-flash-lite:generateContent', 'gemini-3.1-flash-lite:generateContent']);
+  // Busy twice: the fallback model answers.
+  from = seen.calls.length;
+  seen.busy = 2;
+  assert.ok(await wa._test.askModel('تعليمات', 'بيانات'));
+  assert.equal(seen.calls.at(-1).url.split('/models/')[1], 'gemini-3.5-flash-lite:generateContent');
+  assert.equal(seen.calls.length - from, 3);
+  // Busy every time: nothing made up; the error shows, and the menus answer.
+  seen.busy = 4;
+  assert.equal(await wa._test.askModel('تعليمات', 'بيانات'), null);
+  assert.match(wa.status().aiError, /Vertex AI 429/);
+  seen.busy = 0;
+});
