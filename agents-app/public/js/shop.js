@@ -1767,14 +1767,22 @@ function viewBuy(id) {
 
       ${renderCheckoutPackageSummary(pk, co, { isEsim: false, isCard })}
 
+      ${pk.simLine ? `
+        <div class="field">
+          <label for="f-cname">اسمك الكامل (الاسم والعائلة)</label>
+          <input id="f-cname" name="customerName" class="input" autocomplete="name" required placeholder="مثال: محمد أحمد">
+        </div>
+        <div class="shop-bd-row" style="margin-bottom:12px"><span>📞 رقمك الجديد</span><b>بيعطيك ياه المتجر ومحجوز إلك بعد الطلب</b></div>
+      ` : `
       <div class="field">
         <label for="f-phone">${isCard ? 'رقم الهاتف المراد شحنه' : 'رقم الهاتف'}</label>
         <input id="f-phone" name="number" class="input ltr" inputmode="tel" autocomplete="tel" required placeholder="05XXXXXXXX">
       </div>
+      `}
 
       ${!isCard ? `
         <div class="field">
-          <label for="f-sim">رقم الشريحة ICCID (19 رقماً)</label>
+          <label for="f-sim">رقم الشريحة ICCID (19 رقماً، مكتوب على الشريحة)</label>
           <input id="f-sim" name="sim" class="input ltr" inputmode="numeric" required placeholder="89970...">
         </div>
       ` : ''}
@@ -1793,7 +1801,7 @@ function viewBuy(id) {
       <div class="esim-consent-wrap">
         <label class="esim-consent-label">
           <input type="checkbox" name="consent" required>
-          <span>تأكدت من الرقم وأوافق على الشروط.</span>
+          <span>${pk.simLine ? 'تأكدت من رقم الشريحة وأوافق على الشروط.' : 'تأكدت من الرقم وأوافق على الشروط.'}</span>
         </label>
         <button type="button" class="btn ghost btn-sm" data-act="legal-sheet" data-tab="terms">${icon('shield')}<span>الشروط والضمان</span></button>
       </div>
@@ -1827,7 +1835,7 @@ function viewBuy(id) {
           packageId: pk.id,
           kind: isCard ? 'recharge' : 'new',
           customerName: fd.get('customerName') || '',
-          number: fd.get('number'),
+          ...(pk.simLine ? {} : { number: fd.get('number') }),
           sim: fd.get('sim') || '',
         },
       });

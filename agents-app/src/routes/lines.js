@@ -50,7 +50,10 @@ route('GET', '/api/lines/:id', ANY, ({ user, params }) => {
 route('POST', '/api/lines', ANY, ({ user, body }) => tx(() => createLine(user, body)));
 
 // A new line or card recharge sold by `user` (an agent, or the manager for body.agentId). Runs inside the caller's transaction.
-function createLine(user, body) {
+// opts.total: what a customer shop's customer paid (never from a request's body): its sale is charged the agent's price
+// as usual (the difference stays with the shop's account), or what the customer paid when no agent's price is set or
+// it is above that.
+function createLine(user, body, opts = {}) {
   const isAdmin = user.role === 'admin';
   const agent = isAdmin ? D.getAgent(body.agentId) : D.getUser(user.id);
   if (!agent.active) fail(403, 'حساب الوكيل موقوف');
@@ -76,13 +79,16 @@ function createLine(user, body) {
   let unit = quoted;
   if (isAdmin && !isBlank(body.unitPrice)) unit = num(body.unitPrice, 'السعر');
   if (unit < 0) fail(400, 'السعر لا يكون سالباً');
-  if (!isAdmin && !(unit > 0)) fail(400, 'لم يحدد المدير سعر هذه الرزمة بعد');
+  if (!isAdmin && !(unit > 0) && !(Number(opts.total) > 0)) fail(400, 'لم يحدد المدير سعر هذه الرزمة بعد');
   // A package with a set duration (e.g. 90 days) is sold once, not per month.
   const days = pkg.days || null;
   if (days) months = 1;
   // The eSIM activation fee uses the company's custom eSIM QR fee if configured, or the global esimFee setting.
   const companyFee = pkg.company_esim_fee === null || pkg.company_esim_fee === undefined ? null : Number(pkg.company_esim_fee);
   const esimFee = esim ? (companyFee !== null && Number.isFinite(companyFee) ? companyFee : getSettings().esimFee) : 0;
+  if (Number(opts.total) > 0 && (!(unit > 0) || round(unit * months + esimFee) > Number(opts.total))) {
+    unit = Math.max(0, round((Number(opts.total) - esimFee) / months));
+  }
   const total = round(unit * months + esimFee);
   const cost = round(pkg.cost * months + esimFee);
 

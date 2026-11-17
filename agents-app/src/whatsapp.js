@@ -607,9 +607,12 @@ function startOrder(jid, p, svc = serviceOf(p)) {
   const head = `*${p.companyName} — ${p.name}*\nالسعر: *${priceText(p, svc)}*`;
   if (svc === 'esim') { remember(jid, { step: 'name', pkgId: p.id, svc }); return say(jid, `${head}\n\nاكتبلي *اسمك الكامل* (عشان نسجّل الخط عليه):`); }
   if (svc === 'card') { remember(jid, { step: 'number', pkgId: p.id, svc }); return say(jid, `${head}\n\nاكتبلي *رقم الهاتف* اللي بدك تشحنه (05XXXXXXXX):`); }
-  remember(jid, { step: 'iccid', pkgId: p.id, svc });
-  return say(jid, `${head}\n\nاكتبلي *رقم الشريحة* (ICCID: من 18 لـ 22 رقم، مكتوب على الشريحة):`);
+  remember(jid, { step: 'iccid', pkgId: p.id, svc, simLine: !!p.simLine });
+  return say(jid, `${head}\n\nاكتبلي *رقم الشريحة* (ICCID: من 18 لـ 22 رقم، مكتوب على الشريحة)${p.simLine ? '، ورقمك الجديد بيعطيك ياه المتجر' : ''}:`);
 }
+
+// The number given by the supplier and held for the order (an eSIM's, or an Aylol new line's on the customer's SIM).
+const reservedNumber = (o) => (o.number && (o.esim || String(o.number_id || '').startsWith('ayl:')) ? o.number : '');
 
 // A real shop order: reserved for this chat (one at a time), paid by Jawwal Pay, checked against the payment e-mails.
 async function placeShopOrder(jid, body) {
@@ -623,7 +626,7 @@ async function placeShopOrder(jid, body) {
   const minutes = Math.max(1, Math.round(require('./shop').RESERVE_MS / 60_000));
   const pay = shop.jawwalpay?.number ? `حوّل بجوال باي على *${shop.jawwalpay.number}*${shop.jawwalpay.name ? ` (${shop.jawwalpay.name})` : ''}` : 'حوّل بجوال باي';
   // A new subscription: the number comes from the supplier's free numbers, reserved for this order.
-  return say(jid, [`✅ حجزنالك طلب رقم *${o.code}*`, o.package_label, ...(o.esim && o.number ? [`📞 رقمك الجديد: *${o.number}* (محجوزلك لحد ما تدفع)`] : []), `المبلغ: *${round(o.amount)} ₪*`, '',
+  return say(jid, [`✅ حجزنالك طلب رقم *${o.code}*`, o.package_label, ...(reservedNumber(o) ? [`📞 رقمك الجديد: *${reservedNumber(o)}* (محجوزلك لحد ما تدفع)`] : []), `المبلغ: *${round(o.amount)} ₪*`, '',
     `${pay} خلال ${minutes} دقايق، وبعدها ابعتلي هون *اسم اللي حوّل* أو *رقم تلفونه* أو *الرقم المرجعي*، أو *صورة الإشعار*.`,
     'منفحص التحويل لحالنا، وبيوصلك التفعيل هون. وإذا بدك تعرف وين صار، اكتب *وين طلبي*.'].join('\n'));
 }
@@ -658,9 +661,15 @@ async function orderStep(jid, phone, s, t, raw, shop) {
     if (s.step === 'number') return placeShopOrder(jid, { packageId: p.id, kind: 'recharge', number, contactPhone: contact || number });
     return placeShopOrder(jid, { packageId: p.id, kind: 'new', number, sim: s.sim, contactPhone: contact || number });
   }
+  if (s.step === 'lineName') {
+    const name = str(raw, 80);
+    if (name.split(/\s+/).filter(Boolean).length < 2 || /\d/.test(name)) return say(jid, 'اكتبلي اسمك الكامل (الاسم والعائلة):');
+    return placeShopOrder(jid, { packageId: p.id, kind: 'new', sim: s.sim, customerName: name, contactPhone: contact });
+  }
   if (s.step === 'iccid') {
     const sim = t.replace(/\D/g, '');
     if (!/^\d{18,22}$/.test(sim)) return say(jid, 'رقم الشريحة من 18 لـ 22 رقم. اكتبه زي ما هو على الشريحة:');
+    if (s.simLine) { remember(jid, { ...s, step: 'lineName', sim }); return say(jid, 'تمام 👍 هلأ اكتبلي *اسمك الكامل* (الاسم والعائلة) عشان نسجّل الخط عليه:'); }
     remember(jid, { ...s, step: 'lineNumber', sim });
     return say(jid, 'هلأ اكتبلي *رقم التلفون* تبع هالشريحة (05XXXXXXXX):');
   }
@@ -940,7 +949,7 @@ const AGENT_TOOLS = [{ functionDeclarations: [
     parameters: { type: 'OBJECT', properties: {
       company: { type: 'STRING', description: 'اسم الشركة زي ما كتبه الزبون (هوت، سلكوم، بارتنر…)' },
       service: { type: 'STRING', enum: ['esim', 'card', 'line'], description: 'esim شريحة إلكترونية، card شحن رصيد لرقم موجود، line خط جديد على شريحة' } } } },
-  { name: 'create_order', description: 'يعمل طلب حقيقي بالمتجر للباقة اللي اختارها الزبون وأكدها. eSIM بدها customer_name، الشحن بدّه phone_number، الخط على شريحة بدّه sim_number و phone_number.',
+  { name: 'create_order', description: 'يعمل طلب حقيقي بالمتجر للباقة اللي اختارها الزبون وأكدها. eSIM بدها customer_name، الشحن بدّه phone_number، الخط على شريحة بدّه sim_number و phone_number، والخط الجديد اللي رقمه من المتجر (new_number_from_shop) بدّه sim_number و customer_name (الاسم والعائلة) بس.',
     parameters: { type: 'OBJECT', properties: {
       package_id: { type: 'INTEGER', description: 'رقم الباقة من list_packages' },
       customer_name: { type: 'STRING', description: 'اسم الزبون الكامل (لشريحة eSIM)' },
@@ -1016,7 +1025,7 @@ async function askAgent(system, contents) {
 function orderFacts(o, shop) {
   const minutes = Math.max(1, Math.round(require('./shop').RESERVE_MS / 60_000));
   const pay = shop.jawwalpay?.number ? `حوّل بجوال باي على *${shop.jawwalpay.number}*${shop.jawwalpay.name ? ` (${shop.jawwalpay.name})` : ''}` : 'حوّل بجوال باي';
-  return [`🧾 طلب رقم *${o.code}* — ${o.package_label}`, ...(o.esim && o.number ? [`📞 رقمك الجديد: *${o.number}* (محجوزلك لحد ما تدفع)`] : []),
+  return [`🧾 طلب رقم *${o.code}* — ${o.package_label}`, ...(reservedNumber(o) ? [`📞 رقمك الجديد: *${reservedNumber(o)}* (محجوزلك لحد ما تدفع)`] : []),
     `💰 المبلغ: *${round(o.amount)} ₪*`, `💳 ${pay} خلال ${minutes} دقايق، وبعدها ابعتلي هون *اسم اللي حوّل* أو *رقم تلفونه* أو *الرقم المرجعي*، أو *صورة الإشعار*.`].join('\n');
 }
 const stageFacts = (o, stage) => `🧾 طلب *${o.code}* — ${o.package_label}\n${STAGE_TEXT[stage] || stage}`;
@@ -1037,7 +1046,8 @@ async function agentTool(name, args, ctx) {
       return { company: co.name, packages: list.slice(0, 20).map((p) => {
         const svc = serviceOf(p);
         const fee = svc === 'esim' ? round(p.esimFee || 0) : 0;
-        return { id: p.id, name: p.name, gb: p.dataGb || null, days: p.days || 30, service: svc, price: round(p.price), ...(svc === 'esim' ? { esim_fee: fee, total: round(p.price + fee) } : {}) };
+        return { id: p.id, name: p.name, gb: p.dataGb || null, days: p.days || 30, service: svc, price: round(p.price), ...(svc === 'esim' ? { esim_fee: fee, total: round(p.price + fee) } : {}),
+          ...(p.simLine ? { new_number_from_shop: true } : {}) };
       }) };
     }
     if (name === 'create_order') {
@@ -1048,12 +1058,13 @@ async function agentTool(name, args, ctx) {
       const number = phoneIn(norm(String(args.phone_number || '')));
       const sim = String(args.sim_number || '').replace(/\D/g, '');
       const need = [];
-      if (svc === 'esim' && (name2.length < 2 || /\d/.test(name2))) need.push('customer_name');
-      if (svc !== 'esim' && !number) need.push('phone_number');
+      if ((svc === 'esim' && (name2.length < 2 || /\d/.test(name2))) || (p.simLine && (name2.split(/\s+/).filter(Boolean).length < 2 || /\d/.test(name2)))) need.push('customer_name');
+      if (svc !== 'esim' && !p.simLine && !number) need.push('phone_number');
       if (svc === 'line' && !/^\d{18,22}$/.test(sim)) need.push('sim_number');
       if (need.length) return { ok: false, need, message: `ناقص من الزبون: ${need.join('، ')}` };
       const contact = /^05\d{8}$/.test(ctx.phone) ? ctx.phone : '';
-      const body = svc === 'esim' ? { packageId: p.id, kind: 'new', esim: true, customerName: name2, contactPhone: contact }
+      const body = p.simLine ? { packageId: p.id, kind: 'new', sim, customerName: name2, contactPhone: contact }
+        : svc === 'esim' ? { packageId: p.id, kind: 'new', esim: true, customerName: name2, contactPhone: contact }
         : svc === 'card' ? { packageId: p.id, kind: 'recharge', number, contactPhone: contact || number }
           : { packageId: p.id, kind: 'new', number, sim, contactPhone: contact || number };
       const v = await S.createOrder(body, { ip: chat, clientId: chat });
@@ -1062,6 +1073,7 @@ async function agentTool(name, args, ctx) {
       ctx.facts.push(orderFacts(o, shop));
       ctx.prices.add(round(o.amount));
       if (o.number) ctx.phones.add(o.number);
+      if (reservedNumber(o)) ctx.phones.add(reservedNumber(o));
       return { ok: true, order_code: o.code, amount: round(o.amount), package: o.package_label, note: 'رقم الطلب والمبلغ وطريقة الدفع بتنضاف تحت ردّك لحالها؛ لا تكتبهم.' };
     }
     if (name === 'order_status') {

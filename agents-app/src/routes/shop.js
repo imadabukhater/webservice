@@ -15,7 +15,7 @@ const { route, ADMIN } = require('../router');
 const RESERVE_MS = shop.RESERVE_MS;
 const heldNumbers = () => {
   shop.expireUnconfirmed();
-  return q(`SELECT number, number_id FROM shop_orders WHERE esim = 1 AND ((status = 'awaiting_payment' AND created_at > ?)
+  return q(`SELECT number, number_id FROM shop_orders WHERE (esim = 1 OR number_id LIKE 'ayl:%') AND ((status = 'awaiting_payment' AND created_at > ?)
     OR status IN ('verifying','review') OR (status = 'paid' AND line_id IS NULL))`).all(now() - RESERVE_MS);
 };
 // A package sold as an eSIM: a new line whose number (with its eSIM and QR code) comes from the supplier's free
@@ -133,7 +133,8 @@ function byCode(code, ip) {
 function shopCatalogResponse() {
   const s = getSettings();
   const packages = s.shopEnabled ? q(`SELECT p.*, c.name AS company_name, c.esim_fee AS company_esim_fee FROM packages p JOIN companies c ON c.id = p.company_id
-      WHERE p.active = 1 AND p.shop_price > 0 AND p.art_card_id NOT LIKE 'ay:bill:%' ORDER BY c.sort, c.id, p.sort, p.id`).all() : [];
+      WHERE p.active = 1 AND p.shop_price > 0 ORDER BY c.sort, c.id, p.sort, p.id`).all()
+      .filter((p) => !/^ay:bill:/.test(p.art_card_id || '') || require('../aylol').billAuto(p.art_card_id, p.supplier_company)) : [];
   const ids = new Set(packages.map((p) => p.company_id));
   return {
     // Every order is paid and verified before it is carried out: there is no instant (unpaid) activation.
@@ -154,6 +155,9 @@ function shopCatalogResponse() {
       kind: p.kind === 'card' ? 'card' : 'invoice',
       dataGb: p.data_gb, gb: p.data_gb, minutes: p.minutes, sms: p.sms, tag: p.tag, description: p.description, days: p.days || null,
       esim: isEsimRef(p.art_card_id, p.company_name) || !!p.esim_enabled,
+      // A new line on the customer's own SIM card, its number given by the supplier (Aylol): the SIM's number and the
+      // customer's full name are asked, never a phone number.
+      simLine: /^ay:bill:/.test(p.art_card_id || ''),
       esimFee: p.company_esim_fee === null || p.company_esim_fee === undefined ? s.esimFee : round(p.company_esim_fee),
     })),
   };
@@ -266,8 +270,12 @@ function createOrder(body, { ip, clientId = '' }) {
 
   if (body.kind === 'esim' || body.esim) return esimOrder(body, ip, clientId);
   const p = q(`SELECT p.*, c.name AS company_name, c.esim_fee AS company_esim_fee FROM packages p JOIN companies c ON c.id = p.company_id
-               WHERE p.id = ? AND p.active = 1 AND p.shop_price > 0 AND p.art_card_id NOT LIKE 'ay:bill:%'`).get(Number(body.packageId));
+               WHERE p.id = ? AND p.active = 1 AND p.shop_price > 0`).get(Number(body.packageId));
   if (!p) fail(404, 'الباقة غير متوفرة');
+  if (/^ay:bill:/.test(p.art_card_id || '')) {
+    if (!require('../aylol').billAuto(p.art_card_id, p.supplier_company)) fail(404, 'الباقة غير متوفرة');
+    return aylolLineOrder(body, ip, clientId, p);
+  }
   require('./aylol').ensureBalanceFor(p);
   const kind = body.kind === 'new' ? 'new' : 'recharge';
   const number = validPhone(normalizePhone(body.number));
@@ -278,6 +286,29 @@ function createOrder(body, { ip, clientId = '' }) {
   const row = q(`INSERT INTO shop_orders (code, package_id, package_label, kind, number, sim, customer_name, contact_phone, amount, ip, client_id, created_at, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
     .run(code, p.id, D.packageLabel(p), kind, number, sim, str(body.customerName, 80), contact, round(p.shop_price), ip, clientId, t, t);
+  return orderView(byCode(code));
+}
+
+// A new line on the customer's own SIM card at Aylol (as its site sells it): one of the numbers Aylol offers for the
+// package, picked at random and held for this order (no other customer gets it), with the SIM's number and the
+// customer's full name. Nothing is bought before the payment is verified; then the line is activated at Aylol.
+async function aylolLineOrder(body, ip, clientId, p) {
+  require('./aylol').ensureBalanceFor(p);
+  const customerName = str(body.customerName, 80);
+  if (customerName.split(/\s+/).filter(Boolean).length < 2 || /\d/.test(customerName)) fail(400, 'اكتب اسمك الكامل (الاسم والعائلة) — مطلوب لتسجيل الخط');
+  const sim = validIccid(normalizeIccid(body.sim));
+  if (q("SELECT 1 FROM lines WHERE sim = ? AND status != 'disconnected'").get(sim)) fail(409, 'هذه الشريحة مرتبطة برقم آخر');
+  const contact = body.contactPhone ? validPhone(normalizePhone(body.contactPhone)) : '';
+  const list = await require('./aylol').billFreeNumbers(p.art_card_id);
+  const held = new Set(heldNumbers().map((h) => h.number));
+  const free = list.filter((n) => !held.has(n.phone) && !q("SELECT 1 FROM lines WHERE number = ? AND status != 'disconnected'").get(n.phone));
+  if (!free.length) fail(409, 'ما في أرقام متاحة لهذه الباقة الآن. جرّب بعد قليل أو باقة أخرى.');
+  const picked = free[crypto.randomInt(free.length)];
+  const t = now();
+  const code = newCode();
+  q(`INSERT INTO shop_orders (code, package_id, package_label, kind, number, sim, customer_name, contact_phone, amount, ip, client_id, created_at, updated_at, esim, number_id)
+     VALUES (?, ?, ?, 'new', ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`)
+    .run(code, p.id, D.packageLabel(p), picked.phone, sim, customerName, contact, round(p.shop_price), ip, clientId, t, t, `ayl:${picked.phone}`);
   return orderView(byCode(code));
 }
 

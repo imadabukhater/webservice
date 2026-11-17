@@ -71,7 +71,8 @@ const server = http.createServer((req, res) => {
       if (f.get('package_id') !== '77' || f.get('sim_type') !== 'sim' || f.get('is_esim') !== '0') return json({ success: true, data: [] });
       return json({ success: true, meta: { count: 2 }, data: [
         { id: 'k-1', number: '0512000001', phone: '0512000001', selection_key: 'k-1', status: 'available', package_id: 77 },
-        { id: 'k-2', number: '0512000002', phone: '0512000002', selection_key: 'k-2', status: 'available', package_id: 77 }] });
+        { id: 'k-2', number: '0512000002', phone: '0512000002', selection_key: 'k-2', status: 'available', package_id: 77 },
+        { id: 'k-3', number: '0512000003', phone: '0512000003', selection_key: 'k-3', status: 'available', package_id: 77 }] });
     }
     if (u.pathname === '/dashboard/charge-system/subscribe' && req.method === 'POST') {
       const f = Object.fromEntries(new URLSearchParams(body));
@@ -226,7 +227,7 @@ test('Aylol: credentials only from the settings, real supplier catalog, eSIM num
   assert.deepEqual([billSeen.pool, billSeen.simOnly, billSeen.esimOnly, billSeen.esimEnabled], [true, true, false, false]);
   const SIM = '8997210000000000777';
   const freeBill = await ok(call(agent, 'GET', `/api/numbers/free?packageId=${billPkg.id}&esim=0`));
-  assert.deepEqual(freeBill.map((n) => n.phone), ['0512000001', '0512000002']);
+  assert.deepEqual(freeBill.map((n) => n.phone), ['0512000001', '0512000002', '0512000003']);
   const purchases = site.purchases.length;
   assert.equal((await call(agent, 'POST', '/api/lines', { kind: 'new', esim: true, packageId: billPkg.id, number: '0512000001', customerName: 'Moataz Abukhater' })).status, 400, 'never an eSIM');
   assert.equal((await call(agent, 'POST', '/api/lines', { kind: 'new', packageId: billPkg.id, number: '0531234567', sim: SIM, customerName: 'Moataz Abukhater' })).status, 400, 'a typed number is refused');
@@ -248,8 +249,30 @@ test('Aylol: credentials only from the settings, real supplier catalog, eSIM num
     packageId: billPkg.id, number: '0512000001', sim: '8997210000000000778', customerName: 'Moataz Abukhater' }));
   assert.notEqual(own.line.status, 'active');
 
+  // A customer buys a new line on their own SIM in the shop: the SIM's number and their full name; a number Aylol offers,
+  // held for the order; nothing at Aylol before the payment is verified; then the line is activated there, as above.
+  const { q: dbq } = require('../src/db');
+  await ok(call(admin, 'PUT', '/api/settings', { shopEnabled: true, jawwalpayNumber: '0599000000', jawwalpayName: 'المتجر' }));
+  dbq('UPDATE packages SET shop_price = 39 WHERE id = ?').run(billPkg.id);
+  const shopPkg = (await ok(call(null, 'GET', '/api/shop'))).packages.find((p) => p.id === billPkg.id);
+  assert.equal(shopPkg?.simLine, true, 'on sale in the shop, as a new line on the customer SIM');
+  const SIM2 = '8997210000000000779';
+  assert.equal((await call(null, 'POST', '/api/shop/orders', { packageId: billPkg.id, kind: 'new', sim: SIM2, customerName: 'Sami' })).status, 400, 'the full name');
+  assert.equal((await call(null, 'POST', '/api/shop/orders', { packageId: billPkg.id, kind: 'new', sim: '123', customerName: 'Sami Khaled' })).status, 400, 'a real SIM number');
+  const shopOrder = await ok(call(null, 'POST', '/api/shop/orders', { packageId: billPkg.id, kind: 'new', sim: SIM2, customerName: 'Sami Khaled' }));
+  const heldOrder = dbq('SELECT * FROM shop_orders WHERE code = ?').get(shopOrder.code);
+  assert.deepEqual([heldOrder.number, heldOrder.sim, heldOrder.esim, heldOrder.amount], ['0512000003', SIM2, 0, 39], 'the one number not sold yet, held for the order');
+  assert.equal(site.subscribes.some((x) => x.phone === '0512000003'), false, 'nothing at Aylol before the payment');
+  dbq(`INSERT INTO payment_mails (uid_validity, uid, message_id, trusted, from_addr, subject, received_at, amount, reference, sender_phone, sender_name, body, created_at)
+       VALUES (1, 8001, '<ayline@jp>', 1, 'noreply@jawwalpay.ps', 'Jawwal Pay', ?, 39, 'REF3939', '', '', 'incoming', ?)`).run(Date.now(), Date.now());
+  await ok(call(null, 'POST', `/api/shop/orders/${shopOrder.code}/proof`, { payReference: 'REF3939' }));
+  const lineOrder = await until(() => site.subscribes.find((x) => x.phone === '0512000003'));
+  assert.deepEqual([lineOrder.action, lineOrder.phone, lineOrder.company7_available_number_id, lineOrder.sim_number, lineOrder.first_name, lineOrder.last_name],
+    ['subscription', '0512000003', 'k-3', SIM2, 'Sami', 'Khaled']);
+  await until(async () => (await ok(call(null, 'GET', `/api/shop/orders/${shopOrder.code}`))).stage === 'done');
+
   // The password, the tokens and the customers' details never appear on curl's command line.
   const argv = fs.readFileSync(path.join(dataDir, 'argv.log'), 'utf8');
   assert.ok(argv.includes('/login'), 'the wrapper saw the requests');
-  for (const secret of ['right-pass', 'wrong-pass', 'CSRF-LOGIN', '0529998877', 'زبون', 'Abukhater', SIM]) assert.equal(argv.includes(secret), false, `${secret} on the command line`);
+  for (const secret of ['right-pass', 'wrong-pass', 'CSRF-LOGIN', '0529998877', 'زبون', 'Abukhater', 'Khaled', SIM, SIM2]) assert.equal(argv.includes(secret), false, `${secret} on the command line`);
 });
