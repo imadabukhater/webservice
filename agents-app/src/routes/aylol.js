@@ -89,20 +89,44 @@ function servedEsim(ref, number) {
   const v = esimServed.get(`${ref}:${number}`);
   return v && now() - v.at < SERVED_MS ? v : null;
 }
-// A bill line's numbers: the ones the site offers for its package (only for the companies whose order it knows).
-async function billFreeNumbers(ref, sim = '') {
+// A bill line's numbers: the ones the site offers for its package (only for the companies whose order it knows); for
+// an eSIM line, the ones it offers as eSIMs.
+async function billFreeNumbers(ref, sim = '', esim = false) {
   if (!getSettings().aylolConfigured) fail(503, 'الأرقام غير متاحة الآن. تواصل مع المدير.');
   const row = q('SELECT supplier_company FROM packages WHERE art_card_id = ?').get(ref);
   if (!(sim ? ay.billShop(ref, row?.supplier_company) : ay.billAuto(ref, row?.supplier_company))) fail(404, 'رقم هذه الرزمة يختاره المدير عند التنفيذ');
   let list;
   try {
-    list = await ay.billNumbers(ref.split(':')[3], aylolCredentials(), sim);
+    list = await ay.billNumbers(ref.split(':')[3], aylolCredentials(), sim, esim);
   } catch (e) {
     if (e instanceof ay.AylolError) { console.error('aylol bill numbers', e.message); fail(502, 'تعذّر جلب الأرقام الآن. حاول بعد قليل.'); }
     throw e;
   }
   rememberEsim(ref, list.map((n) => n.phone));
   return list.map((n) => ({ id: n.phone, phone: n.phone }));
+}
+
+// ---------- a bill line in the customer shop: on the customer's SIM card, or as an eSIM ----------
+// The eSIM way is offered to customers only once the owner turns it on (aylol_line_esim = '1', after a real purchase).
+const lineEsimOn = () => q("SELECT value FROM settings WHERE key = 'aylol_line_esim'").get()?.value === '1';
+// The ways a package's line is sold in the shop now ([] when none: not on sale there).
+function shopLineModes(p) {
+  return ay.lineModes(p.supplier_sim_type, p.supplier_company).filter((m) => m !== 'esim' || lineEsimOn());
+}
+// The package's sim_type, asked of the site the first time a customer orders it (the sync may not have said), kept.
+async function learnSimType(p) {
+  if (p.supplier_sim_type) return p.supplier_sim_type;
+  let info;
+  try {
+    info = await ay.packageInfo(String(p.art_card_id).split(':')[3], aylolCredentials());
+  } catch (e) {
+    if (e instanceof ay.AylolError) { console.error('aylol package', e.message); fail(502, 'تعذّر الوصول إلى الباقة الآن. حاول بعد قليل.'); }
+    throw e;
+  }
+  const t = ay.simTypeOf(info.sim_type);
+  q('UPDATE packages SET supplier_sim_type = ? WHERE id = ?').run(t, p.id);
+  p.supplier_sim_type = t;
+  return t;
 }
 
 async function freeNumbers(ref) {
@@ -148,6 +172,7 @@ async function collectItems(creds, kind) {
   const items = synced.items.map((x) => ({
     ref: x.ref, name: x.name, company: x.company, cost: Number(x.price) || 0, dataGb: x.dataGb || null, minutes: x.minutes || null,
     sms: x.sms || null, days: x.days || 30, description: String(x.description || '').slice(0, 400), esim: 0, siteCompany: x.siteCompany || null,
+    simType: x.simType || null,
   }));
   for (const i of items) i.supplierCost = agentCost(i.ref, i.cost);
   if (kind === 'invoice') {
@@ -193,8 +218,8 @@ async function syncKind(creds, kind) {
       const row = q('SELECT id, gone_at FROM packages WHERE art_card_id = ?').get(p.ref);
       if (row) {
         if (row.gone_at) restored++;
-        q('UPDATE packages SET art_price = ?, supplier_cost = ?, supplier_company = COALESCE(?, supplier_company), active = CASE WHEN gone_at IS NOT NULL THEN 1 ELSE active END, gone_at = NULL WHERE id = ?')
-          .run(p.cost, p.supplierCost ?? null, p.siteCompany ?? null, row.id);
+        q('UPDATE packages SET art_price = ?, supplier_cost = ?, supplier_company = COALESCE(?, supplier_company), supplier_sim_type = COALESCE(?, supplier_sim_type), active = CASE WHEN gone_at IS NOT NULL THEN 1 ELSE active END, gone_at = NULL WHERE id = ?')
+          .run(p.cost, p.supplierCost ?? null, p.siteCompany ?? null, p.simType ?? null, row.id);
         updated++;
         continue;
       }
@@ -202,9 +227,9 @@ async function syncKind(creds, kind) {
       if (names.has(`${companyId}|${name}`) || q('SELECT 1 FROM packages WHERE company_id = ? AND name = ? AND kind = ?').get(companyId, name, kind)) name = `${name} (${p.ref.split(':').pop()})`;
       names.add(`${companyId}|${name}`);
       const sort = q('SELECT COALESCE(MAX(sort), 0) + 1 AS s FROM packages WHERE company_id = ?').get(companyId).s;
-      q(`INSERT INTO packages (company_id, name, cost, price, active, sort, data_gb, minutes, sms, description, art_card_id, kind, days, art_price, esim_enabled, supplier_cost, supplier_company)
-         VALUES (?, ?, ?, 0, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-        .run(companyId, name, p.cost, sort, p.dataGb, p.minutes, p.sms, p.description, p.ref, kind, p.days, p.cost, p.esim, p.supplierCost ?? null, p.siteCompany ?? null);
+      q(`INSERT INTO packages (company_id, name, cost, price, active, sort, data_gb, minutes, sms, description, art_card_id, kind, days, art_price, esim_enabled, supplier_cost, supplier_company, supplier_sim_type)
+         VALUES (?, ?, ?, 0, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        .run(companyId, name, p.cost, sort, p.dataGb, p.minutes, p.sms, p.description, p.ref, kind, p.days, p.cost, p.esim, p.supplierCost ?? null, p.siteCompany ?? null, p.simType ?? null);
       added++;
     }
     // Gone from the site: hidden as the sync's doing (back by itself when listed again); removed after a week if unused.
@@ -264,4 +289,4 @@ route('GET', '/api/aylol/reprice', ADMIN, ({ query }) => {
   return { total: r.total, edited: r.edited || 0, pending: pendingCount(kind), markup: markupFor(kind) };
 });
 
-module.exports = { syncKind, REF, freeNumbers, billFreeNumbers, rememberEsim, servedEsim, balanceSeen, ensureBalanceFor };
+module.exports = { syncKind, REF, freeNumbers, billFreeNumbers, lineEsimOn, shopLineModes, learnSimType, rememberEsim, servedEsim, balanceSeen, ensureBalanceFor };

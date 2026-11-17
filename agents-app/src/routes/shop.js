@@ -134,7 +134,7 @@ function shopCatalogResponse() {
   const s = getSettings();
   const packages = s.shopEnabled ? q(`SELECT p.*, c.name AS company_name, c.esim_fee AS company_esim_fee FROM packages p JOIN companies c ON c.id = p.company_id
       WHERE p.active = 1 AND p.shop_price > 0 ORDER BY c.sort, c.id, p.sort, p.id`).all()
-      .filter((p) => !/^ay:bill:/.test(p.art_card_id || '') || require('../aylol').billShop(p.art_card_id, p.supplier_company)) : [];
+      .filter((p) => !/^ay:bill:/.test(p.art_card_id || '') || (require('../aylol').billShop(p.art_card_id, p.supplier_company) && require('./aylol').shopLineModes(p).length)) : [];
   const ids = new Set(packages.map((p) => p.company_id));
   return {
     // Every order is paid and verified before it is carried out: there is no instant (unpaid) activation.
@@ -158,6 +158,9 @@ function shopCatalogResponse() {
       // A new line on the customer's own SIM card, its number given by the supplier (Aylol): the SIM's number and the
       // customer's full name are asked, never a phone number.
       simLine: /^ay:bill:/.test(p.art_card_id || ''),
+      // How that line can be had: on the customer's SIM card ('sim': its ICCID asked) and/or as an eSIM ('esim': its QR
+      // code given after payment, with the eSIM fee).
+      ...(/^ay:bill:/.test(p.art_card_id || '') ? { lineModes: require('./aylol').shopLineModes(p) } : {}),
       esimFee: p.company_esim_fee === null || p.company_esim_fee === undefined ? s.esimFee : round(p.company_esim_fee),
     })),
   };
@@ -289,26 +292,37 @@ function createOrder(body, { ip, clientId = '' }) {
   return orderView(byCode(code));
 }
 
-// A new line on the customer's own SIM card at Aylol (as its site sells it): one of the numbers Aylol offers for the
-// package, picked at random and held for this order (no other customer gets it), with the SIM's number and the
-// customer's full name. Nothing is bought before the payment is verified; then the line is activated at Aylol.
+// A new line at Aylol (as its site sells it): one of the numbers Aylol offers for the package, picked at random and
+// held for this order (no other customer gets it), with the customer's full name, either on the customer's own SIM
+// card (its number given) or as an eSIM (lineEsim: no SIM; the eSIM and its QR code come with the activation, and the
+// eSIM fee is added). Nothing is bought before the payment is verified; then the line is activated at Aylol.
 async function aylolLineOrder(body, ip, clientId, p) {
-  require('./aylol').ensureBalanceFor(p);
+  const AY = require('./aylol');
+  AY.ensureBalanceFor(p);
+  const wantEsim = !!body.lineEsim;
   const customerName = str(body.customerName, 80);
   if (customerName.split(/\s+/).filter(Boolean).length < 2 || /\d/.test(customerName)) fail(400, 'اكتب اسمك الكامل (الاسم والعائلة) — مطلوب لتسجيل الخط');
-  const sim = validIccid(normalizeIccid(body.sim));
-  if (q("SELECT 1 FROM lines WHERE sim = ? AND status != 'disconnected'").get(sim)) fail(409, 'هذه الشريحة مرتبطة برقم آخر');
+  // What the package's line can be on, as the site says (asked the first time): an eSIM-only package is never sold on
+  // a SIM card, nor the other way round.
+  await AY.learnSimType(p);
+  const modes = AY.shopLineModes(p);
+  if (!modes.length) fail(404, 'الباقة غير متوفرة');
+  if (!modes.includes(wantEsim ? 'esim' : 'sim')) fail(400, wantEsim ? 'هذه الباقة على شريحة عادية بس: اكتب رقم الشريحة' : 'هذه الباقة eSIM بس: اختر eSIM');
+  const sim = wantEsim ? '' : validIccid(normalizeIccid(body.sim));
+  if (sim && q("SELECT 1 FROM lines WHERE sim = ? AND status != 'disconnected'").get(sim)) fail(409, 'هذه الشريحة مرتبطة برقم آخر');
   const contact = body.contactPhone ? validPhone(normalizePhone(body.contactPhone)) : '';
-  const list = await require('./aylol').billFreeNumbers(p.art_card_id, sim);
+  const list = await AY.billFreeNumbers(p.art_card_id, sim, wantEsim);
   const held = new Set(heldNumbers().map((h) => h.number));
   const free = list.filter((n) => !held.has(n.phone) && !q("SELECT 1 FROM lines WHERE number = ? AND status != 'disconnected'").get(n.phone));
   if (!free.length) fail(409, 'ما في أرقام متاحة لهذه الباقة الآن. جرّب بعد قليل أو باقة أخرى.');
   const picked = free[crypto.randomInt(free.length)];
+  const s = getSettings();
+  const esimFee = wantEsim ? round(p.company_esim_fee === null || p.company_esim_fee === undefined ? s.esimFee : p.company_esim_fee) : 0;
   const t = now();
   const code = newCode();
-  q(`INSERT INTO shop_orders (code, package_id, package_label, kind, number, sim, customer_name, contact_phone, amount, ip, client_id, created_at, updated_at, esim, number_id)
-     VALUES (?, ?, ?, 'new', ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`)
-    .run(code, p.id, D.packageLabel(p), picked.phone, sim, customerName, contact, round(p.shop_price), ip, clientId, t, t, `ayl:${picked.phone}`);
+  q(`INSERT INTO shop_orders (code, package_id, package_label, kind, number, sim, customer_name, contact_phone, amount, esim_fee, ip, client_id, created_at, updated_at, esim, number_id)
+     VALUES (?, ?, ?, 'new', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    .run(code, p.id, D.packageLabel(p), picked.phone, sim, customerName, contact, round(p.shop_price + esimFee), esimFee, ip, clientId, t, t, wantEsim ? 1 : 0, `ayl:${picked.phone}`);
   return orderView(byCode(code));
 }
 

@@ -602,7 +602,15 @@ function companyIn(shop, t) {
   }
   return null;
 }
-const priceText = (p, svc) => (svc === 'esim' && p.esimFee ? `${round(p.price)} ₪ + ${round(p.esimFee)} ₪ رسوم eSIM = ${round(p.price + p.esimFee)} ₪` : `${round(p.price)} ₪`);
+// A new line whose number the shop gives: on the customer's SIM card ('sim') and/or as an eSIM ('esim', with its fee).
+const lineModesOf = (p) => (p.simLine ? (Array.isArray(p.lineModes) && p.lineModes.length ? p.lineModes : ['sim']) : []);
+const esimTotal = (p) => round(Number(p.price) + Number(p.esimFee || 0));
+const esimPriceText = (p) => (p.esimFee ? `${round(p.price)} ₪ + ${round(p.esimFee)} ₪ رسوم eSIM = ${esimTotal(p)} ₪` : `${round(p.price)} ₪`);
+const priceText = (p, svc) => {
+  if (svc === 'esim' || (p.simLine && lineModesOf(p).join() === 'esim')) return esimPriceText(p);
+  if (p.simLine && lineModesOf(p).includes('esim')) return `${round(p.price)} ₪ على شريحة عادية، أو ${esimTotal(p)} ₪ eSIM`;
+  return `${round(p.price)} ₪`;
+};
 
 function companiesMenu(jid, shop, cfg) {
   const list = shopCompanies(shop);
@@ -629,8 +637,19 @@ function startOrder(jid, p, svc = serviceOf(p)) {
   const head = `*${p.companyName} — ${p.name}*\nالسعر: *${priceText(p, svc)}*`;
   if (svc === 'esim') { remember(jid, { step: 'name', pkgId: p.id, svc }); return say(jid, `${head}\n\nاكتبلي *اسمك الكامل* (عشان نسجّل الخط عليه):`); }
   if (svc === 'card') { remember(jid, { step: 'number', pkgId: p.id, svc }); return say(jid, `${head}\n\nاكتبلي *رقم الهاتف* اللي بدك تشحنه (05XXXXXXXX):`); }
+  const modes = lineModesOf(p);
+  if (modes.length > 1) {
+    remember(jid, { step: 'lineMode', pkgId: p.id, svc });
+    return say(jid, [head, '', 'رقمك الجديد بيعطيك ياه المتجر. كيف بدك الخط؟',
+      `*1.* على شريحة عادية عندك — ${round(p.price)} ₪ (بتبعتلي رقم الشريحة)`, `*2.* شريحة eSIM — ${esimTotal(p)} ₪ (بيوصلك رمز QR هون بعد التفعيل)`, '', '👈 ابعت 1 أو 2.'].join('\n'));
+  }
+  if (modes[0] === 'esim') return lineEsimName(jid, p, svc, head);
   remember(jid, { step: 'iccid', pkgId: p.id, svc, simLine: !!p.simLine });
   return say(jid, `${head}\n\nاكتبلي *رقم الشريحة* (ICCID: من 18 لـ 22 رقم، مكتوب على الشريحة)${p.simLine ? '، ورقمك الجديد بيعطيك ياه المتجر' : ''}:`);
+}
+function lineEsimName(jid, p, svc, head = '') {
+  remember(jid, { step: 'lineName', pkgId: p.id, svc, simLine: true, lineEsim: true });
+  return say(jid, `${head ? `${head}\n\n` : ''}eSIM ✅ — ${esimPriceText(p)}، ورقمك الجديد بيعطيك ياه المتجر.\nاكتبلي *اسمك الكامل* (الاسم والعائلة) عشان نسجّل الخط عليه:`);
 }
 
 // The number given by the supplier and held for the order (an eSIM's, or an Aylol new line's on the customer's SIM).
@@ -683,10 +702,18 @@ async function orderStep(jid, phone, s, t, raw, shop) {
     if (s.step === 'number') return placeShopOrder(jid, { packageId: p.id, kind: 'recharge', number, contactPhone: contact || number });
     return placeShopOrder(jid, { packageId: p.id, kind: 'new', number, sim: s.sim, contactPhone: contact || number });
   }
+  if (s.step === 'lineMode') {
+    const mode = n === 1 || /(عادي|عاديه|بلاستيك|فيزيائي|عندي شريحه)/.test(t) ? 'sim' : n === 2 || RE.esim.test(t) ? 'esim' : '';
+    if (!mode) return false;
+    if (mode === 'esim') return lineEsimName(jid, p, s.svc);
+    remember(jid, { step: 'iccid', pkgId: p.id, svc: s.svc, simLine: true });
+    return say(jid, 'تمام 👍 اكتبلي *رقم الشريحة* (ICCID: من 18 لـ 22 رقم، مكتوب على الشريحة):');
+  }
   if (s.step === 'lineName') {
     const name = str(raw, 80);
     if (name.split(/\s+/).filter(Boolean).length < 2 || /\d/.test(name)) return say(jid, 'اكتبلي اسمك الكامل (الاسم والعائلة):');
-    return placeShopOrder(jid, { packageId: p.id, kind: 'new', sim: s.sim, customerName: name, contactPhone: contact });
+    return placeShopOrder(jid, s.lineEsim ? { packageId: p.id, kind: 'new', lineEsim: true, customerName: name, contactPhone: contact }
+      : { packageId: p.id, kind: 'new', sim: s.sim, customerName: name, contactPhone: contact });
   }
   if (s.step === 'iccid') {
     const sim = t.replace(/\D/g, '');
@@ -768,7 +795,7 @@ const AI_PER_CHAT_HOUR = 40; // a customer's message may take two or three quest
 const noLinks = (text) => String(text || '').replace(/(?:https?:\/\/|www\.)\S+/gi, '').replace(/\b[\w-]+\.(?:com|net|org|io|me|co|shop|xyz|info)\b\S*/gi, '').trim();
 // The only prices and phone numbers a written reply may name: the ones the person was shown.
 function shopGuard(shop) {
-  const prices = shop.packages.flatMap((p) => [p.price, p.esimFee, p.esim ? round(Number(p.price) + Number(p.esimFee || 0)) : 0]);
+  const prices = shop.packages.flatMap((p) => [p.price, p.esimFee, p.esim || lineModesOf(p).includes('esim') ? esimTotal(p) : 0]);
   return { prices: [...prices, shop.esimFee], phones: [shop.payPhone, shop.jawwalpay?.number, shop.palpay?.number, shop.supportWhatsapp] };
 }
 function agentGuard(user) {
@@ -968,12 +995,13 @@ ${context}`;
 const AGENT_STEPS = 4;
 const SVC = { esim: 'eSIM', card: 'شحن رصيد لرقم موجود', line: 'خط جديد على شريحة' };
 const AGENT_TOOLS = [{ functionDeclarations: [
-  { name: 'create_order', description: 'يعمل طلب حقيقي بالمتجر للباقة اللي اختارها الزبون وأكدها. eSIM بدها customer_name، الشحن بدّه phone_number، الخط على شريحة بدّه sim_number و phone_number، والخط الجديد اللي رقمه من المتجر (new_number_from_shop) بدّه sim_number و customer_name (الاسم والعائلة) بس.',
+  { name: 'create_order', description: 'يعمل طلب حقيقي بالمتجر للباقة اللي اختارها الزبون وأكدها. eSIM بدها customer_name، الشحن بدّه phone_number، الخط على شريحة بدّه sim_number و phone_number، والخط الجديد اللي رقمه من المتجر بدّه customer_name (الاسم والعائلة) و line_type: على شريحة عادية (sim، ومعها sim_number) أو eSIM (esim، بدون رقم شريحة).',
     parameters: { type: 'OBJECT', properties: {
       package_id: { type: 'INTEGER', description: 'رقم الباقة من قائمة الباقات بالتعليمات' },
       customer_name: { type: 'STRING', description: 'اسم الزبون الكامل (لشريحة eSIM)' },
       phone_number: { type: 'STRING', description: 'الرقم اللي بدّه يشحنه أو رقم الخط (05XXXXXXXX)' },
       sim_number: { type: 'STRING', description: 'رقم الشريحة ICCID (18 لـ 22 رقم) للخط على شريحة' },
+      line_type: { type: 'STRING', enum: ['sim', 'esim'], description: 'للخط الجديد اللي رقمه من المتجر: sim على شريحة الزبون العادية، esim شريحة إلكترونية' },
       confirmed: { type: 'BOOLEAN', description: 'true بس بعد ما الزبون وافق على ملخص الطلب اللي انعرض عليه' } }, required: ['package_id'] } },
   { name: 'order_status', description: 'حالة طلبات الزبون من المتجر. بدون order_code: طلبات هالمحادثة.',
     parameters: { type: 'OBJECT', properties: { order_code: { type: 'STRING', description: 'رقم الطلب (8 حروف وأرقام) إذا الزبون كتبه' } } } },
@@ -993,8 +1021,11 @@ function shopSheet(shop) {
       const svc = serviceOf(p);
       const fee = svc === 'esim' ? round(p.esimFee || 0) : 0;
       const specs = [p.dataGb ? `${p.dataGb} جيجا` : '', p.minutes ? `${p.minutes} دقيقة` : '', `${p.days || 30} يوم`].filter(Boolean).join('، ');
-      const how = p.simLine ? 'خط جديد على شريحة الزبون، والرقم بيعطيه المتجر' : SVC[svc];
-      lines.push(`- #${p.id} ${p.name} (${specs}) — ${how} — ${svc === 'esim' ? `${round(p.price)} ₪ + رسوم eSIM ${fee} ₪ = ${round(p.price + fee)} ₪` : `${round(p.price)} ₪`}`);
+      const modes = lineModesOf(p);
+      const how = !p.simLine ? SVC[svc]
+        : modes.length > 1 ? `خط جديد رقمه من المتجر: على شريحة الزبون العادية (sim) ${round(p.price)} ₪، أو eSIM (esim) ${esimTotal(p)} ₪ شامل رسوم eSIM`
+          : modes[0] === 'esim' ? `خط جديد eSIM بس (esim)، رقمه من المتجر — ${esimPriceText(p)}` : `خط جديد على شريحة الزبون العادية بس (sim)، رقمه من المتجر — ${round(p.price)} ₪`;
+      lines.push(`- #${p.id} ${p.name} (${specs}) — ${p.simLine ? how : `${how} — ${svc === 'esim' ? `${round(p.price)} ₪ + رسوم eSIM ${fee} ₪ = ${round(p.price + fee)} ₪` : `${round(p.price)} ₪`}`}`);
     }
   }
   return `الباقات المتوفرة هلأ بالمتجر (رقم الباقة، الاسم، الخدمة، السعر):${lines.join('\n')}
@@ -1010,7 +1041,7 @@ ${shop.packages ? shopSheet(shop) : ''}
 - كل الباقات والأسعار قدامك فوق: جاوب منها بس، بأرقامها وأسعارها زي ما هي، ولا تخترع غيرها.
 - تذكّر كل شي حكاه الزبون بالمحادثة (اسمه، رقمه، رقم الشريحة، الباقة اللي اختارها) ولا تسأله عنه مرة تانية.
 - قبل ما ينعمل الطلب لازم الزبون يأكد: أول create_order بيعرض عليه ملخص (الباقة والسعر والاسم والرقم)، ولما يوافق اطلب create_order مرة تانية مع confirmed=true. إذا بدّه يغيّر إشي، اطلب create_order بالتغيير.
-- لما الزبون يختار باقة ويأكدها، اسأله عن اللي ناقص بس (eSIM: اسمه الكامل؛ شحن رصيد: الرقم اللي بدّه يشحنه؛ خط على شريحة: رقم الشريحة ورقم الهاتف؛ خط جديد رقمه من المتجر: رقم الشريحة واسمه الكامل)، وبعدين اطلب create_order.
+- لما الزبون يختار باقة ويأكدها، اسأله عن اللي ناقص بس (eSIM: اسمه الكامل؛ شحن رصيد: الرقم اللي بدّه يشحنه؛ خط على شريحة: رقم الشريحة ورقم الهاتف؛ خط جديد رقمه من المتجر: اسمه الكامل، وإذا الباقة فيها الطريقتين اسأله بدّه شريحة عادية (ورقمها) أو eSIM)، وبعدين اطلب create_order.
 - لما يسأل عن طلبه أو ليش تأخر: order_status. لما يقول إنه حوّل ويعطيك اسم اللي حوّل أو رقمه أو الرقم المرجعي: submit_payment.
 - النظام بيضيف تحت ردّك لحاله تفاصيل الطلب (رقمه، المبلغ، رقم الدفع، وحالته). لا تكتبهم إنت ولا تعيدهم، ولا تحكي إنه الدفع أو التفعيل أو الطلب تم أو صار جاهز: هاد النظام بس بيقرره.
 - الدفع بجوال باي، والتفعيل بيصير لحاله بعد ما النظام يتأكد من التحويل.
@@ -1089,13 +1120,13 @@ async function agentTool(name, args, ctx) {
         const svc = serviceOf(p);
         const fee = svc === 'esim' ? round(p.esimFee || 0) : 0;
         return { id: p.id, name: p.name, gb: p.dataGb || null, days: p.days || 30, service: svc, price: round(p.price), ...(svc === 'esim' ? { esim_fee: fee, total: round(p.price + fee) } : {}),
-          ...(p.simLine ? { new_number_from_shop: true } : {}) };
+          ...(p.simLine ? { new_number_from_shop: true, line_types: lineModesOf(p) } : {}) };
       }) };
     }
     if (name === 'create_order') {
       // What the customer gave before (in this conversation) fills what this call left out: nothing is asked twice.
       const draft = drafts.get(jid) || { fields: {} };
-      for (const k of ['package_id', 'customer_name', 'phone_number', 'sim_number']) if (args[k] !== undefined && String(args[k]).trim()) draft.fields[k] = args[k];
+      for (const k of ['package_id', 'customer_name', 'phone_number', 'sim_number', 'line_type']) if (args[k] !== undefined && String(args[k]).trim()) draft.fields[k] = args[k];
       drafts.set(jid, draft);
       const f = draft.fields;
       const p = shop.packages.find((x) => x.id === Number(f.package_id));
@@ -1103,21 +1134,32 @@ async function agentTool(name, args, ctx) {
       const svc = serviceOf(p);
       const name2 = str(f.customer_name || '', 80);
       const number = phoneIn(norm(String(f.phone_number || '')));
-      const sim = String(f.sim_number || '').replace(/\D/g, '');
+      // A new line whose number the shop gives: on the customer's SIM card or as an eSIM, as the package allows.
+      const modes = lineModesOf(p);
+      if (p.simLine && f.line_type && !modes.includes(f.line_type)) {
+        delete f.line_type;
+        return { ok: false, error: modes.join() === 'esim' ? 'هالباقة eSIM بس' : 'هالباقة على شريحة عادية بس، مش eSIM', line_types: modes };
+      }
+      const lineType = !p.simLine ? '' : modes.length === 1 ? modes[0] : (f.line_type || '');
+      const lineEsim = lineType === 'esim';
+      const sim = lineEsim ? '' : String(f.sim_number || '').replace(/\D/g, '');
       const need = [];
+      if (p.simLine && !lineType) need.push('line_type');
       if ((svc === 'esim' && (name2.length < 2 || /\d/.test(name2))) || (p.simLine && (name2.split(/\s+/).filter(Boolean).length < 2 || /\d/.test(name2)))) need.push('customer_name');
       if (svc !== 'esim' && !p.simLine && !number) need.push('phone_number');
-      if (svc === 'line' && !/^\d{18,22}$/.test(sim)) need.push('sim_number');
-      if (need.length) return { ok: false, need, known: { customer_name: name2 || undefined, phone_number: number || undefined, sim_number: sim || undefined }, message: `ناقص من الزبون: ${need.join('، ')} (الباقي محفوظ، لا تسأله عنه)` };
+      if (svc === 'line' && (!p.simLine || lineType === 'sim') && !/^\d{18,22}$/.test(sim)) need.push('sim_number');
+      if (need.length) return { ok: false, need, known: { customer_name: name2 || undefined, phone_number: number || undefined, sim_number: sim || undefined, line_type: lineType || undefined }, message: `ناقص من الزبون: ${need.join('، ')} (الباقي محفوظ، لا تسأله عنه)` };
       // The customer confirms the order's summary (written by the code) before it is made: asked in one message, made only
       // on a later one, for exactly what was shown.
-      const key = JSON.stringify([p.id, name2, number, sim]);
+      const key = JSON.stringify([p.id, name2, number, sim, lineType]);
       if (!(args.confirmed === true && draft.pendingKey === key && draft.pendingAt < ctx.startedAt)) {
         draft.pendingKey = key;
         draft.pendingAt = Date.now();
-        const total = svc === 'esim' ? round(p.price + (p.esimFee || 0)) : round(p.price);
+        const withFee = svc === 'esim' || lineEsim;
+        const total = withFee ? esimTotal(p) : round(p.price);
         ctx.prices.add(total);
-        const summary = (['📝 *تأكيد الطلب:*', `الباقة: ${p.companyName} — ${p.name}`, `السعر: *${total} ₪*${svc === 'esim' ? ` (شامل رسوم eSIM ${round(p.esimFee || 0)} ₪)` : ''}`,
+        const summary = (['📝 *تأكيد الطلب:*', `الباقة: ${p.companyName} — ${p.name}`, `السعر: *${total} ₪*${withFee ? ` (شامل رسوم eSIM ${round(p.esimFee || 0)} ₪)` : ''}`,
+          ...(p.simLine ? [lineEsim ? 'نوع الشريحة: eSIM (بيوصلك رمز QR هون بعد التفعيل)' : 'نوع الشريحة: شريحة عادية عندك'] : []),
           ...(name2 ? [`الاسم: ${name2}`] : []), ...(number ? [`رقم الهاتف: ${number}`] : []), ...(sim ? [`رقم الشريحة: ${sim}`] : []),
           ...(p.simLine || svc === 'esim' ? ['الرقم الجديد: بيعطيك ياه المتجر ومحجوز إلك بعد التأكيد'] : []),
           '', 'إذا كله صح ابعت *نعم*، وإذا بدك تغيّر إشي احكيلي.'].join('\n'));
@@ -1126,7 +1168,7 @@ async function agentTool(name, args, ctx) {
       }
       draft.pendingKey = '';
       const contact = /^05\d{8}$/.test(ctx.phone) ? ctx.phone : '';
-      const body = p.simLine ? { packageId: p.id, kind: 'new', sim, customerName: name2, contactPhone: contact }
+      const body = p.simLine ? { packageId: p.id, kind: 'new', ...(lineEsim ? { lineEsim: true } : { sim }), customerName: name2, contactPhone: contact }
         : svc === 'esim' ? { packageId: p.id, kind: 'new', esim: true, customerName: name2, contactPhone: contact }
         : svc === 'card' ? { packageId: p.id, kind: 'recharge', number, contactPhone: contact || number }
           : { packageId: p.id, kind: 'new', number, sim, contactPhone: contact || number };
@@ -1406,5 +1448,5 @@ if (linked()) setTimeout(() => start().catch((e) => console.error('whatsapp star
 
 module.exports = {
   start, logout, status, config, configView, saveConfig, sendTo, taskResolved, handle, tellAdmins, jidOf,
-  _test: { phoneIn, drafts, askModel, vertexAuth, spendToday, priceOf, safeReply, AGENT_TOOLS, agentSystem, vertexAccess, vertexUrl, aiCallsByChat, askedAbout, setTransport: (fn) => { transport = fn; }, setDownloader: (fn) => { downloader = fn; }, sessions, recent, norm, onRaw, jidOf, watchShop, history },
+  _test: { phoneIn, drafts, agentTool, askModel, vertexAuth, spendToday, priceOf, safeReply, AGENT_TOOLS, agentSystem, vertexAccess, vertexUrl, aiCallsByChat, askedAbout, setTransport: (fn) => { transport = fn; }, setDownloader: (fn) => { downloader = fn; }, sessions, recent, norm, onRaw, jidOf, watchShop, history },
 };

@@ -139,8 +139,9 @@ function signedHeaders(p) {
   return { ts, nonce, sign };
 }
 
-function ajax(p, { ref = '/dashboard/charge-system', signed = true, csrf = state.csrf, extra = [], body = null } = {}) {
-  const h = signed ? signedHeaders(p) : null;
+// signAs: the path the request is signed for, when its query goes in the body (-G), off curl's command line.
+function ajax(p, { ref = '/dashboard/charge-system', signed = true, csrf = state.csrf, extra = [], body = null, signAs = '' } = {}) {
+  const h = signed ? signedHeaders(signAs || p) : null;
   return curl([
     '-H', 'Accept: application/json, text/javascript, */*; q=0.01',
     '-H', 'Accept-Language: ar,en;q=0.9',
@@ -374,6 +375,7 @@ async function syncAll(creds, types = ['credit', 'bill']) {
               const name = String(p.display_name || p.name || p.title || '').trim();
               items.push({
                 id: p.id, ref: `ay:${type}:${cid}:${p.id}`, name, company: c.name, companyId: cid, type, siteCompany: Number(p.company_id) || null,
+                simType: p.sim_type === undefined ? null : simTypeOf(p.sim_type),
                 kind: type === 'bill' ? 'invoice' : 'card', price: Number(p.price ?? p.cost ?? p.distributor_price ?? p.customer_price ?? 0),
                 dataGb: extractGb(p, name), minutes: Number(p.minutes ?? p.call ?? 0) || 0, sms: Number(p.sms ?? 0) || 0,
                 days: Number(p.days || (p.month_number ? Number(p.month_number) * 30 : 30)) || 30, description: String(p.description || '').trim(),
@@ -519,6 +521,16 @@ const billAuto = (ref, siteCompany) => {
 const SIM_FIRST_COMPANIES = new Set([5]);
 const billShop = (ref, siteCompany) => billAuto(ref, siteCompany)
   || (/^ay:bill:/.test(ref || '') && SIM_FIRST_COMPANIES.has(Number(siteCompany)) && !BILL_OTHER_CATEGORIES.has(Number(String(ref).split(':')[2])));
+// What a package's line can be on, as the site says (its sim_type): 'esim' (eSIM only, e.g. Hot's), 'sim' (a SIM card
+// only), or 'any' (either). Stored with the package by the sync (and by the shop the first time it asks).
+const simTypeOf = (v) => { const t = String(v || '').trim().toLowerCase(); return t === 'esim' || t === 'sim' ? t : 'any'; };
+// The ways a bill line can be sold here: ['sim'] (the customer's SIM card), ['esim'], or both. An eSIM is ordered only
+// on company 7's form (read from its page); the other companies' lines stay on a SIM card.
+function lineModes(simType, siteCompany) {
+  const t = simTypeOf(simType);
+  const modes = t === 'esim' ? ['esim'] : t === 'sim' ? ['sim'] : ['sim', 'esim'];
+  return BILL_COMPANIES.has(Number(siteCompany)) ? modes : modes.filter((m) => m === 'sim');
+}
 async function packageInfo(packageId, creds) {
   await ensureSession(creds);
   const r = parseJson(await ajax(`/dashboard/charge-system/package/${encodeURIComponent(packageId)}`));
@@ -526,9 +538,9 @@ async function packageInfo(packageId, creds) {
   return r.data;
 }
 const FORM = ['-H', 'Content-Type: application/x-www-form-urlencoded; charset=UTF-8'];
-async function billNumbers(packageId, creds, sim = '') {
+async function billNumbers(packageId, creds, sim = '', esim = false) {
   await ensureSession(creds);
-  const fields = { package_id: packageId, is_esim: 0, sim_type: 'sim', _token: state.csrf, ...(sim ? { type: 'sim_number', sim_number: sim } : {}) };
+  const fields = { package_id: packageId, is_esim: esim ? 1 : 0, sim_type: esim ? 'esim' : 'sim', _token: state.csrf, ...(sim && !esim ? { type: 'sim_number', sim_number: sim } : {}) };
   const r = parseJson(await ajax('/dashboard/charge-system/available-numbers', { extra: FORM, body: formBody(fields) }));
   if (!r || r.success === false) throw new AylolError(`أيلول: ${(r && r.message) || 'تعذّر جلب الأرقام'}`, { refused: true });
   return (Array.isArray(r.data) ? r.data : [])
@@ -540,34 +552,94 @@ function splitName(name) {
   if (parts.length < 2) throw new AylolError('اكتب اسم الزبون كاملاً (الاسم والعائلة) — أيلول يطلبهما', { refused: true });
   return { first: parts[0], last: parts.slice(1).join(' ') };
 }
-async function subscribeBill({ packageId, phone = '', simNumber = '', customerName = '', price = 0 }, creds) {
-  const sim = String(simNumber || '').replace(/\D/g, '');
-  if (!/^\d{18,22}$/.test(sim)) throw new AylolError('رقم الشريحة (ICCID) مطلوب لخط أيلول', { refused: true });
+// Company 7's eSIM costs this much more at the site (its page says so: "يوجد تكلفة إضافية قدرها 5 ش على سعر الايسيم").
+// Read from the page before each eSIM order; above what was known, nothing is bought and the manager reviews it.
+const C7_ESIM_FEE = 5;
+function c7EsimFee() {
+  const text = String(state.chargeHtml || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+  const m = /تكلفة إضافية قدرها\s*([0-9]+(?:\.[0-9]+)?)/.exec(text);
+  return m ? Number(m[1]) : C7_ESIM_FEE;
+}
+// The eSIM's QR code, as the site gives it (an image on its storage), kept as an image: the customer scans it.
+// Only from the site itself or its storage (Azure blobs), only an image, and not too big to keep with the line.
+const QR_MAX_BYTES = 590 * 1024;
+async function qrImage(url) {
+  let u;
+  try { u = new URL(String(url || ''), BASE()); } catch { return ''; }
+  const site = new URL(BASE());
+  const trusted = u.origin === site.origin || (u.protocol === 'https:' && /\.blob\.core\.windows\.net$/i.test(u.hostname));
+  if (!trusted) return '';
+  try {
+    const r = await fetch(u, { signal: AbortSignal.timeout(TIMEOUT_S * 1000), redirect: 'error' });
+    const type = String(r.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
+    if (!r.ok || !/^image\/(png|jpeg|jpg)$/.test(type)) return '';
+    const buf = Buffer.from(await r.arrayBuffer());
+    if (!buf.length || buf.length > QR_MAX_BYTES) return '';
+    return `data:${type === 'image/jpg' ? 'image/jpeg' : type};base64,${buf.toString('base64')}`;
+  } catch {
+    return '';
+  }
+}
+
+// A new line (company 7) on the customer's SIM card, or as an eSIM (esim: no SIM given; the site gives an empty eSIM
+// for the number picked, and its QR code with the order), as the site's own page sends it.
+async function subscribeBill({ packageId, phone = '', simNumber = '', customerName = '', price = 0, esim = false }, creds) {
+  let sim = esim ? '' : String(simNumber || '').replace(/\D/g, '');
+  if (!esim && !/^\d{18,22}$/.test(sim)) throw new AylolError('رقم الشريحة (ICCID) مطلوب لخط أيلول', { refused: true });
   const { first, last } = splitName(customerName);
   const info = await packageInfo(packageId, creds);
+  const modes = lineModes(info.sim_type, info.company_id);
+  if (!modes.includes(esim ? 'esim' : 'sim')) {
+    throw new AylolError(esim ? 'هذه الرزمة في أيلول تُفعَّل على شريحة عادية فقط، وليس eSIM' : 'هذه الرزمة في أيلول eSIM فقط — لا تُفعَّل على شريحة عادية', { refused: true });
+  }
   if (SIM_FIRST_COMPANIES.has(Number(info.company_id)) && !BILL_OTHER_CATEGORIES.has(Number(info.category_id))) return subscribeSky({ info, packageId, phone, sim, first, last, price }, creds);
   if (!BILL_COMPANIES.has(Number(info.company_id)) || BILL_OTHER_CATEGORIES.has(Number(info.category_id))) throw new AylolError('هذه الرزمة في أيلول تُفعَّل يدوياً حالياً', { refused: true });
   const listed = Number(info.price) || 0;
   if (price && listed > Number(price) + 0.01) throw new AylolError(`سعر أيلول الآن ${listed} ₪ وهو أعلى من المعتمد ${price} ₪`, { refused: true });
-  const numbers = await billNumbers(packageId, creds);
+  const fee = esim ? c7EsimFee() : 0;
+  if (fee > C7_ESIM_FEE) throw new AylolError(`رسوم eSIM في أيلول صارت ${fee} ₪ (كانت ${C7_ESIM_FEE} ₪) — راجع السعر قبل التنفيذ`, { refused: true });
+  const numbers = await billNumbers(packageId, creds, '', esim);
   const pick = phone ? numbers.find((n) => n.phone === phone) : numbers[0];
   if (!pick) throw new AylolError(phone ? `الرقم ${phone} لم يعد متاحاً في أيلول — اختر رقماً آخر` : 'لا أرقام متاحة في أيلول لهذه الرزمة الآن', { refused: true });
+  // The eSIM for that number, as the page asks it once a number is picked: its SIM number and its QR code. The number
+  // goes in the request's body (-G makes it the query), never on curl's command line; signed for the full path.
+  let qrUrl = '';
+  if (esim) {
+    const p = `/dashboard/charge-system/empty-sim/${encodeURIComponent(packageId)}`;
+    const q2 = formBody({ phone: pick.phone });
+    const e = parseJson(await ajax(p, { extra: ['-G'], body: q2, signAs: `${p}?${q2}` }));
+    const d0 = (e && e.success && e.data) || null;
+    sim = String(d0?.sim_number || '').replace(/\D/g, '');
+    if (!sim) throw new AylolError(`أيلول: تعذّر تجهيز eSIM للرقم ${pick.phone} (${(e && e.message) || 'بلا بيانات'})`, { refused: true });
+    qrUrl = String(d0.qr_url || '');
+  }
   const months = Number(info.month_number) > 0 ? Number(info.month_number) : 1;
   const body = {
     _token: state.csrf, action: 'subscription', package_id: String(packageId), company_id: String(info.company_id), subscriber_id: '',
     category_id: String(info.category_id ?? ''), first_name: first, last_name: last, phone: pick.phone, company7_available_number_id: pick.key,
-    company7_esim_image_url: '', sim_number: sim, customer_price: String(listed), period_id: info.period_id ? String(info.period_id) : '',
+    company7_esim_image_url: qrUrl, sim_number: sim, customer_price: String(listed), period_id: info.period_id ? String(info.period_id) : '',
     block_shipping_for_other_agents: '0', customer_paid: 'true', company7_number_option: 'new', duration: String(months), price: String(listed),
+    ...(esim ? { esim: 'on' } : {}),
   };
   const raw = await ajax('/dashboard/charge-system/subscribe', { extra: FORM, body: formBody(body) });
   const res = parseJson(raw);
   if (!res) throw new AylolError(`أيلول: رد غير مفهوم (${raw.slice(0, 120)})`);
   if (!res.success) throw new AylolError(res.message || 'أيلول رفض تفعيل الخط', { refused: true });
   const d = res.data || {};
-  return {
+  const out = {
     ok: true, message: res.message || 'تم إنشاء الخط الجديد', phoneNumber: String(d.mobile_number || d.phone || pick.phone).replace(/\D/g, ''),
-    simNumber: String(d.sim_number || sim), subscriptionId: d.subscription_id || '', status: d.status || '', price: listed,
+    simNumber: String(d.sim_number || sim), subscriptionId: d.subscription_id || '', status: d.status || '', price: listed + fee,
   };
+  if (esim) {
+    // The QR the order came back with (or the one given with the eSIM); kept as an image. Without it, the manager is
+    // told where it is (the task's note), and attaches it.
+    const link = String(d.esim_qr || qrUrl || '');
+    out.isEsim = true;
+    out.qr = await qrImage(link);
+    out.esimCode = esimCodeAndQr(d, res).esimCode;
+    if (!out.qr && link) out.message = `${out.message} — رمز QR في أيلول: ${link}`;
+  }
+  return out;
 }
 
 // Company 5 (Sky5G), as its page sends it (read from the site): the numbers offered for this SIM, one picked (with its
@@ -606,7 +678,7 @@ async function executeOrder({ ref, phoneNumber = '', price = 0, simNumber = '', 
   const cleanPhone = String(phoneNumber || '').replace(/\D/g, '');
   const needNewNum = !cleanPhone || /^050{7,8}$/.test(cleanPhone) || retrieveNewNumber;
 
-  if (type === 'bill') return subscribeBill({ packageId, phone: needNewNum ? '' : cleanPhone, simNumber, customerName, price, note }, creds);
+  if (type === 'bill') return subscribeBill({ packageId, phone: needNewNum ? '' : cleanPhone, simNumber, customerName, price, note, esim: !!useEsim }, creds);
 
   if (type === 'esim') {
     const catNum = mapToEsimCategoryId(companyId);
@@ -697,12 +769,12 @@ async function balance(creds) {
 // A sale carried out lowers the balance known here by its price, until the site shows it again.
 async function executeOrderCounted(args, creds) {
   const r = await executeOrder(args, creds);
-  spent(args?.price);
+  spent(Number(r?.price) > 0 ? r.price : args?.price); // what the site took (a bill eSIM: with its fee)
   return r;
 }
 
 module.exports = {
-  knownBalance, exBalance, executeOrder: executeOrderCounted, billNumbers, packageInfo, subscribeBill, splitName, BILL_COMPANIES, billAuto, billShop,
+  knownBalance, exBalance, executeOrder: executeOrderCounted, billNumbers, packageInfo, subscribeBill, splitName, BILL_COMPANIES, billAuto, billShop, lineModes, simTypeOf, qrImage,
   AylolError, login, balance, esimAgentPrice, listedPrice, parseCategoriesFromHtml, fetchPackages, syncAll, fetchEsimPage, fetchEsimPackages, fetchEsimReadyStocks,
   purchaseEsim, lookupAvailableNumbers, currentPrice, mapToEsimCategoryId, esimCodeAndQr, twoFactorForm, twoFactorFields, _state: state,
 };

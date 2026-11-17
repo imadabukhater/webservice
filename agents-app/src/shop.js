@@ -310,7 +310,8 @@ function fulfil(orderId) {
   const tcRef = /^tcn:/.test(art) ? require('./telecom').parseRef(art) : null;
   if (tcRef) require('./routes/telecom').rememberEsim(tcRef.packageId, [o.number]);
   if (/^ay:esim:/.test(art)) require('./routes/aylol').rememberEsim(art, [o.number]);
-  const lineArt = !o.esim && String(o.number_id || '').startsWith('ayl:') ? q('SELECT art_card_id FROM packages WHERE id = ?').get(o.package_id)?.art_card_id || '' : '';
+  // An Aylol line (on the customer's SIM card, or as an eSIM): its number, held for the order, is sold.
+  const lineArt = String(o.number_id || '').startsWith('ayl:') ? q('SELECT art_card_id FROM packages WHERE id = ?').get(o.package_id)?.art_card_id || '' : '';
   if (/^ay:bill:/.test(lineArt)) require('./routes/aylol').rememberEsim(lineArt, [o.number]);
   try {
     const r = tx(() => {
@@ -323,7 +324,7 @@ function fulfil(orderId) {
         : { kind: o.kind === 'recharge' ? 'external' : 'new', number: o.number, sim: o.sim, packageId: o.package_id, months: 1, customerName: o.customer_name, customerPrice: o.amount, note },
         // Sold at what the customer paid (the eSIM's fee is added again by the sale), not at an agent's price, which the
         // manager may not have set (or set above the shop's): the payment the shop account was just credited pays it.
-        { total: Number(o.amount) });
+        { total: Number(o.amount), shopLine: /^ay:bill:/.test(lineArt) });
       if (o.esim && o.esim_qr) {
         q("UPDATE lines SET esim_qr = COALESCE(NULLIF(esim_qr, ''), ?) WHERE id = ?").run(o.esim_qr, sale.line.id);
         if (!qlRef && !lyRef && !tcRef) {

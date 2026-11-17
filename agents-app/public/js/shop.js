@@ -1747,11 +1747,16 @@ function viewBuy(id) {
   const canEsim = !isCard && Boolean(pk.esim);
   const wantEsim = canEsim;
   const qrFee = Number(pk.esimFee ?? co?.esimFee ?? S.data?.esimFee ?? 0);
-  const total = Number(pk.price || 0) + (wantEsim ? qrFee : 0);
 
   if (wantEsim) {
     return esimForm(pk, co, false);
   }
+  // A new line whose number the shop gives: on the customer's SIM card, or as an eSIM (its QR code after payment),
+  // as the package allows; the customer picks when it allows both.
+  const lineModes = pk.simLine ? (Array.isArray(pk.lineModes) && pk.lineModes.length ? pk.lineModes : ['sim']) : [];
+  S.lineMode = S.lineMode || {};
+  const lineEsim = lineModes.length === 1 ? lineModes[0] === 'esim' : (lineModes.includes('esim') && S.lineMode[pk.id] === 'esim');
+  const total = Number(pk.price || 0) + (lineEsim ? qrFee : 0);
 
   shell(`
     <form id="buy-f" class="card shop-form" style="--co:${esc(co?.color || '#2563eb')}">
@@ -1768,6 +1773,16 @@ function viewBuy(id) {
       ${renderCheckoutPackageSummary(pk, co, { isEsim: false, isCard })}
 
       ${pk.simLine ? `
+        ${lineModes.length > 1 ? `
+          <div class="field">
+            <label>نوع الشريحة</label>
+            <div style="display:flex;gap:8px;flex-wrap:wrap">
+              <button type="button" class="btn ${lineEsim ? '' : 'primary'} sm" data-line-mode="sim" aria-pressed="${!lineEsim}">شريحة عادية عندي</button>
+              <button type="button" class="btn ${lineEsim ? 'primary' : ''} sm" data-line-mode="esim" aria-pressed="${lineEsim}">eSIM (رمز QR)</button>
+            </div>
+          </div>
+        ` : ''}
+        ${lineEsim ? `<div class="shop-bd-row" style="margin-bottom:12px"><span>📲 eSIM</span><b>بيوصلك رمز QR بعد التفعيل</b></div>` : ''}
         <div class="field">
           <label for="f-cname">اسمك الكامل (الاسم والعائلة)</label>
           <input id="f-cname" name="customerName" class="input" autocomplete="name" required placeholder="مثال: محمد أحمد">
@@ -1780,7 +1795,7 @@ function viewBuy(id) {
       </div>
       `}
 
-      ${!isCard ? `
+      ${!isCard && !lineEsim ? `
         <div class="field">
           <label for="f-sim">رقم الشريحة ICCID (19 رقماً، مكتوب على الشريحة)</label>
           <input id="f-sim" name="sim" class="input ltr" inputmode="numeric" required placeholder="89970...">
@@ -1792,6 +1807,7 @@ function viewBuy(id) {
           <span>سعر الباقة</span>
           <b class="mono">${fmtMoney(pk.price)}</b>
         </div>
+        ${lineEsim && qrFee ? `<div class="shop-bd-row"><span>رسوم eSIM</span><b class="mono">${fmtMoney(qrFee)}</b></div>` : ''}
         <div class="shop-bd-total">
           <span>الإجمالي</span>
           <b class="mono">${fmtMoney(total)}</b>
@@ -1801,7 +1817,7 @@ function viewBuy(id) {
       <div class="esim-consent-wrap">
         <label class="esim-consent-label">
           <input type="checkbox" name="consent" required>
-          <span>${pk.simLine ? 'تأكدت من رقم الشريحة وأوافق على الشروط.' : 'تأكدت من الرقم وأوافق على الشروط.'}</span>
+          <span>${pk.simLine ? (lineEsim ? 'جهازي بيدعم eSIM وأوافق على الشروط.' : 'تأكدت من رقم الشريحة وأوافق على الشروط.') : 'تأكدت من الرقم وأوافق على الشروط.'}</span>
         </label>
         <button type="button" class="btn ghost btn-sm" data-act="legal-sheet" data-tab="terms">${icon('shield')}<span>الشروط والضمان</span></button>
       </div>
@@ -1821,6 +1837,15 @@ function viewBuy(id) {
       viewBuy(id);
     };
   });
+  root.querySelectorAll('[data-line-mode]').forEach((b) => {
+    b.onclick = () => {
+      const name = document.getElementById('f-cname')?.value || '';
+      S.lineMode[pk.id] = b.dataset.lineMode;
+      viewBuy(id);
+      const el = document.getElementById('f-cname');
+      if (el) el.value = name;
+    };
+  });
 
   document.getElementById('buy-f').onsubmit = async (e) => {
     e.preventDefault();
@@ -1836,7 +1861,7 @@ function viewBuy(id) {
           kind: isCard ? 'recharge' : 'new',
           customerName: fd.get('customerName') || '',
           ...(pk.simLine ? {} : { number: fd.get('number') }),
-          sim: fd.get('sim') || '',
+          ...(lineEsim ? { lineEsim: true } : { sim: fd.get('sim') || '' }),
         },
       });
       rememberOrderCode(order.code);

@@ -16,7 +16,9 @@ const { decodeQrDataUrl } = require('./qr-decode');
 const SEED = 'abcdef0123456789abcdef0123456789';
 const STOCK = { id: 900, phone: '0531112222', sim_number: '8997210000000000900', qr_code: 'LPA:1$smdp.hot.example$STOCK-SECRET' };
 const STOCK2 = { id: 901, phone: '0532223333', sim_number: '8997210000000000901', qr_code: 'LPA:1$smdp.hot.example$STOCK-901' };
-const site = { signedIn: new Set(), badSignatures: 0, purchases: [], subscribes: [], logins: 0, cardPrice: 47.5, cardListed: true };
+const site = { signedIn: new Set(), badSignatures: 0, purchases: [], subscribes: [], logins: 0, cardPrice: 47.5, cardListed: true, hotEsim: false, emptySims: [] };
+// The QR code image of an eSIM, as the site's storage serves it (a real PNG: one pixel).
+const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=', 'base64');
 
 const server = http.createServer((req, res) => {
   let body = '';
@@ -35,6 +37,7 @@ const server = http.createServer((req, res) => {
       res.writeHead(302, { Location: '/dashboard/charge-system' });
       return res.end();
     }
+    if (u.pathname.startsWith('/qr/')) { res.writeHead(200, { 'Content-Type': 'image/png' }); return res.end(PNG); }
     if (!site.signedIn.has(sid)) { res.writeHead(302, { Location: '/login' }); return res.end(); }
     if (u.pathname === '/dashboard/charge-system') {
       return html(`<html><head><meta name="csrf-token" content="CSRF-APP"></head><body>رصيدك: 412.50 ₪<script>window.cfg = { seed: "${SEED}" };</script></body></html>`);
@@ -49,7 +52,8 @@ const server = http.createServer((req, res) => {
       const type = u.searchParams.get('type');
       if (type === 'credit' && cat === 10) return json({ success: true, last_page: 1, data: site.cardListed ? [{ id: 41, name: 'Hot 50 شيكل', price: site.cardPrice }] : [] });
       if (type === 'bill' && cat === 15) return json({ success: true, last_page: 1, data: [{ id: 88, display_name: 'Pelephone 100GB', price: 30, data_gb: 100, days: 30, company_id: 5, category_id: 15 }] });
-      if (type === 'bill' && cat === 12) return json({ success: true, last_page: 1, data: [{ id: 77, display_name: 'Hot 100GB', price: 35, data_gb: 100, days: 30, company_id: 7, category_id: 12 }] });
+      if (type === 'bill' && cat === 12) return json({ success: true, last_page: 1, data: [{ id: 77, display_name: 'Hot 100GB', price: 35, data_gb: 100, days: 30, company_id: 7, category_id: 12 },
+        ...(site.hotEsim ? [{ id: 79, display_name: 'Hot eSIM 200GB', price: 25, data_gb: 200, days: 30, company_id: 7, category_id: 12, sim_type: 'esim' }] : [])] });
       return json({ success: true, last_page: 1, data: [] });
     }
     if (u.pathname === '/dashboard/esim/packages') {
@@ -67,6 +71,17 @@ const server = http.createServer((req, res) => {
       return json({ success: true, data: { id: 88, price: 30, company_id: 5, category_id: 15, month_number: null, period_id: null, is_task_based: false,
         duration_options: [{ id: '9', value: '1', label: '1 شهر' }, { id: '10', value: '2', label: '2 شهر' }] } });
     }
+    if (u.pathname === '/dashboard/charge-system/package/79') {
+      return json({ success: true, data: { id: 79, price: 25, company_id: 7, category_id: 12, month_number: null, period_id: null, sim_type: 'esim' } });
+    }
+    // Company 7's eSIM for a number picked (asked by its page once a number is chosen): an empty eSIM and its QR code.
+    const es = /^\/dashboard\/charge-system\/empty-sim\/(\d+)$/.exec(u.pathname);
+    if (es && req.method === 'GET') {
+      const want = crypto.createHash('sha256').update(`${req.url}|${req.headers['x-sec-time']}|${req.headers['x-sec-nonce']}|${SEED}`).digest('hex');
+      const phone = u.searchParams.get('phone') || '';
+      site.emptySims.push({ pkg: es[1], phone, signed: req.headers['x-sec-sign'] === want });
+      return json({ success: true, data: { sim_number: `8997200000000${phone.slice(-6)}`, qr_url: `http://${req.headers.host}/qr/${phone}.png` } });
+    }
     if (u.pathname === '/dashboard/charge-system/package/77') {
       return json({ success: true, data: { id: 77, price: 35, company_id: 7, category_id: 12, month_number: null, period_id: null, sim_type: null } });
     }
@@ -78,6 +93,11 @@ const server = http.createServer((req, res) => {
         if (f.get('type') !== 'sim_number' || !/^\d{18,22}$/.test(f.get('sim_number') || '')) return json({ success: true, data: [{ id: 1, number: '0500000001', selection_key: '1', sim_number: '8997250408008240211' }] });
         return json({ success: true, data: [{ id: 760026, number: '0555037832', phone: '0555037832', selection_key: '760026', sim_number: f.get('sim_number'), status: 'available', package_id: 88 }] });
       }
+      if (['77', '79'].includes(f.get('package_id')) && f.get('is_esim') === '1' && f.get('sim_type') === 'esim') {
+        return json({ success: true, data: [
+          { id: 'e-1', number: '0513000001', phone: '0513000001', selection_key: 'e-1', sim_number: '', barcode_text: '', is_esim: '1', status: 'available' },
+          { id: 'e-2', number: '0513000002', phone: '0513000002', selection_key: 'e-2', sim_number: '', barcode_text: '', is_esim: '1', status: 'available' }] });
+      }
       if (f.get('package_id') !== '77' || f.get('sim_type') !== 'sim' || f.get('is_esim') !== '0') return json({ success: true, data: [] });
       return json({ success: true, meta: { count: 2 }, data: [
         { id: 'k-1', number: '0512000001', phone: '0512000001', selection_key: 'k-1', status: 'available', package_id: 77 },
@@ -88,7 +108,9 @@ const server = http.createServer((req, res) => {
       const f = String(req.headers['content-type'] || '').includes('application/json') ? { ...JSON.parse(body), json: true } : Object.fromEntries(new URLSearchParams(body));
       site.subscribes.push(f);
       if (f.action === 'subscription') {
-        return json({ success: true, message: 'تم إنشاء الخط الجديد بنجاح', data: { subscription_id: 33832, status: 'active', mobile_number: f.phone, phone: f.phone, sim_number: f.sim_number, esim_qr: null, is_esim: false, company_id: 7 } });
+        const isEsim = f.esim === 'on';
+        return json({ success: true, message: 'تم إنشاء الخط الجديد بنجاح', data: { subscription_id: 33832, status: 'active', mobile_number: f.phone, phone: f.phone, sim_number: f.sim_number,
+          esim_qr: isEsim ? f.company7_esim_image_url : null, is_esim: isEsim, company_id: 7 } });
       }
       return json({ success: true, message: 'تم الشحن' });
     }
@@ -304,4 +326,86 @@ test('Aylol: credentials only from the settings, real supplier catalog, eSIM num
   const argv = fs.readFileSync(path.join(dataDir, 'argv.log'), 'utf8');
   assert.ok(argv.includes('/login'), 'the wrapper saw the requests');
   for (const secret of ['right-pass', 'wrong-pass', 'CSRF-LOGIN', '0529998877', 'زبون', 'Abukhater', 'Khaled', 'Saleh', SIM, SIM2, SIM3]) assert.equal(argv.includes(secret), false, `${secret} on the command line`);
+});
+
+// A new line in the shop on Aylol's company 7, as its page sells it: on the customer's SIM card, or (once the owner turns
+// it on, after a real purchase) as an eSIM: one of the eSIM numbers the site offers, picked at random; the eSIM for it
+// (an empty one, asked as the page asks it) goes with the order, and its QR code comes back to the customer as an image.
+// A package the site sells as eSIM only (Hot's) is never sold on a SIM card, and not at all while eSIM lines are off.
+test('Aylol lines in the shop: on the customer SIM or as an eSIM with its QR, eSIM-only packages never on a SIM', async () => {
+  const { q: dbq } = require('../src/db');
+  const admin = (await ok(call(null, 'POST', '/api/login', { username: 'admin', password: 'admin-pass' }))).token;
+  site.hotEsim = true;
+  await ok(call(admin, 'POST', '/api/aylol/sync', { kind: 'invoice' }));
+  const cat = await ok(call(admin, 'GET', '/api/catalog'));
+  const billPkg = cat.packages.find((p) => p.supplier === 'ay' && p.kind === 'invoice' && p.cost === 35);
+  const hotPkg = cat.packages.find((p) => p.supplier === 'ay' && p.cost === 25);
+  assert.ok(billPkg && hotPkg);
+  assert.equal(dbq('SELECT supplier_sim_type FROM packages WHERE id = ?').get(hotPkg.id).supplier_sim_type, 'esim', 'kept as the site says');
+  dbq('UPDATE packages SET shop_price = 40 WHERE id = ?').run(hotPkg.id);
+
+  // eSIM lines off (until a real purchase): on the customer's SIM card only; the eSIM-only package is not on sale.
+  let shopCat = await ok(call(null, 'GET', '/api/shop'));
+  assert.deepEqual(shopCat.packages.find((p) => p.id === billPkg.id).lineModes, ['sim']);
+  assert.equal(shopCat.packages.some((p) => p.id === hotPkg.id), false);
+  assert.equal((await call(null, 'POST', '/api/shop/orders', { packageId: billPkg.id, kind: 'new', lineEsim: true, customerName: 'Lina Haddad' })).status, 400);
+
+  dbq("INSERT INTO settings (key, value) VALUES ('aylol_line_esim', '1') ON CONFLICT(key) DO UPDATE SET value = excluded.value").run();
+  shopCat = await ok(call(null, 'GET', '/api/shop'));
+  const shopBill = shopCat.packages.find((p) => p.id === billPkg.id);
+  assert.deepEqual(shopBill.lineModes, ['sim', 'esim']);
+  assert.deepEqual(shopCat.packages.find((p) => p.id === hotPkg.id)?.lineModes, ['esim']);
+  assert.equal((await call(null, 'POST', '/api/shop/orders', { packageId: hotPkg.id, kind: 'new', sim: '8997210000000000790', customerName: 'Lina Haddad' })).status, 400, 'never on a SIM card');
+  // An agent still sells these lines on a SIM card only.
+  const agent = (await ok(call(null, 'POST', '/api/login', { username: 'agent-ay', password: 'secret1' }))).token;
+  assert.equal((await call(agent, 'POST', '/api/lines', { kind: 'new', esim: true, packageId: billPkg.id, number: '0513000001', customerName: 'Lina Haddad' })).status, 400);
+
+  // The eSIM order: no SIM asked, a random eSIM number held, the eSIM fee added; nothing at the site before payment.
+  const fee = Number(shopBill.esimFee) || 0;
+  const subs = site.subscribes.length;
+  const o = await ok(call(null, 'POST', '/api/shop/orders', { packageId: billPkg.id, kind: 'new', lineEsim: true, customerName: 'Lina Haddad' }));
+  const row = dbq('SELECT * FROM shop_orders WHERE code = ?').get(o.code);
+  assert.deepEqual([row.esim, row.sim, row.amount, row.esim_fee], [1, '', 39 + fee, fee]);
+  assert.ok(['0513000001', '0513000002'].includes(row.number), 'one of the eSIM numbers the site offers');
+  assert.equal(site.subscribes.length, subs);
+  assert.equal(site.emptySims.length, 0, 'no eSIM asked for before payment');
+
+  dbq(`INSERT INTO payment_mails (uid_validity, uid, message_id, trusted, from_addr, subject, received_at, amount, reference, sender_phone, sender_name, body, created_at)
+       VALUES (1, 8003, '<esline@jp>', 1, 'noreply@jawwalpay.ps', 'Jawwal Pay', ?, ?, 'REF7001', '', '', 'incoming', ?)`).run(Date.now(), 39 + fee, Date.now());
+  await ok(call(null, 'POST', `/api/shop/orders/${o.code}/proof`, { payReference: 'REF7001' }));
+  const sub = await until(() => site.subscribes.find((x) => x.esim === 'on'));
+  const port = server.address().port;
+  assert.deepEqual(
+    [sub.action, sub.package_id, sub.company_id, sub.phone, sub.company7_available_number_id, sub.sim_number, sub.company7_esim_image_url, sub.first_name, sub.last_name, sub.company7_number_option],
+    ['subscription', '77', '7', row.number, row.number === '0513000001' ? 'e-1' : 'e-2', `8997200000000${row.number.slice(-6)}`, `http://127.0.0.1:${port}/qr/${row.number}.png`, 'Lina', 'Haddad', 'new']);
+  assert.deepEqual(site.emptySims.map((e) => [e.pkg, e.phone, e.signed]), [['77', row.number, true]], 'the eSIM asked as the page asks it, signed');
+  const done = await until(async () => { const v = await ok(call(null, 'GET', `/api/shop/orders/${o.code}`)); return v.stage === 'done' && v; });
+  assert.equal(done.esimQr, `data:image/png;base64,${PNG.toString('base64')}`, 'the QR code the site gave, as an image');
+  const line = dbq('SELECT l.* FROM lines l JOIN shop_orders o ON o.line_id = l.id WHERE o.code = ?').get(o.code);
+  assert.deepEqual([line.status, line.esim, line.number, line.sim], ['active', 1, row.number, `8997200000000${row.number.slice(-6)}`]);
+
+  // Over WhatsApp, the assistant's order takes the way of the line, and asks it when the package has both.
+  const wa = require('../src/whatsapp');
+  const jid = '970599777666@s.whatsapp.net';
+  const ctx = () => ({ jid, phone: '0599777666', shop: require('../src/routes/shop').shopCatalogResponse(), startedAt: Date.now(), facts: [], after: [], prices: new Set(), phones: new Set() });
+  const asked = await wa._test.agentTool('create_order', { package_id: billPkg.id, customer_name: 'Omar Nasser' }, ctx());
+  assert.deepEqual(asked.need, ['line_type']);
+  const c1 = ctx();
+  const shown = await wa._test.agentTool('create_order', { line_type: 'esim' }, c1);
+  assert.equal(shown.awaiting_confirmation, true);
+  assert.match(c1.facts.join('\n'), new RegExp(`${39 + fee} ₪[\\s\\S]*eSIM`));
+  assert.doesNotMatch(c1.facts.join('\n'), /رقم الشريحة/);
+  await new Promise((r) => setTimeout(r, 5));
+  const made = await wa._test.agentTool('create_order', { confirmed: true }, ctx());
+  assert.equal(made.ok, true, JSON.stringify(made));
+  const waRow = dbq('SELECT * FROM shop_orders WHERE code = ?').get(made.order_code);
+  assert.deepEqual([waRow.esim, waRow.sim, waRow.amount, waRow.customer_name], [1, '', 39 + fee, 'Omar Nasser']);
+  // An eSIM-only package over WhatsApp: no way to ask, and never a SIM card.
+  const wrong = await wa._test.agentTool('create_order', { package_id: hotPkg.id, customer_name: 'Omar Nasser', line_type: 'sim' }, ctx());
+  assert.equal(wrong.ok, false);
+  assert.deepEqual(wrong.line_types, ['esim']);
+
+  // The customer's new number never on curl's command line (the eSIM is asked with it in the request's body).
+  const argv = fs.readFileSync(path.join(dataDir, 'argv.log'), 'utf8');
+  for (const secret of ['0513000001', '0513000002', 'Haddad', 'Nasser']) assert.equal(argv.includes(secret), false, `${secret} on the command line`);
 });

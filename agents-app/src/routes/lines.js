@@ -151,7 +151,11 @@ function createLine(user, body, opts = {}) {
   // known, the number is one Aylol offered for the package, and the customer's first and family names go with it.
   const ayBill = kind === 'new' && /^ay:bill:/.test(pkg.art_card_id || '') ? pkg.art_card_id : '';
   if (ayBill) {
-    if (esim) fail(400, 'هذه الرزمة تُفعَّل على شريحة عادية: أدخل رقم الشريحة، بدون eSIM');
+    // As an eSIM only where the site sells it so, and only for the customer shop's own orders (opts.shopLine), which
+    // checked it; an eSIM-only package is never sold on a SIM card.
+    const modes = require('../aylol').lineModes(pkg.supplier_sim_type, pkg.supplier_company);
+    if (esim && !(opts.shopLine && modes.includes('esim'))) fail(400, 'هذه الرزمة تُفعَّل على شريحة عادية: أدخل رقم الشريحة، بدون eSIM');
+    if (!esim && !modes.includes('sim')) fail(400, 'هذه الرزمة eSIM فقط، ولا تُفعَّل على شريحة عادية');
     if (port) fail(400, 'هذه الرزمة خط جديد برقم من أيلول، ولا تدعم تحويل رقم');
     if (require('../aylol').billAuto(ayBill, pkg.supplier_company)) {
       if (str(body.customerName, 80).split(/\s+/).filter(Boolean).length < 2) fail(400, 'اكتب اسم الزبون كاملاً (الاسم والعائلة) — مطلوب لتفعيل الخط');
