@@ -38,7 +38,11 @@ function waStatusHtml(w) {
     ${w.status === 'connected' ? '' : `<div class="field" style="margin-top:12px"><label for="wa-pair-phone">أو اربط برقم الهاتف بدل مسح الرمز</label>
       <div class="row" style="gap:8px"><input class="input ltr grow" id="wa-pair-phone" inputmode="tel" placeholder="رقم واتساب المتجر 05XXXXXXXX">
       <button class="btn" type="button" data-action="wa-pair">${icon('phone')}اطلب كود</button></div>
-      <span class="hint">مفيد إذا هاتف المتجر هو نفس الجهاز اللي فاتح عليه البوابة.</span></div>`}`;
+      <span class="hint">مفيد إذا هاتف المتجر هو نفس الجهاز اللي فاتح عليه البوابة.</span></div>`}
+    <div class="msg ${w.config?.enabled === false ? '' : 'info'}" style="margin-top:12px">${icon(w.config?.enabled === false ? 'alert' : 'checkCircle')}
+      <span class="grow"><b>${w.config?.enabled === false ? 'البوت موقوف: ما بيرد على حدا' : 'البوت شغّال: بيرد على الرسائل'}</b></span>
+      <button class="btn btn-sm ${w.config?.enabled === false ? 'btn-primary' : ''}" type="button" data-action="wa-replies" data-on="${w.config?.enabled === false ? '1' : '0'}">
+        ${icon(w.config?.enabled === false ? 'play' : 'power')}${w.config?.enabled === false ? 'تشغيل البوت' : 'إيقاف البوت'}</button></div>`;
 }
 function waHtml(w) {
   const c = w?.config || {};
@@ -224,7 +228,7 @@ export default {
         try {
           const w = await api.get('/api/whatsapp');
           if (!document.getElementById('wa-status')) return;
-          if (JSON.stringify([w.status, w.qr, w.phone, w.error, w.pairCode]) !== JSON.stringify([V.wa?.status, V.wa?.qr, V.wa?.phone, V.wa?.error, V.wa?.pairCode])) {
+          if (JSON.stringify([w.status, w.qr, w.phone, w.error, w.pairCode, w.config?.enabled]) !== JSON.stringify([V.wa?.status, V.wa?.qr, V.wa?.phone, V.wa?.error, V.wa?.pairCode, V.wa?.config?.enabled])) {
             V.wa = w;
             box.innerHTML = waStatusHtml(w);
           }
@@ -331,6 +335,18 @@ export default {
         V.wa = { ...(V.wa || {}), status: 'off', error: err.message };
       }
       box.innerHTML = waStatusHtml(V.wa);
+    },
+    async 'wa-replies'(btn) {
+      const on = btn.dataset.on === '1';
+      if (!on && !confirm('إيقاف البوت؟ ما رح يرد على الزباين ولا الوكلاء لحد ما تشغّله، وواتساب بيضل مربوط.')) return;
+      btn.disabled = true;
+      try {
+        V.wa = await api.post('/api/whatsapp/replies', { on });
+        toast(on ? 'البوت شغّال' : 'البوت موقوف');
+      } catch (err) {
+        toast(err.message, { error: true });
+      }
+      document.getElementById('wa-status').innerHTML = waStatusHtml(V.wa);
     },
     async 'wa-pair'(btn) {
       const phone = (document.getElementById('wa-pair-phone')?.value || '').trim();

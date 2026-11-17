@@ -162,6 +162,11 @@ test('WhatsApp: agents sell as in the portal; customers buy in the chat, their t
   assert.equal(refused.status, 403);
   assert.match(refused.body.error, /على السيرفر/);
   assert.equal((await call(admin, 'POST', '/api/whatsapp/test', { phone: '0599000111' })).status, 404, 'no test message from the portal');
+  // The one switch the manager has: the bot answers, or stays silent.
+  assert.equal((await ok(call(admin, 'POST', '/api/whatsapp/replies', { on: false }))).config.enabled, false);
+  assert.equal(wa.config().enabled, false);
+  assert.equal((await call(admin, 'POST', '/api/whatsapp/replies', { on: 'yes' })).status, 400);
+  assert.equal((await ok(call(admin, 'POST', '/api/whatsapp/replies', { on: true }))).config.enabled, true);
   // Linking by the shop's phone number (a code typed on the phone instead of the QR): a wrong number is refused first.
   assert.equal((await call(admin, 'POST', '/api/whatsapp/connect', { phone: '123' })).status, 400);
   assert.equal(wa.config().aiDailyUsd, 0.5, 'half a dollar a day unless the owner changes it');

@@ -16,6 +16,13 @@ route('GET', '/api/whatsapp', ADMIN, () => wa.status());
 
 route('PUT', '/api/whatsapp', ADMIN, () => fail(403, 'إعدادات واتساب والمساعد تُعدَّل على السيرفر من صاحب الحساب فقط'));
 
+// The one switch the manager has: the bot answers, or stays silent (WhatsApp stays linked). Everything else: the owner.
+route('POST', '/api/whatsapp/replies', ADMIN, ({ body }) => {
+  if (typeof body?.on !== 'boolean') fail(400, 'on: true أو false');
+  wa.saveConfig({ enabled: body.on });
+  return wa.status();
+});
+
 // Starts the link and waits a few seconds for the QR code (or the link, when it was linked before).
 // With a phone number: linked by an 8-character code typed on that phone instead of the QR code.
 route('POST', '/api/whatsapp/connect', ADMIN, async ({ body, req }) => {
