@@ -163,9 +163,17 @@ function exCsrf(h) {
 function exSeed(h) {
   return (h && (h.match(/seed:\s*["']([^"']+)["']/i)?.[1] || h.match(/["']?seed["']?\s*[:=]\s*["']([a-f0-9]{16,128})["']/i)?.[1])) || '';
 }
+// The balance as the page shows it ("الرصيد: 245.30 شيكل" / "الرصيد 245.30"), read from its visible text only: the page's
+// styles and scripts are full of "balance" next to numbers (CSS classes, colours), which are never the balance.
 function exBalance(h) {
-  const m = h && (h.match(/(?:الرصيد|رصيدك|balance)[^0-9-]*([0-9]+(?:\.[0-9]+)?)/i) || h.match(/([0-9]+(?:\.[0-9]+)?)\s*(?:₪|شيكل|ILS)/i));
-  return m ? Number(m[1]) : null;
+  if (!h) return null;
+  const text = String(h)
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ').replace(/<script[\s\S]*?<\/script>/gi, ' ').replace(/<!--[\s\S]*?-->/g, ' ')
+    .replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ');
+  const m = text.match(/(?:الرصيد|رصيدك)(?:\s*(?:الحالي|المتاح|المتبقي))?\s*[:：]?\s*(-?[0-9][0-9,]*(?:\.[0-9]+)?)(?!\s*%)/);
+  if (!m) return null;
+  const n = Number(m[1].replace(/,/g, ''));
+  return Number.isFinite(n) ? n : null;
 }
 
 function requireCreds(creds) {
@@ -594,7 +602,7 @@ async function executeOrderCounted(args, creds) {
 }
 
 module.exports = {
-  knownBalance, executeOrder: executeOrderCounted,
+  knownBalance, exBalance, executeOrder: executeOrderCounted,
   AylolError, login, balance, esimAgentPrice, listedPrice, parseCategoriesFromHtml, fetchPackages, syncAll, fetchEsimPage, fetchEsimPackages, fetchEsimReadyStocks,
   purchaseEsim, lookupAvailableNumbers, currentPrice, mapToEsimCategoryId, esimCodeAndQr, twoFactorForm, twoFactorFields, _state: state,
 };

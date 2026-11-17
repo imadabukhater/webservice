@@ -99,3 +99,18 @@ test("an Aylol sale the account cannot pay for is refused before the customer pa
   const other = pkg('مورد آخر', 80, 'ic:5:7');
   assert.ok(S.createOrder({ packageId: other, kind: 'recharge', number: '0597777777' }, { ip: 'net-4', clientId: 'browser-x' }).code);
 });
+
+test("Aylol's balance is read from what the page shows, never from its styles or scripts", () => {
+  // As the site's charge page has it: styles full of "balance" next to numbers, long before the balance itself.
+  const page = `<html><head><style>.user-account-info .info-box.balance.is-negative .value { color: #e11d48 !important; }
+    .aylol-mobile-topbar .balance-card{ flex:1; border-radius:16px; padding:12px 14px; } .balance-card .label{ font-size:11.5px; opacity:.85; margin-bottom:4px; }
+    /* 6. Teal (تقارير شحن رصيد) */ .qa-teal { border: 1px solid rgba(2, 132, 199, 0.2); }</style>
+    <script>var balance = 6; window.cfg = { balanceTimeout: 30 };</script></head>
+    <body><div class="balance-card remaining"><div class="label">الرصيد</div><div class="value">245.30</div></div>
+    <div class="balance-card debt"><div class="label">المديونية</div><div class="value">0.00</div></div>
+    <span class="d-md-flex">الرصيد: 245.30 شيكل</span> <span>المديونية: 0.00 شيكل</span></body></html>`;
+  assert.equal(ay.exBalance(page), 245.3);
+  assert.equal(ay.exBalance('<body>رصيدك: 1,412.50 ₪</body>'), 1412.5);
+  assert.equal(ay.exBalance('<body>الرصيد: -12.40 شيكل</body>'), -12.4);
+  assert.equal(ay.exBalance('<style>.balance{width:6px}</style><body>لا رصيد هنا</body>'), null, 'nothing made up');
+});
