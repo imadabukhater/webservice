@@ -130,12 +130,12 @@ function byCode(code, ip) {
 }
 
 // ---------- in stock: only what has a number free now ----------
-// Every few minutes the shop asks each supplier which numbers it has free for each package sold with a number from
+// Every hour the shop asks each supplier which numbers it has free for each package sold with a number from
 // it (its eSIMs, and Aylol's new lines on a SIM card or as an eSIM). A package with none, or a way of its line with
 // none, is not shown, on the site or in WhatsApp; the numbers other customers' orders hold count as taken. A supplier
 // not answering counts as none. Not asked yet (just started): shown (the order itself asks). A Pelephone line on a SIM card
 // is not asked: its numbers depend on the customer's SIM.
-const STOCK_MS = Number(process.env.SHOP_STOCK_MS) || 10 * 60_000;
+const STOCK_MS = Number(process.env.SHOP_STOCK_MS) || 60 * 60_000; // checked every hour
 const stock = new Map(); // `${packageId}:${'sim'|'esim'}` -> { phones, at }
 const stockKey = (id, mode) => `${id}:${mode}`;
 function inStock(id, mode, held) {
