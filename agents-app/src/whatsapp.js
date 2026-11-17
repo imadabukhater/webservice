@@ -79,7 +79,9 @@ function saveConfig(body = {}) {
     if (u && !/^https?:\/\/[^\s/]+(\/\S*)?$/i.test(u)) fail(400, 'رابط المتجر يبدأ بـ https://');
     setSetting('wa_shop_url', u.replace(/[#?].*$/, '').replace(/\/+$/, ''));
   }
-  if (body.aiKey) setSetting('wa_ai_key', String(body.aiKey).trim().slice(0, 200));
+  // A new key, service or model: the last error was about the old one.
+  if (body.aiKey || body.aiKeyClear || (body.aiProvider !== undefined && body.aiProvider !== get('wa_ai_provider')) || (body.aiModel !== undefined && body.aiModel !== get('wa_ai_model'))) state.aiError = '';
+  if (body.aiKey) setSetting('wa_ai_key', String(body.aiKey).replace(/\s+/g, '').slice(0, 200));
   if (body.aiKeyClear) setSetting('wa_ai_key', '');
   if (body.aiProvider !== undefined) setSetting('wa_ai_provider', providerOf(body.aiProvider));
   if (body.aiModel !== undefined) setSetting('wa_ai_model', /^[\w./:-]{3,80}$/.test(String(body.aiModel)) ? String(body.aiModel) : '');
