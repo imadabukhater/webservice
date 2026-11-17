@@ -15,6 +15,10 @@ DATA_DIR=/var/lib/agents-app
 
 export DEBIAN_FRONTEND=noninteractive
 
+# The kernel stays the one the server was built with: Debian's 6.1.192 (November 2026), installed by the automatic
+# updates, crashed in ext4 a few minutes after its first boot on this machine. Lift the hold once a fixed one is out.
+apt-mark hold linux-image-cloud-amd64 >/dev/null 2>&1 || true
+
 # Small machines need swap so npm/apt never run out of memory.
 if [ ! -f /swapfile ]; then
   fallocate -l 1G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile
