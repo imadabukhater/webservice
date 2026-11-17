@@ -16,7 +16,7 @@ const { decodeQrDataUrl } = require('./qr-decode');
 const SEED = 'abcdef0123456789abcdef0123456789';
 const STOCK = { id: 900, phone: '0531112222', sim_number: '8997210000000000900', qr_code: 'LPA:1$smdp.hot.example$STOCK-SECRET' };
 const STOCK2 = { id: 901, phone: '0532223333', sim_number: '8997210000000000901', qr_code: 'LPA:1$smdp.hot.example$STOCK-901' };
-const site = { signedIn: new Set(), badSignatures: 0, purchases: [], subscribes: [], logins: 0, cardPrice: 47.5, cardListed: true, hotEsim: false, emptySims: [], skyQr: [] };
+const site = { signedIn: new Set(), badSignatures: 0, purchases: [], subscribes: [], logins: 0, cardPrice: 47.5, cardListed: true, hotEsim: false, emptySims: [], skyQr: [], noEsim: false };
 // The QR code image of an eSIM, as the site's storage serves it (a real PNG: one pixel).
 const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=', 'base64');
 
@@ -98,7 +98,7 @@ const server = http.createServer((req, res) => {
         return json({ success: true, data: [{ id: 760026, number: '0555037832', phone: '0555037832', selection_key: '760026', sim_number: f.get('sim_number'), status: 'available', package_id: 88 }] });
       }
       if (['77', '79'].includes(f.get('package_id')) && f.get('is_esim') === '1' && f.get('sim_type') === 'esim') {
-        return json({ success: true, data: [
+        return json({ success: true, data: site.noEsim ? [] : [
           { id: 'e-1', number: '0513000001', phone: '0513000001', selection_key: 'e-1', sim_number: '', barcode_text: '', is_esim: '1', status: 'available' },
           { id: 'e-2', number: '0513000002', phone: '0513000002', selection_key: 'e-2', sim_number: '', barcode_text: '', is_esim: '1', status: 'available' }] });
       }
@@ -431,6 +431,22 @@ test('Aylol lines in the shop: on the customer SIM or as an eSIM with its QR, eS
   const pdone = await until(async () => { const v = await ok(call(null, 'GET', `/api/shop/orders/${po.code}`)); return v.stage === 'done' && v; });
   assert.deepEqual(site.skyQr, [{ company_id: 5, package: '88', iccid: '8997250000000000121', subscription_key: '7852297' }]);
   assert.equal(pdone.esimQr, `data:image/png;base64,${PNG.toString('base64')}`);
+
+  // Only what has a number free is shown (on the site and in WhatsApp): the site out of eSIM numbers for these packages,
+  // their eSIM way goes (an eSIM-only package goes altogether); back once it has them again.
+  const S = require('../src/routes/shop');
+  site.noEsim = true;
+  await S.refreshStock();
+  let inShop = (await ok(call(null, 'GET', '/api/shop'))).packages;
+  assert.deepEqual(inShop.find((p) => p.id === billPkg.id).lineModes, ['sim']);
+  assert.equal(inShop.some((p) => p.id === hotPkg.id), false);
+  assert.ok(inShop.find((p) => p.id === pelePkg.id), 'others stay');
+  assert.doesNotMatch(wa._test.agentSystem(S.shopCatalogResponse(), require('../src/waconfig').config()), new RegExp(`#${hotPkg.id} `));
+  site.noEsim = false;
+  await S.refreshStock();
+  inShop = (await ok(call(null, 'GET', '/api/shop'))).packages;
+  assert.deepEqual(inShop.find((p) => p.id === billPkg.id).lineModes, ['sim', 'esim']);
+  assert.ok(inShop.find((p) => p.id === hotPkg.id));
 
   // The customer's new number never on curl's command line (the eSIM is asked with it in the request's body).
   const argv = fs.readFileSync(path.join(dataDir, 'argv.log'), 'utf8');

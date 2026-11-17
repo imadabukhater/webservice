@@ -248,11 +248,11 @@ test('WhatsApp: agents sell as in the portal; customers buy in the chat, their t
   const order = await ok(call(null, 'GET', `/api/shop/orders/${code}`));
   assert.equal(order.status, 'awaiting_payment');
   assert.equal(site.purchases.length, 1, 'nothing bought before the payment');
+  // Its one free number is held for this order: meanwhile the package is not shown (only what has a number free is).
+  assert.doesNotMatch(textOf(await say(C, '0541234567', 'مرحبا')), /هوت موبايل/);
   // One reservation per chat at a time.
-  await say(C, '0541234567', '0');
-  await say(C, '0541234567', '1');
-  await say(C, '0541234567', '1');
-  assert.match(textOf(await say(C, '0541234567', 'محمد احمد')), new RegExp(`حجز نشط.*${code}`));
+  await assert.rejects(async () => require('../src/routes/shop').createOrder({ packageId: esimPkg.id, kind: 'new', esim: true, customerName: 'محمد احمد' }, { ip: `wa:${C}`, clientId: `wa:${C}` }),
+    (e) => e.status === 409 && new RegExp(`حجز نشط.*${code}`).test(e.message));
   // Not paid yet: nothing matches, the order waits (and is checked again).
   assert.match(textOf(await say(C, '0541234567', `طلبي ${code}`)), /اسم اللي حوّل/);
   assert.match(textOf(await say(C, '0541234567', 'محمد احمد علي')), /لسا ما وصل/);

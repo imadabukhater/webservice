@@ -129,12 +129,74 @@ function byCode(code, ip) {
   return o;
 }
 
+// ---------- in stock: only what has a number free now ----------
+// Every few minutes the shop asks each supplier which numbers it has free for each package sold with a number from
+// it (its eSIMs, and Aylol's new lines on a SIM card or as an eSIM). A package with none, or a way of its line with
+// none, is not shown, on the site or in WhatsApp; the numbers other customers' orders hold count as taken. Not asked
+// yet, or the supplier not answering for a while: shown (the order itself asks again). A Pelephone line on a SIM card
+// is not asked: its numbers depend on the customer's SIM.
+const STOCK_MS = Number(process.env.SHOP_STOCK_MS) || 10 * 60_000;
+const stock = new Map(); // `${packageId}:${'sim'|'esim'}` -> { phones, at }
+const stockKey = (id, mode) => `${id}:${mode}`;
+function inStock(id, mode, held) {
+  const v = stock.get(stockKey(id, mode));
+  if (!v || now() - v.at > 3 * STOCK_MS) return true;
+  return v.phones.some((ph) => !held.has(ph));
+}
+const setStock = (id, mode, phones) => stock.set(stockKey(id, mode), { phones: phones.filter(Boolean), at: now() });
+const needsNumber = (p) => isEsimRef(p.art_card_id, p.company_name) || /^ay:esim:/.test(p.art_card_id || '');
+// What a package is asked for: [mode, () => free numbers [{ phone }]].
+function stockJobs(s, p) {
+  const art = p.art_card_id || '';
+  if (/^ay:bill:/.test(art)) {
+    const AY = require('./aylol');
+    if (!require('../aylol').billShop(art, p.supplier_company)) return [];
+    return AY.shopLineModes(p)
+      .filter((mode) => mode === 'esim' || require('../aylol').billAuto(art, p.supplier_company))
+      .map((mode) => [mode, () => AY.billFreeNumbers(art, '', mode === 'esim')]);
+  }
+  if (needsNumber(p)) return [['esim', () => freeEsimNumbers(s, esimPackage(p.id))]];
+  return [];
+}
+let refreshing = null;
+let refreshedAt = 0;
+function refreshStock() {
+  if (!refreshing) {
+    refreshing = (async () => {
+      const s = getSettings();
+      if (!s.shopEnabled) return;
+      const rows = q(`SELECT p.*, c.name AS company_name, c.esim_fee AS company_esim_fee FROM packages p JOIN companies c ON c.id = p.company_id
+                      WHERE p.active = 1 AND p.shop_price > 0`).all();
+      for (const p of rows) {
+        for (const [mode, ask] of stockJobs(s, p)) {
+          try {
+            setStock(p.id, mode, (await ask()).map((n) => n.phone));
+          } catch (e) {
+            // Not set up at that supplier: nothing to sell there. Otherwise the last answer stands for a while.
+            if (e.status === 503) setStock(p.id, mode, []);
+            else console.error('shop stock', p.id, mode, e.message);
+          }
+        }
+      }
+      refreshedAt = now();
+    })().finally(() => { refreshing = null; });
+  }
+  return refreshing;
+}
+if (process.env.NODE_ENV === 'production' || process.env.SHOP_STOCK === '1') {
+  setTimeout(() => refreshStock().catch((e) => console.error('shop stock', e.message)), 20_000).unref();
+  setInterval(() => refreshStock().catch((e) => console.error('shop stock', e.message)), STOCK_MS).unref();
+}
+
 // ---------- public ----------
 function shopCatalogResponse() {
   const s = getSettings();
+  const held = new Set(heldNumbers().map((h) => h.number));
+  const lineModes = (p) => require('./aylol').shopLineModes(p).filter((m) => inStock(p.id, m, held));
   const packages = s.shopEnabled ? q(`SELECT p.*, c.name AS company_name, c.esim_fee AS company_esim_fee FROM packages p JOIN companies c ON c.id = p.company_id
       WHERE p.active = 1 AND p.shop_price > 0 ORDER BY c.sort, c.id, p.sort, p.id`).all()
-      .filter((p) => !/^ay:bill:/.test(p.art_card_id || '') || (require('../aylol').billShop(p.art_card_id, p.supplier_company) && require('./aylol').shopLineModes(p).length)) : [];
+      .filter((p) => (!/^ay:bill:/.test(p.art_card_id || '') || (require('../aylol').billShop(p.art_card_id, p.supplier_company) && lineModes(p).length))
+        && (!needsNumber(p) || inStock(p.id, 'esim', held))) : [];
   const ids = new Set(packages.map((p) => p.company_id));
   return {
     // Every order is paid and verified before it is carried out: there is no instant (unpaid) activation.
@@ -160,7 +222,7 @@ function shopCatalogResponse() {
       simLine: /^ay:bill:/.test(p.art_card_id || ''),
       // How that line can be had: on the customer's SIM card ('sim': its ICCID asked) and/or as an eSIM ('esim': its QR
       // code given after payment, with the eSIM fee).
-      ...(/^ay:bill:/.test(p.art_card_id || '') ? { lineModes: require('./aylol').shopLineModes(p) } : {}),
+      ...(/^ay:bill:/.test(p.art_card_id || '') ? { lineModes: lineModes(p) } : {}),
       esimFee: p.company_esim_fee === null || p.company_esim_fee === undefined ? s.esimFee : round(p.company_esim_fee),
     })),
   };
@@ -314,6 +376,7 @@ async function aylolLineOrder(body, ip, clientId, p) {
   const list = await AY.billFreeNumbers(p.art_card_id, sim, wantEsim);
   const held = new Set(heldNumbers().map((h) => h.number));
   const free = list.filter((n) => !held.has(n.phone) && !q("SELECT 1 FROM lines WHERE number = ? AND status != 'disconnected'").get(n.phone));
+  if (wantEsim) setStock(p.id, 'esim', free.map((n) => n.phone));
   if (!free.length) fail(409, 'ما في أرقام متاحة لهذه الباقة الآن. جرّب بعد قليل أو باقة أخرى.');
   const picked = free[crypto.randomInt(free.length)];
   const s = getSettings();
@@ -342,6 +405,7 @@ async function esimOrder(body, ip, clientId = '') {
     const list = await freeEsimNumbers(s, pk);
     const held = new Set(heldNumbers().map((h) => h.number));
     const free = list.filter((n) => !held.has(n.phone) && !q("SELECT 1 FROM lines WHERE number = ? AND status != 'disconnected'").get(n.phone));
+    setStock(pk.p.id, 'esim', free.map((n) => n.phone));
     if (!free.length) fail(409, 'نفدت أرقام eSIM لهذه الباقة الآن. جرّب باقة أخرى أو عد لاحقاً.');
     picked = free[crypto.randomInt(free.length)];
   } else {
@@ -528,4 +592,4 @@ route('GET', '/api/shop/admin/summary', ADMIN, () => ({
   agentId: shop.shopAgent().id,
 }));
 
-module.exports = { shopCatalogResponse, submitProof, orderView, byCode, createOrder };
+module.exports = { shopCatalogResponse, submitProof, orderView, byCode, createOrder, refreshStock };
