@@ -297,7 +297,9 @@ function norm(t) {
     .replace(/ـ/g, '').replace(/[إأآ]/g, 'ا').replace(/ة/g, 'ه').replace(/ى/g, 'ي')
     .replace(/\s+/g, ' ').trim().toLowerCase();
 }
-const PHONE_RE = /(?:\+|00)?(?:972|970)5\d{8}|05\d{8}/;
+// A phone number standing on its own: never one read out of a longer run of digits (a SIM's ICCID such as
+// 8997250408008240211 holds "972504080082" inside it; read as a phone, a top-up would go to a stranger's number).
+const PHONE_RE = /(?<![\d+])(?:(?:\+|00)?(?:972|970)5\d{8}|05\d{8})(?!\d)/;
 const RE = {
   help: /^(مرحبا|مرحبه|اهلا|اهلين|هلا|السلام عليكم|سلام|مساعده|القائمه|قائمه|الاوامر|اوامر|ابدا|start|help|menu|hi|hello|0)[!.؟?]*$/,
   yes: /^(نعم|ايوه|ايوا|اه|موافق|تاكيد|اكد|yes|ok|تمام)[!.]*$/,
@@ -1364,5 +1366,5 @@ if (linked()) setTimeout(() => start().catch((e) => console.error('whatsapp star
 
 module.exports = {
   start, logout, status, config, configView, saveConfig, sendTo, taskResolved, handle, tellAdmins, jidOf,
-  _test: { askModel, vertexAuth, spendToday, priceOf, safeReply, AGENT_TOOLS, agentSystem, vertexAccess, vertexUrl, aiCallsByChat, askedAbout, setTransport: (fn) => { transport = fn; }, setDownloader: (fn) => { downloader = fn; }, sessions, recent, norm, onRaw, jidOf, watchShop, history },
+  _test: { phoneIn, askModel, vertexAuth, spendToday, priceOf, safeReply, AGENT_TOOLS, agentSystem, vertexAccess, vertexUrl, aiCallsByChat, askedAbout, setTransport: (fn) => { transport = fn; }, setDownloader: (fn) => { downloader = fn; }, sessions, recent, norm, onRaw, jidOf, watchShop, history },
 };
