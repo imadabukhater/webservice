@@ -13,22 +13,21 @@ const run = (args, input) => spawnSync(process.execPath, ['--disable-warning=Exp
   { env, input, encoding: 'utf8' });
 test.after(() => fs.rmSync(dir, { recursive: true, force: true }));
 
-test('the owner changes the limit, the service and the key on the server; the key never shows', () => {
+test('the owner changes the limit, the model and who it answers, on the server; Google Cloud only, no key', () => {
   let r = run([]);
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /حد الصرف اليومي:\s+\$0\.5/, 'half a dollar a day by default');
-  assert.match(r.stdout, /المفتاح:\s+لا يوجد/);
+  assert.match(r.stdout, /Google Cloud \(Vertex AI\) — بلا مفتاح/);
   r = run(['limit', '0.25']);
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /\$0\.25/);
   assert.equal(run(['limit', '-3']).status, 1, 'a negative limit is refused');
-  assert.equal(run(['provider', 'openai']).status, 1, 'only the known services');
-  assert.equal(run(['provider', 'groq']).status, 0);
-  // The key from the keyboard (here: piped), never on the command line; shown only by its last four characters.
-  r = run(['key'], 'gsk_secretkey1234567890WXYZ\n');
+  assert.equal(run(['provider', 'groq']).status, 1, 'no other service');
+  assert.equal(run(['key']).status, 1, 'no key');
+  assert.equal(run(['model', 'gpt-4o']).status, 1, 'Gemini models only');
+  r = run(['model', 'gemini-3.5-flash-lite']);
   assert.equal(r.status, 0, r.stderr);
-  assert.equal(r.stdout.includes('gsk_secretkey'), false);
-  assert.match(r.stdout, /…WXYZ/);
+  assert.match(r.stdout, /gemini-3\.5-flash-lite/);
   r = run(['admins', '0599000111,0599000222']);
   assert.match(r.stdout, /972599000111|970599000111|0599000111/);
   assert.equal(run(['replies', 'maybe']).status, 1);
@@ -38,6 +37,6 @@ test('the owner changes the limit, the service and the key on the server; the ke
   const { DatabaseSync } = require('node:sqlite');
   const db = new DatabaseSync(env.DB_FILE, { readOnly: true });
   const get = (k) => db.prepare('SELECT value FROM settings WHERE key = ?').get(k)?.value;
-  assert.deepEqual([get('wa_ai_daily_usd'), get('wa_ai_provider'), get('wa_ai_key'), get('wa_enabled')], ['0.25', 'groq', 'gsk_secretkey1234567890WXYZ', '0']);
+  assert.deepEqual([get('wa_ai_daily_usd'), get('wa_ai_model'), get('wa_ai_key'), get('wa_enabled')], ['0.25', 'gemini-3.5-flash-lite', undefined, '0']);
   db.close();
 });

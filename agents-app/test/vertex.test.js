@@ -41,9 +41,8 @@ test.after(() => google.close());
 
 test('Vertex AI: no key, the server\'s token and project; the instructions apart from the data', async () => {
   const wa = require('../src/whatsapp');
-  const saved = wa.saveConfig({ aiProvider: 'vertex', aiModel: '' });
-  assert.equal(saved.aiProvider, 'vertex');
-  assert.equal(saved.hasAiKey, false, 'no key is needed or kept');
+  const saved = wa.saveConfig({ aiModel: '' });
+  assert.equal(saved.aiProvider, 'vertex', 'the only service: no key is needed or kept');
   assert.equal(saved.aiModel, 'gemini-3.1-flash-lite');
   const v = await wa._test.askModel('تعليمات', 'بيانات');
   assert.deepEqual(v, { intro: 'أهلين فيك' });
@@ -60,7 +59,7 @@ test('Vertex AI: no key, the server\'s token and project; the instructions apart
   assert.equal(await wa._test.askModel('تعليمات', 'بيانات'), null);
   assert.match(wa.status().aiError, /Vertex AI 401/);
   assert.equal(wa._test.vertexAuth.token, '');
-  // A model of another service left over falls back to Gemini's.
+  // Only Gemini models; anything else falls back to the cheapest.
   assert.equal(wa.saveConfig({ aiModel: 'openai/gpt-oss-20b' }).aiModel, 'gemini-3.1-flash-lite');
   assert.equal(wa.saveConfig({ aiModel: 'gemini-3.8-flash' }).aiModel, 'gemini-3.8-flash');
 });
@@ -69,7 +68,7 @@ test('the spend of the day is counted from what each answer used; the assistant 
   const wa = require('../src/whatsapp');
   const { q } = require('../src/db');
   q("DELETE FROM settings WHERE key = 'wa_ai_spend'").run();
-  wa.saveConfig({ aiProvider: 'vertex', aiModel: 'gemini-3.1-flash-lite', aiDailyUsd: 0.0015, aiPriceIn: '', aiPriceOut: '' });
+  wa.saveConfig({ aiModel: 'gemini-3.1-flash-lite', aiDailyUsd: 0.0015, aiPriceIn: '', aiPriceOut: '' });
   vertexReset(wa);
   // 1000 tokens in at $0.25, 150 out (thinking included) at $1.50 a million: $0.000475 a question.
   assert.ok(await wa._test.askModel('تعليمات', 'بيانات'));

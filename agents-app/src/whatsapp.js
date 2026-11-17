@@ -28,7 +28,7 @@ const saveConfig = (body) => { WC.saveConfig(body); return configView(); };
 function configView() {
   const c = config();
   const price = priceOf(c);
-  return { enabled: c.enabled, customers: c.customers, admins: c.admins.join(', '), shopUrl: c.shopUrl, hasAiKey: !!c.aiKey, aiProvider: c.aiProvider, aiModel: c.aiModel,
+  return { enabled: c.enabled, customers: c.customers, admins: c.admins.join(', '), shopUrl: c.shopUrl, aiProvider: c.aiProvider, aiModel: c.aiModel,
     welcome: c.welcome, knowledge: c.knowledge, aiDailyUsd: c.aiDailyUsd, aiPriceIn: c.aiPriceIn, aiPriceOut: c.aiPriceOut,
     aiPrice: price, aiModels: AI_MODELS, aiSpend: spendToday() };
 }
@@ -48,7 +48,7 @@ let lib = null; // the loaded library (downloading a receipt photo needs it)
 let downloader = null; // tests: replaces the download
 const state = { sock: null, status: 'off', qr: '', qrAt: 0, phone: '', error: '', starting: false, retries: 0, aiError: '', aiErrorFor: '' };
 // The assistant's last error, shown only while the settings are still the ones it happened with.
-const aiSig = (c = config()) => [c.aiProvider, c.aiModel, c.aiKey.length, c.aiKey.slice(-4), c.aiDailyUsd].join('|');
+const aiSig = (c = config()) => [c.aiModel, c.aiDailyUsd].join('|');
 const aiErrorNow = () => (state.aiError && state.aiErrorFor === aiSig() ? state.aiError : '');
 let transport = null; // tests: replaces the socket's sendMessage
 
@@ -728,7 +728,7 @@ async function customerImage(jid, getImage) {
   return say(jid, `📎 وصلتنا صورة الإشعار لطلب *${o.code}*.\n${STAGE_TEXT[v.stage] || v.stage}\nعشان نخلّص أسرع، ابعت كمان *اسم اللي حوّل* أو *الرقم المرجعي*.`);
 }
 
-// ---------- optional: free text understood by Gemini (it only chooses among the actions above) ----------
+// ---------- free text understood by Gemini on the owner's Google Cloud (it only chooses among the actions above) ----------
 // At most 200 questions an hour go to it (strangers cannot run the key's bill up), and what it writes carries no link.
 const aiCalls = [];
 const aiCallsByChat = new Map(); // one chat cannot use up everyone's allowance
@@ -815,10 +815,10 @@ function withinBudget(system, user) {
 }
 function spent(usage, system, user, answer) {
   const p = priceOf();
-  // Gemini / Vertex: usageMetadata (thinking billed as output); Groq: usage. Missing: counted from the text.
+  // Vertex AI's usageMetadata (thinking billed as output). Missing: counted from the text.
   const u = usage || {};
-  const tokensIn = Number(u.promptTokenCount ?? u.prompt_tokens) || Math.ceil((system.length + user.length) / 2.5);
-  const tokensOut = (Number(u.candidatesTokenCount ?? u.completion_tokens) || Math.ceil(String(answer || '').length / 2.5)) + (Number(u.thoughtsTokenCount) || 0);
+  const tokensIn = Number(u.promptTokenCount) || Math.ceil((system.length + user.length) / 2.5);
+  const tokensOut = (Number(u.candidatesTokenCount) || Math.ceil(String(answer || '').length / 2.5)) + (Number(u.thoughtsTokenCount) || 0);
   const s = spendToday();
   s.usd = Math.round((s.usd + costOf(tokensIn, tokensOut, p)) * 1e6) / 1e6;
   s.calls += 1;
@@ -851,45 +851,30 @@ function vertexUrl(project, model) {
   return `${base}/v1/projects/${encodeURIComponent(project)}/locations/${loc}/publishers/google/models/${encodeURIComponent(model)}:generateContent`;
 }
 
+// One question to Gemini on the owner's Google Cloud project (Vertex AI), by the server's own identity: JSON only,
+// the instructions apart from the person's words. Its answer, or null (nothing made up when it fails).
 async function askModel(system, user, { temperature = 0.1, timeout = 15_000 } = {}) {
   const cfg = config();
-  const groq = cfg.aiProvider === 'groq';
-  const vertex = cfg.aiProvider === 'vertex';
-  const name = groq ? 'Groq' : vertex ? 'Vertex AI' : 'Gemini';
+  const name = 'Vertex AI';
   if (!withinBudget(system, user)) return null;
   try {
-    // Groq: OpenAI-style chat; Gemini and Vertex AI: generateContent. All asked for JSON only; the instructions apart from the data.
-    const geminiBody = JSON.stringify({ systemInstruction: { parts: [{ text: system }] }, contents: [{ role: 'user', parts: [{ text: user }] }], generationConfig: { temperature, responseMimeType: 'application/json' } });
-    const res = vertex
-      ? await (async () => {
-        const a = await vertexAccess();
-        return fetch(vertexUrl(a.project, cfg.aiModel), {
-          method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${a.token}` }, body: geminiBody, signal: AbortSignal.timeout(timeout),
-        });
-      })()
-      : groq
-      ? await fetch(`${process.env.GROQ_BASE || 'https://api.groq.com/openai/v1'}/chat/completions`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${cfg.aiKey}` },
-        body: JSON.stringify({ model: cfg.aiModel, messages: [{ role: 'system', content: system }, { role: 'user', content: user }], temperature, max_tokens: 600, response_format: { type: 'json_object' } }),
-        signal: AbortSignal.timeout(timeout),
-      })
-      : await fetch(`${process.env.GEMINI_BASE || 'https://generativelanguage.googleapis.com'}/v1beta/models/${encodeURIComponent(cfg.aiModel)}:generateContent`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': cfg.aiKey },
-        body: geminiBody,
-        signal: AbortSignal.timeout(timeout),
-      });
+    const a = await vertexAccess();
+    const res = await fetch(vertexUrl(a.project, cfg.aiModel), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${a.token}` },
+      body: JSON.stringify({ systemInstruction: { parts: [{ text: system }] }, contents: [{ role: 'user', parts: [{ text: user }] }], generationConfig: { temperature, responseMimeType: 'application/json' } }),
+      signal: AbortSignal.timeout(timeout),
+    });
     if (!res.ok) {
-      if (vertex && res.status === 401) vertexAuth.token = '';
+      if (res.status === 401) vertexAuth.token = '';
       const err = await res.json().catch(() => null);
       setAiError(`${name} ${res.status}: ${String(err?.error?.message || res.statusText).slice(0, 200)}`);
       return null;
     }
     const data = await res.json();
     setAiError('');
-    const out = groq ? data?.choices?.[0]?.message?.content : data?.candidates?.[0]?.content?.parts?.[0]?.text;
-    spent(groq ? data?.usage : data?.usageMetadata, system, user, out);
+    const out = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+    spent(data?.usageMetadata, system, user, out);
     const v = JSON.parse(String(out || 'null').replace(/^```(?:json)?\s*|\s*```$/g, ''));
     return v && typeof v === 'object' ? v : null;
   } catch (e) {

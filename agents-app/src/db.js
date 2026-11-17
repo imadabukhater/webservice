@@ -407,6 +407,8 @@ ensureColumn('packages', 'esim_enabled', 'esim_enabled INTEGER NOT NULL DEFAULT 
 ensureColumn('packages', 'supplier_cost', 'supplier_cost REAL');
 // The supplier's own company number of the package (Aylol: its order form depends on it).
 ensureColumn('packages', 'supplier_company', 'supplier_company INTEGER');
+// The WhatsApp assistant runs on the owner's Google Cloud only: no AI key or other service is kept.
+db.exec("DELETE FROM settings WHERE key IN ('wa_ai_key', 'wa_ai_provider')");
 // Aylol's bill lines are new numbers on a SIM card (as its site sells them), not eSIMs.
 db.exec("UPDATE packages SET esim_enabled = 0 WHERE art_card_id LIKE 'ay:bill:%' AND esim_enabled = 1");
 ensureColumn('shop_orders', 'esim_fee', 'esim_fee REAL NOT NULL DEFAULT 0');

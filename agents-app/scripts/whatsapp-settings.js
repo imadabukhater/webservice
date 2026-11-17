@@ -5,10 +5,7 @@
 //   sudo -u agents env DB_FILE=/var/lib/agents-app/agents.db node /opt/agents/webservice/agents-app/scripts/whatsapp-settings.js
 //       → shows the settings (never the key) and what the assistant spent today
 //   … whatsapp-settings.js limit 0.5            daily spending limit in $ (0 pauses the assistant)
-//   … whatsapp-settings.js provider groq        gemini | groq | vertex (Google Cloud, no key)
-//   … whatsapp-settings.js model gemini-3.1-flash-lite
-//   … whatsapp-settings.js key                  reads the key from the keyboard (not shown, never on the command line)
-//   … whatsapp-settings.js key-clear
+//   … whatsapp-settings.js model gemini-3.1-flash-lite   (Gemini on your Google Cloud project; no key)
 //   … whatsapp-settings.js replies on|off       customers on|off
 //   … whatsapp-settings.js admins 0599000111,0599000222
 //   … whatsapp-settings.js shop-url https://www.example.com/shop
@@ -35,8 +32,7 @@ function show() {
     `أرقام المدير:       ${c.admins.join(', ') || '—'}`,
     `رابط المتجر:        ${c.shopUrl || '—'}`,
     `رسالة الترحيب:      ${c.welcome || '—'}`,
-    `الخدمة:             ${c.aiProvider}${c.aiProvider === 'vertex' ? ' (بلا مفتاح)' : ''}`,
-    `المفتاح:            ${c.aiKey ? `محفوظ (…${c.aiKey.slice(-4)}, ${c.aiKey.length} حرفاً)` : 'لا يوجد'}`,
+    `الخدمة:             Google Cloud (Vertex AI) — بلا مفتاح`,
     `النموذج:            ${c.aiModel}`,
     `السعر لكل مليون:    $${p.in} / $${p.out}${p.listed ? '' : ' (غير مدرج: أغلى سعر)'}`,
     `حد الصرف اليومي:    $${c.aiDailyUsd}`,
@@ -46,43 +42,15 @@ function show() {
   console.log(lines.join('\n'));
 }
 
-function readSecret(prompt) {
-  return new Promise((resolve) => {
-    const { stdin, stdout } = process;
-    if (!stdin.isTTY) { // piped: the first line
-      let data = '';
-      stdin.on('data', (d) => { data += d; }).on('end', () => resolve(data.split(/\r?\n/)[0].trim()));
-      return;
-    }
-    stdout.write(prompt);
-    stdin.setRawMode(true);
-    let s = '';
-    stdin.on('data', function onData(buf) {
-      for (const ch of buf.toString('utf8')) {
-        if (ch === '\r' || ch === '\n') { stdin.setRawMode(false); stdin.pause(); stdin.off('data', onData); stdout.write('\n'); return resolve(s.trim()); }
-        if (ch === '\u0003') { stdout.write('\n'); process.exit(1); }
-        if (ch === '\u007f') s = s.slice(0, -1); else s += ch;
-      }
-    });
-  });
-}
-
 (async () => {
   try {
     const set = (body) => { WC.saveConfig(body); console.log('✔ تم الحفظ — يسري من الرسالة التالية.\n'); show(); };
     switch (cmd) {
       case undefined: case 'show': return show();
       case 'limit': return set({ aiDailyUsd: value });
-      case 'provider':
-        if (!WC.PROVIDERS.includes(value)) { console.error(`اختر: ${WC.PROVIDERS.join(' | ')}`); process.exit(1); }
-        return set({ aiProvider: value });
-      case 'model': return set({ aiModel: value });
-      case 'key': {
-        const k = await readSecret('الصق المفتاح ثم Enter (لا يظهر): ');
-        if (!k) { console.error('لم يُدخل مفتاح'); process.exit(1); }
-        return set({ aiKey: k });
-      }
-      case 'key-clear': return set({ aiKeyClear: true });
+      case 'model':
+        if (!/^gemini[\w.-]*$/i.test(value)) { console.error(`نماذج: ${WC.AI_MODELS.map((m) => m.id).join(' | ')}`); process.exit(1); }
+        return set({ aiModel: value });
       case 'replies': return set({ enabled: onOff(value) });
       case 'customers': return set({ customers: onOff(value) });
       case 'admins': return set({ admins: value });
@@ -91,7 +59,7 @@ function readSecret(prompt) {
       case 'price-in': return set({ aiPriceIn: value });
       case 'price-out': return set({ aiPriceOut: value });
       default:
-        console.error('أوامر: show | limit | provider | model | key | key-clear | replies | customers | admins | shop-url | welcome | price-in | price-out');
+        console.error('أوامر: show | limit | model | replies | customers | admins | shop-url | welcome | price-in | price-out');
         process.exit(1);
     }
   } catch (e) {

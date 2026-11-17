@@ -69,23 +69,21 @@ const server = http.createServer((req, res) => {
   });
 });
 
-// A fake Gemini: answers from what the prompt gave it, and records the prompt.
+// The Compute Engine metadata server and Vertex AI (Gemini on the owner's project), as they answer; prompts recorded.
 const gemini = http.createServer((req, res) => {
   let body = '';
   req.on('data', (c) => { body += c; });
   req.on('end', () => {
-    const groq = req.url.endsWith('/chat/completions');
-    site.gemini.push({ groq, key: req.headers['x-goog-api-key'] || req.headers.authorization, body: JSON.parse(body) });
-    if (groq) {
-      const ok = req.headers.authorization === 'Bearer good-key';
-      const id = /#(\d+) هوت موبايل/.exec(JSON.parse(body).messages[0].content)?.[1] || '0';
-      res.writeHead(ok ? 200 : 401, { 'Content-Type': 'application/json' });
-      return res.end(JSON.stringify(ok ? { choices: [{ message: { content: JSON.stringify({ action: 'buy', packageId: Number(id) }) } }] } : { error: { message: 'Invalid API Key' } }));
+    if (req.url.startsWith('/computeMetadata/')) {
+      if (req.headers['metadata-flavor'] !== 'Google') { res.writeHead(403); return res.end(); }
+      if (req.url.endsWith('/project/project-id')) return res.end('agents-portal-test');
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ access_token: 'server-token', expires_in: 3599 }));
     }
-    if (req.headers['x-goog-api-key'] !== 'good-key') { res.writeHead(403, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ error: { message: 'API key not valid' } })); }
+    site.gemini.push({ url: req.url, auth: req.headers.authorization, body: JSON.parse(body) });
+    if (site.vertexDenied) { res.writeHead(403, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ error: { message: 'Permission denied on resource project agents-portal-test' } })); }
     const b = JSON.parse(body);
-    const prompt = `${b.systemInstruction?.parts?.[0]?.text || ''}
-${b.contents[0].parts[0].text}`;
+    const prompt = `${b.systemInstruction?.parts?.[0]?.text || ''}\n${b.contents[0].parts[0].text}`;
     const id = /#(\d+) هوت موبايل/.exec(prompt)?.[1] || '0';
     // A test can make it answer anything, as a tricked model would.
     const reply = site.aiReply || { action: 'answer', reply: `نعم، باقة هوت eSIM رقم ${id} بسعر 55 ₪. اطلبها من https://evil.example.com/pay` };
@@ -110,8 +108,8 @@ const until = async (fn, ms = 8000) => {
 test.before(async () => {
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   await new Promise((r) => gemini.listen(0, '127.0.0.1', r));
-  process.env.GEMINI_BASE = `http://127.0.0.1:${gemini.address().port}`;
-  process.env.GROQ_BASE = `http://127.0.0.1:${gemini.address().port}/openai/v1`;
+  process.env.METADATA_BASE = `http://127.0.0.1:${gemini.address().port}`;
+  process.env.VERTEX_BASE = `http://127.0.0.1:${gemini.address().port}`;
   dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wa-test-'));
   process.env.AYLOL_BASE = `http://127.0.0.1:${server.address().port}`;
   process.env.AYLOL_DATA = path.join(dataDir, 'aylol');
@@ -159,13 +157,9 @@ test('WhatsApp: agents sell as in the portal; customers buy in the chat, their t
   assert.match(refused.body.error, /على السيرفر/);
   assert.equal((await call(admin, 'POST', '/api/whatsapp/test', { phone: '0599000111' })).status, 404, 'no test message from the portal');
   assert.equal(wa.config().aiDailyUsd, 0.5, 'half a dollar a day unless the owner changes it');
-  assert.equal(wa.config().aiKey, '');
-  const saved = wa.saveConfig({ admins: '0599000111', shopUrl: 'https://shop.example.com/shop', aiKey: 'secret-ai-key' });
-  assert.deepEqual([saved.admins, saved.shopUrl, saved.hasAiKey], ['0599000111', 'https://shop.example.com/shop', true]);
-  assert.equal(JSON.stringify(saved).includes('secret-ai-key'), false);
-  assert.equal(JSON.stringify(await ok(call(admin, 'GET', '/api/whatsapp'))).includes('secret-ai-key'), false);
-  assert.equal(JSON.stringify(await ok(call(admin, 'GET', '/api/settings'))).includes('secret-ai-key'), false);
-  wa.saveConfig({ aiKeyClear: true });
+  assert.equal(wa.config().aiProvider, 'vertex', 'Gemini on the owner\'s Google Cloud only, no key');
+  const saved = wa.saveConfig({ admins: '0599000111', shopUrl: 'https://shop.example.com/shop', aiDailyUsd: 0 });
+  assert.deepEqual([saved.admins, saved.shopUrl, saved.aiDailyUsd], ['0599000111', 'https://shop.example.com/shop', 0]);
   const agentTok = await ok(call(admin, 'POST', '/api/agents', { name: 'وكيل واتساب', username: 'wa-agent', password: 'secret1', phone: '0599111222', balance: 500 }));
   assert.ok(agentTok);
   const login = (await ok(call(null, 'POST', '/api/login', { username: 'wa-agent', password: 'secret1' }))).token;
@@ -278,11 +272,14 @@ test('WhatsApp: agents sell as in the portal; customers buy in the chat, their t
   await wa._test.watchShop();
   assert.equal(sent.length, after, 'sent once');
 
-  // Gemini: free text is answered from the shop's own packages and prices, within the conversation, without links.
-  wa.saveConfig({ aiKey: 'good-key' });
+  // Gemini on the owner's Google Cloud: free text is answered from the shop's own packages and prices, within the
+  // conversation, without links; asked with the server's own token, on its own project.
+  wa.saveConfig({ aiDailyUsd: 0.6 });
   const answer = textOf(await say(C, '0541234567', 'شو أفضل شي عندكم للإنترنت؟'));
   assert.match(answer, new RegExp(`رقم ${esimPkg.id} بسعر 55`));
   assert.equal(/evil\.example|https?:\/\/evil/.test(answer), false, 'no link from the AI');
+  assert.match(site.gemini.at(-1).url, /^\/v1\/projects\/agents-portal-test\/locations\/global\/publishers\/google\/models\/gemini-3\.1-flash-lite:generateContent$/);
+  assert.equal(site.gemini.at(-1).auth, 'Bearer server-token');
   const asked = site.gemini.at(-1).body;
   const prompt = asked.systemInstruction.parts[0].text;
   assert.match(prompt, new RegExp(`#${esimPkg.id} هوت موبايل .* 55 ₪`));
@@ -349,23 +346,22 @@ test('WhatsApp: agents sell as in the portal; customers buy in the chat, their t
     assert.match(got, /اختار الشركة/);
   }
   site.aiReply = null;
-  // A wrong key: the menu still answers, and the error shows in the settings.
-  wa.saveConfig({ aiKey: 'bad-key' });
+  // Refused by Google Cloud (Vertex AI not allowed for the server yet): the menu still answers, the error shows.
+  site.vertexDenied = true;
+  wa._test.recent.clear();
+  wa._test.aiCallsByChat.clear();
   assert.match(textOf(await say(C, '0541234567', 'سؤال آخر عن الشبكة')), /اختار الشركة/);
-  assert.match((await ok(call(admin, 'GET', '/api/whatsapp'))).aiError, /403.*API key not valid/);
+  assert.match((await ok(call(admin, 'GET', '/api/whatsapp'))).aiError, /Vertex AI 403.*Permission denied/);
+  site.vertexDenied = false;
 
-  // Groq instead of Gemini, with what the manager taught it from WhatsApp; "I want one" starts that package's order.
+  // What the manager taught it from WhatsApp goes with its instructions; "I want one" starts that package's order.
   const ADM = '970599000111@s.whatsapp.net';
   assert.match(textOf(await say(ADM, '0599000111', '!تعلم الدعم من 9 صباحاً حتى 10 مساءً')), /حفظت المعلومة/);
-  wa.saveConfig({ aiProvider: 'groq', aiKey: 'good-key', aiModel: '' });
-  assert.equal((await ok(call(admin, 'GET', '/api/whatsapp'))).config.aiModel, 'openai/gpt-oss-20b');
+  site.aiReply = { action: 'buy', packageId: esimPkg.id };
   const C3 = '972547654321@s.whatsapp.net';
   assert.match(textOf(await say(C3, '0547654321', 'بدي واحدة الله يخليك')), /اسمك الكامل/);
-  const g = site.gemini.at(-1);
-  assert.equal(g.groq, true);
-  assert.equal(g.body.model, 'openai/gpt-oss-20b');
-  assert.deepEqual(g.body.response_format, { type: 'json_object' });
-  assert.match(g.body.messages[0].content, /الدعم من 9 صباحاً حتى 10 مساءً/);
+  site.aiReply = null;
+  assert.match(site.gemini.at(-1).body.systemInstruction.parts[0].text, /الدعم من 9 صباحاً حتى 10 مساءً/);
 
   // A top-up ordered in the chat, paid with a receipt photo: the photo is kept with the order for the manager; when
   // the payment goes to review, the manager is told on WhatsApp.

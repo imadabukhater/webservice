@@ -48,7 +48,7 @@ function waHtml(w) {
             <div>الرد على الرسائل</div><div>${c.enabled ? 'يعمل' : 'موقوف'}</div>
             <div>الرد على الزبائن</div><div>${c.customers ? 'يعمل' : 'موقوف'}</div>
             <div>أرقام المدير</div><div class="ltr">${esc(c.admins || '—')}</div>
-            <div>المساعد الذكي</div><div>${c.aiProvider === 'vertex' ? 'Google Cloud (Vertex AI)' : c.aiProvider === 'groq' ? 'Groq' : 'Google Gemini'} · <span class="ltr">${esc(c.aiModel || '')}</span>${c.aiProvider !== 'vertex' && !c.hasAiKey ? ' · <b>بلا مفتاح (موقوف)</b>' : ''}</div>
+            <div>المساعد الذكي</div><div>Google Cloud (Vertex AI) · <span class="ltr">${esc(c.aiModel || '')}</span>${Number(c.aiDailyUsd) > 0 ? '' : ' · <b>موقوف (الحد 0)</b>'}</div>
             <div>حد الصرف اليومي</div><div class="ltr">$${c.aiDailyUsd ?? '—'}</div>
             <div>صرف اليوم</div><div class="ltr">${c.aiSpend ? `$${Number(c.aiSpend.usd).toFixed(3)} · ${c.aiSpend.calls}` : '—'}</div>
           </div>
