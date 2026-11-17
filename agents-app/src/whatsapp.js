@@ -200,10 +200,13 @@ const say = async (jid, text) => {
 const CONVERSATION_IDLE_MS = Number(process.env.WA_CONVERSATION_IDLE_MS) || 10 * 60_000;
 const CONVERSATION_MAX = 120; // messages kept in one conversation (a very long one keeps its last ones)
 const history = new Map();
+// The order being put together in each chat (the package, name, phone, SIM given so far) and the summary the customer
+// was asked to confirm: kept by the code, so nothing given is asked again; gone with the conversation.
+const drafts = new Map();
 function remember2(jid, role, text) {
   const t = Date.now();
   let list = history.get(jid) || [];
-  if (list.length && t - list.at(-1).at >= CONVERSATION_IDLE_MS) list = [];
+  if (list.length && t - list.at(-1).at >= CONVERSATION_IDLE_MS) { list = []; drafts.delete(jid); }
   list.push({ role, text: String(text || '').slice(0, 2000), at: t });
   history.set(jid, list.slice(-CONVERSATION_MAX));
   if (history.size > 3000) for (const [k, v] of history) if (!v.length || t - v.at(-1).at >= CONVERSATION_IDLE_MS) history.delete(k);
@@ -970,7 +973,8 @@ const AGENT_TOOLS = [{ functionDeclarations: [
       package_id: { type: 'INTEGER', description: 'رقم الباقة من قائمة الباقات بالتعليمات' },
       customer_name: { type: 'STRING', description: 'اسم الزبون الكامل (لشريحة eSIM)' },
       phone_number: { type: 'STRING', description: 'الرقم اللي بدّه يشحنه أو رقم الخط (05XXXXXXXX)' },
-      sim_number: { type: 'STRING', description: 'رقم الشريحة ICCID (18 لـ 22 رقم) للخط على شريحة' } }, required: ['package_id'] } },
+      sim_number: { type: 'STRING', description: 'رقم الشريحة ICCID (18 لـ 22 رقم) للخط على شريحة' },
+      confirmed: { type: 'BOOLEAN', description: 'true بس بعد ما الزبون وافق على ملخص الطلب اللي انعرض عليه' } }, required: ['package_id'] } },
   { name: 'order_status', description: 'حالة طلبات الزبون من المتجر. بدون order_code: طلبات هالمحادثة.',
     parameters: { type: 'OBJECT', properties: { order_code: { type: 'STRING', description: 'رقم الطلب (8 حروف وأرقام) إذا الزبون كتبه' } } } },
   { name: 'submit_payment', description: 'الزبون بيقول إنه حوّل بجوال باي: يفحص المتجر التحويل باسم اللي حوّل أو رقمه أو الرقم المرجعي.',
@@ -1005,6 +1009,7 @@ ${shop.packages ? shopSheet(shop) : ''}
 كيف بتشتغل:
 - كل الباقات والأسعار قدامك فوق: جاوب منها بس، بأرقامها وأسعارها زي ما هي، ولا تخترع غيرها.
 - تذكّر كل شي حكاه الزبون بالمحادثة (اسمه، رقمه، رقم الشريحة، الباقة اللي اختارها) ولا تسأله عنه مرة تانية.
+- قبل ما ينعمل الطلب لازم الزبون يأكد: أول create_order بيعرض عليه ملخص (الباقة والسعر والاسم والرقم)، ولما يوافق اطلب create_order مرة تانية مع confirmed=true. إذا بدّه يغيّر إشي، اطلب create_order بالتغيير.
 - لما الزبون يختار باقة ويأكدها، اسأله عن اللي ناقص بس (eSIM: اسمه الكامل؛ شحن رصيد: الرقم اللي بدّه يشحنه؛ خط على شريحة: رقم الشريحة ورقم الهاتف؛ خط جديد رقمه من المتجر: رقم الشريحة واسمه الكامل)، وبعدين اطلب create_order.
 - لما يسأل عن طلبه أو ليش تأخر: order_status. لما يقول إنه حوّل ويعطيك اسم اللي حوّل أو رقمه أو الرقم المرجعي: submit_payment.
 - النظام بيضيف تحت ردّك لحاله تفاصيل الطلب (رقمه، المبلغ، رقم الدفع، وحالته). لا تكتبهم إنت ولا تعيدهم، ولا تحكي إنه الدفع أو التفعيل أو الطلب تم أو صار جاهز: هاد النظام بس بيقرره.
@@ -1088,17 +1093,38 @@ async function agentTool(name, args, ctx) {
       }) };
     }
     if (name === 'create_order') {
-      const p = shop.packages.find((x) => x.id === Number(args.package_id));
+      // What the customer gave before (in this conversation) fills what this call left out: nothing is asked twice.
+      const draft = drafts.get(jid) || { fields: {} };
+      for (const k of ['package_id', 'customer_name', 'phone_number', 'sim_number']) if (args[k] !== undefined && String(args[k]).trim()) draft.fields[k] = args[k];
+      drafts.set(jid, draft);
+      const f = draft.fields;
+      const p = shop.packages.find((x) => x.id === Number(f.package_id));
       if (!p) return { ok: false, error: 'ما في باقة بهالرقم بالمتجر' };
       const svc = serviceOf(p);
-      const name2 = str(args.customer_name || '', 80);
-      const number = phoneIn(norm(String(args.phone_number || '')));
-      const sim = String(args.sim_number || '').replace(/\D/g, '');
+      const name2 = str(f.customer_name || '', 80);
+      const number = phoneIn(norm(String(f.phone_number || '')));
+      const sim = String(f.sim_number || '').replace(/\D/g, '');
       const need = [];
       if ((svc === 'esim' && (name2.length < 2 || /\d/.test(name2))) || (p.simLine && (name2.split(/\s+/).filter(Boolean).length < 2 || /\d/.test(name2)))) need.push('customer_name');
       if (svc !== 'esim' && !p.simLine && !number) need.push('phone_number');
       if (svc === 'line' && !/^\d{18,22}$/.test(sim)) need.push('sim_number');
-      if (need.length) return { ok: false, need, message: `ناقص من الزبون: ${need.join('، ')}` };
+      if (need.length) return { ok: false, need, known: { customer_name: name2 || undefined, phone_number: number || undefined, sim_number: sim || undefined }, message: `ناقص من الزبون: ${need.join('، ')} (الباقي محفوظ، لا تسأله عنه)` };
+      // The customer confirms the order's summary (written by the code) before it is made: asked in one message, made only
+      // on a later one, for exactly what was shown.
+      const key = JSON.stringify([p.id, name2, number, sim]);
+      if (!(args.confirmed === true && draft.pendingKey === key && draft.pendingAt < ctx.startedAt)) {
+        draft.pendingKey = key;
+        draft.pendingAt = Date.now();
+        const total = svc === 'esim' ? round(p.price + (p.esimFee || 0)) : round(p.price);
+        ctx.prices.add(total);
+        const summary = (['📝 *تأكيد الطلب:*', `الباقة: ${p.companyName} — ${p.name}`, `السعر: *${total} ₪*${svc === 'esim' ? ` (شامل رسوم eSIM ${round(p.esimFee || 0)} ₪)` : ''}`,
+          ...(name2 ? [`الاسم: ${name2}`] : []), ...(number ? [`رقم الهاتف: ${number}`] : []), ...(sim ? [`رقم الشريحة: ${sim}`] : []),
+          ...(p.simLine || svc === 'esim' ? ['الرقم الجديد: بيعطيك ياه المتجر ومحجوز إلك بعد التأكيد'] : []),
+          '', 'إذا كله صح ابعت *نعم*، وإذا بدك تغيّر إشي احكيلي.'].join('\n'));
+        if (!ctx.facts.includes(summary)) ctx.facts.push(summary); // once, however often it is asked in one message
+        return { ok: false, awaiting_confirmation: true, note: 'ملخص الطلب بينضاف تحت ردّك. اطلب من الزبون يأكد، ولما يوافق اطلب create_order مع confirmed=true.' };
+      }
+      draft.pendingKey = '';
       const contact = /^05\d{8}$/.test(ctx.phone) ? ctx.phone : '';
       const body = p.simLine ? { packageId: p.id, kind: 'new', sim, customerName: name2, contactPhone: contact }
         : svc === 'esim' ? { packageId: p.id, kind: 'new', esim: true, customerName: name2, contactPhone: contact }
@@ -1106,6 +1132,7 @@ async function agentTool(name, args, ctx) {
           : { packageId: p.id, kind: 'new', number, sim, contactPhone: contact || number };
       const v = await S.createOrder(body, { ip: chat, clientId: chat });
       const o = S.byCode(v.code);
+      drafts.delete(jid);
       follow(jid, o, v.stage);
       ctx.facts.push(orderFacts(o, shop));
       ctx.prices.add(round(o.amount));
@@ -1162,7 +1189,7 @@ async function customerAgent(jid, raw, phone, shop) {
   const cfg = config();
   if (!aiReady(cfg) || !raw) return false;
   const guard = shopGuard(shop);
-  const ctx = { jid, phone, shop, facts: [], after: [], prices: new Set(guard.prices.map((x) => round(Number(x) || 0))), phones: new Set(guard.phones.filter(Boolean)) };
+  const ctx = { jid, phone, shop, startedAt: Date.now(), facts: [], after: [], prices: new Set(guard.prices.map((x) => round(Number(x) || 0))), phones: new Set(guard.phones.filter(Boolean)) };
   for (const n of String(westernDigits(raw)).match(/\+?\d[\d\s-]{7,}\d/g) || []) ctx.phones.add(digitsOf(n)); // the customer's own numbers
   if (/^05\d{8}$/.test(phone)) ctx.phones.add(phone);
   const system = agentSystem(shop, cfg);
@@ -1379,5 +1406,5 @@ if (linked()) setTimeout(() => start().catch((e) => console.error('whatsapp star
 
 module.exports = {
   start, logout, status, config, configView, saveConfig, sendTo, taskResolved, handle, tellAdmins, jidOf,
-  _test: { phoneIn, askModel, vertexAuth, spendToday, priceOf, safeReply, AGENT_TOOLS, agentSystem, vertexAccess, vertexUrl, aiCallsByChat, askedAbout, setTransport: (fn) => { transport = fn; }, setDownloader: (fn) => { downloader = fn; }, sessions, recent, norm, onRaw, jidOf, watchShop, history },
+  _test: { phoneIn, drafts, askModel, vertexAuth, spendToday, priceOf, safeReply, AGENT_TOOLS, agentSystem, vertexAccess, vertexUrl, aiCallsByChat, askedAbout, setTransport: (fn) => { transport = fn; }, setDownloader: (fn) => { downloader = fn; }, sessions, recent, norm, onRaw, jidOf, watchShop, history },
 };

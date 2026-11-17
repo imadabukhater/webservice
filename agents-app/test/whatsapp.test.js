@@ -322,7 +322,17 @@ test('WhatsApp: agents sell as in the portal; customers buy in the chat, their t
   assert.match(r.got, /شو الرقم اللي بدك تشحنه/);
   assert.deepEqual(toolAnswer(r.calls[1]).response.need, ['phone_number']);
   const ordersBefore = q('SELECT COUNT(*) AS n FROM shop_orders').get().n;
-  r = await ask('0598887766', [{ call: 'create_order', args: { package_id: cardPkg.id, phone_number: '0598887766' } }, { text: 'تمام، حجزتلك الشحن 👍' }]);
+  // With everything given, the code shows the order's summary and waits for the customer's yes: nothing is ordered in
+  // the same message, even if the model tries to confirm it at once. The package given before is not asked again.
+  r = await ask('0598887766', [{ call: 'create_order', args: { phone_number: '0598887766' } }, { call: 'create_order', args: { confirmed: true } },
+    { text: 'تمام، هاي تفاصيل طلبك، بتأكدلي؟' }]);
+  assert.match(r.got, /تأكيد الطلب/);
+  assert.match(r.got, new RegExp(`${cardPkg.name}[\\s\\S]*50 ₪[\\s\\S]*0598887766`));
+  assert.equal(r.got.split('تأكيد الطلب').length, 2, 'the summary once');
+  assert.equal(q('SELECT COUNT(*) AS n FROM shop_orders').get().n, ordersBefore, 'not before the customer says yes');
+  assert.equal(toolAnswer(r.calls[2]).response.awaiting_confirmation, true);
+  // The customer says yes: the order is made, with what was given before (here, the number).
+  r = await ask('نعم', [{ call: 'create_order', args: { confirmed: true } }, { text: 'تمام، حجزتلك الشحن 👍' }]);
   assert.match(r.got, /تمام، حجزتلك الشحن/);
   const aiCode = /رقم \*([A-Z0-9]{8})\*/.exec(r.got)?.[1];
   assert.ok(aiCode, r.got);
