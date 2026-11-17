@@ -17,12 +17,18 @@ route('GET', '/api/whatsapp', ADMIN, () => wa.status());
 route('PUT', '/api/whatsapp', ADMIN, () => fail(403, 'إعدادات واتساب والمساعد تُعدَّل على السيرفر من صاحب الحساب فقط'));
 
 // Starts the link and waits a few seconds for the QR code (or the link, when it was linked before).
+// With a phone number: linked by an 8-character code typed on that phone instead of the QR code.
 route('POST', '/api/whatsapp/connect', ADMIN, async ({ body, req }) => {
+  let pairPhone = '';
+  if (body?.phone) {
+    pairPhone = wa.jidOf(String(body.phone)).split('@')[0];
+    if (!/^\d{11,15}$/.test(pairPhone)) fail(400, 'اكتب رقم واتساب المتجر، مثل 0599123456 أو 972599123456');
+  }
   shopUrlFrom(req);
-  await wa.start({ fresh: !!body?.fresh });
+  await wa.start({ fresh: !!body?.fresh, pairPhone });
   for (let i = 0; i < 24; i++) {
     const s = wa.status();
-    if (['qr', 'connected', 'missing', 'off'].includes(s.status) && !(s.status === 'off' && i < 2)) return s;
+    if (['qr', 'code', 'connected', 'missing', 'off'].includes(s.status) && !(s.status === 'off' && i < 2)) return s;
     await new Promise((r) => setTimeout(r, 400));
   }
   return wa.status();

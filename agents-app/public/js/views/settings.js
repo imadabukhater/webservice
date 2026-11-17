@@ -16,22 +16,29 @@ const V = { tab: 'general', wa: null, waTimer: null };
 const TABS = [['general', 'عام', 'sliders'], ['suppliers', 'المورّدون', 'refresh'], ['whatsapp', 'واتساب', 'whatsapp'], ['backup', 'النسخ الاحتياطي', 'download']];
 
 // ---------- WhatsApp: the link (QR code), and who it answers ----------
-const WA_LABEL = { off: 'غير مربوط', missing: 'مكتبة واتساب غير مثبتة على السيرفر', connecting: 'جارٍ الاتصال…', qr: 'امسح رمز QR من هاتف المتجر', connected: 'مربوط ويعمل' };
+const WA_LABEL = { off: 'غير مربوط', missing: 'مكتبة واتساب غير مثبتة على السيرفر', connecting: 'جارٍ الاتصال…', qr: 'امسح رمز QR من هاتف المتجر', code: 'أدخل الكود على هاتف المتجر', connected: 'مربوط ويعمل' };
 function waStatusHtml(w) {
   if (!w) return `<div class="msg">${icon('alert')}<span>تعذّر جلب حالة واتساب.</span></div>`;
-  const busy = w.status === 'connecting' || w.status === 'qr';
+  const busy = w.status === 'connecting' || w.status === 'qr' || w.status === 'code';
   return `<div class="msg ${w.status === 'connected' ? 'info' : ''}">${icon(w.status === 'connected' ? 'checkCircle' : w.status === 'qr' ? 'qr' : 'whatsapp')}
       <span><b>${WA_LABEL[w.status] || WA_LABEL.off}</b>${w.phone ? ` · <span class="ltr">${esc(w.phone)}</span>` : ''}</span></div>
     ${w.status === 'qr' && w.qr ? `<div style="text-align:center;margin:12px 0">
       <img src="${w.qr}" alt="رمز QR لربط واتساب" style="width:260px;max-width:100%;background:#fff;padding:8px;border-radius:12px">
       <p class="muted small">في هاتف المتجر: واتساب ← الإعدادات ← الأجهزة المرتبطة ← ربط جهاز، ثم امسح الرمز. يتجدّد الرمز كل نحو 20 ثانية.</p></div>` : ''}
+    ${w.status === 'code' && w.pairCode ? `<div style="text-align:center;margin:12px 0">
+      <div class="ltr mono" style="font-size:34px;font-weight:800;letter-spacing:4px">${esc(w.pairCode)}</div>
+      <p class="muted small">في هاتف المتجر: واتساب ← الإعدادات ← الأجهزة المرتبطة ← ربط جهاز ← «الربط برقم الهاتف بدلاً من ذلك»، ثم أدخل هذا الكود. صالح لدقائق.</p></div>` : ''}
     ${w.error ? `<div class="msg">${icon('alert')}<span>${esc(w.error)}</span></div>` : ''}
     <div class="btn-row">
       ${w.status === 'connected'
         ? `<button class="btn" type="button" data-action="wa-logout">${icon('logout')}إلغاء الربط</button>`
         : `<button class="btn btn-primary" type="button" data-action="wa-connect" ${busy ? 'disabled' : ''}>${icon('qr')}ربط واتساب</button>
            ${busy ? `<button class="btn" type="button" data-action="wa-connect" data-fresh="1">${icon('refresh')}رمز جديد</button>` : ''}`}
-    </div>`;
+    </div>
+    ${w.status === 'connected' ? '' : `<div class="field" style="margin-top:12px"><label for="wa-pair-phone">أو اربط برقم الهاتف بدل مسح الرمز</label>
+      <div class="row" style="gap:8px"><input class="input ltr grow" id="wa-pair-phone" inputmode="tel" placeholder="رقم واتساب المتجر 05XXXXXXXX">
+      <button class="btn" type="button" data-action="wa-pair">${icon('phone')}اطلب كود</button></div>
+      <span class="hint">مفيد إذا هاتف المتجر هو نفس الجهاز اللي فاتح عليه البوابة.</span></div>`}`;
 }
 function waHtml(w) {
   const c = w?.config || {};
@@ -217,7 +224,7 @@ export default {
         try {
           const w = await api.get('/api/whatsapp');
           if (!document.getElementById('wa-status')) return;
-          if (JSON.stringify([w.status, w.qr, w.phone, w.error]) !== JSON.stringify([V.wa?.status, V.wa?.qr, V.wa?.phone, V.wa?.error])) {
+          if (JSON.stringify([w.status, w.qr, w.phone, w.error, w.pairCode]) !== JSON.stringify([V.wa?.status, V.wa?.qr, V.wa?.phone, V.wa?.error, V.wa?.pairCode])) {
             V.wa = w;
             box.innerHTML = waStatusHtml(w);
           }
@@ -320,6 +327,19 @@ export default {
       box.insertAdjacentHTML('afterbegin', `<div class="msg info">${icon('clock')}<span>جارٍ تجهيز رمز QR…</span></div>`);
       try {
         V.wa = await api.post('/api/whatsapp/connect', { fresh: btn.dataset.fresh === '1' });
+      } catch (err) {
+        V.wa = { ...(V.wa || {}), status: 'off', error: err.message };
+      }
+      box.innerHTML = waStatusHtml(V.wa);
+    },
+    async 'wa-pair'(btn) {
+      const phone = (document.getElementById('wa-pair-phone')?.value || '').trim();
+      if (!phone) { toast('اكتب رقم واتساب المتجر', { error: true }); return; }
+      const box = document.getElementById('wa-status');
+      btn.disabled = true;
+      box.insertAdjacentHTML('afterbegin', `<div class="msg info">${icon('clock')}<span>جارٍ طلب كود الربط…</span></div>`);
+      try {
+        V.wa = await api.post('/api/whatsapp/connect', { phone });
       } catch (err) {
         V.wa = { ...(V.wa || {}), status: 'off', error: err.message };
       }

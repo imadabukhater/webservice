@@ -66,14 +66,20 @@ const connected = () => !!transport || (state.status === 'connected' && !!state.
 function status() {
   return {
     status: state.status, qr: state.status === 'qr' ? state.qr : '', qrAt: state.qrAt, phone: state.phone, error: state.error,
+    pairCode: state.status === 'code' ? state.pairCode : '',
     linked: linked(), config: configView(), aiError: aiErrorNow(),
   };
 }
 
-async function start({ fresh = false } = {}) {
+// Linked by its QR code, or, given the shop's phone number, by an 8-character code typed on that phone
+// (WhatsApp → Linked devices → Link a device → Link with phone number instead).
+async function start({ fresh = false, pairPhone = '' } = {}) {
   if (state.starting) return status();
-  if (state.sock && !fresh) return status();
+  if (state.sock && !fresh && !pairPhone) return status();
+  if (pairPhone) fresh = true;
   state.starting = true;
+  state.pairPhone = pairPhone;
+  state.pairCode = '';
   try {
     let B;
     try {
@@ -126,7 +132,16 @@ function closeSocket() {
 
 function onConnection(B, sock, auth, u) {
   if (state.sock !== sock) return;
-  if (u.qr) {
+  if (u.qr && state.pairPhone) {
+    // Ready to link: the code for the shop's phone, asked once (it stays valid while the QR codes rotate).
+    if (!state.pairCode && !state.pairAsking) {
+      state.pairAsking = true;
+      sock.requestPairingCode(state.pairPhone)
+        .then((c) => { if (state.sock === sock) Object.assign(state, { status: 'code', pairCode: String(c).replace(/^(.{4})(.{4})$/, '$1-$2'), qrAt: now() }); })
+        .catch((e) => { if (state.sock === sock) Object.assign(state, { status: 'off', error: `تعذّر طلب كود الربط: ${e.message}` }); })
+        .finally(() => { state.pairAsking = false; });
+    }
+  } else if (u.qr) {
     state.status = 'qr';
     state.qr = qrcode.dataUrl(u.qr, { scale: 6 });
     state.qrAt = now();
@@ -134,6 +149,8 @@ function onConnection(B, sock, auth, u) {
   if (u.connection === 'open') {
     state.status = 'connected';
     state.qr = '';
+    state.pairCode = '';
+    state.pairPhone = '';
     state.error = '';
     state.retries = 0;
     state.phone = phoneOfJid(sock.user?.id);
@@ -150,8 +167,8 @@ function onConnection(B, sock, auth, u) {
       Object.assign(state, { status: 'off', qr: '', error: 'فُتح واتساب هذا الرقم من مكان آخر بدل السيرفر. اضغط «ربط واتساب» لإعادته.' });
     } else if (!auth.creds?.me && code !== (R.restartRequired ?? 515)) {
       // Not linked yet: stop until the manager asks again (the QR expired, or WhatsApp could not be reached).
-      const why = state.status === 'qr' ? 'انتهت مهلة رمز QR قبل مسحه.' : `تعذّر الوصول إلى خوادم واتساب (${u.lastDisconnect?.error?.message || code || 'بلا رد'}).`;
-      Object.assign(state, { status: 'off', qr: '', error: `${why} اضغط «ربط واتساب» للمحاولة من جديد.` });
+      const why = state.status === 'qr' ? 'انتهت مهلة رمز QR قبل مسحه.' : state.status === 'code' ? 'انتهت مهلة كود الربط قبل إدخاله.' : `تعذّر الوصول إلى خوادم واتساب (${u.lastDisconnect?.error?.message || code || 'بلا رد'}).`;
+      Object.assign(state, { status: 'off', qr: '', pairCode: '', pairPhone: '', error: `${why} اضغط «ربط واتساب» للمحاولة من جديد.` });
     } else {
       state.status = 'connecting';
       const wait = Math.min(60_000, 2_000 * 2 ** state.retries++);
@@ -165,7 +182,7 @@ async function logout() {
   if (s) try { await s.logout(); } catch {}
   closeSocket();
   fs.rmSync(authDir(), { recursive: true, force: true });
-  Object.assign(state, { status: 'off', qr: '', phone: '', error: '' });
+  Object.assign(state, { status: 'off', qr: '', phone: '', error: '', pairCode: '', pairPhone: '' });
   return status();
 }
 
@@ -1298,6 +1315,6 @@ async function flush() {
 if (linked()) setTimeout(() => start().catch((e) => console.error('whatsapp start', e.message)), 3_000).unref();
 
 module.exports = {
-  start, logout, status, config, configView, saveConfig, sendTo, taskResolved, handle, tellAdmins,
+  start, logout, status, config, configView, saveConfig, sendTo, taskResolved, handle, tellAdmins, jidOf,
   _test: { askModel, vertexAuth, spendToday, priceOf, safeReply, AGENT_TOOLS, agentSystem, vertexAccess, vertexUrl, aiCallsByChat, askedAbout, setTransport: (fn) => { transport = fn; }, setDownloader: (fn) => { downloader = fn; }, sessions, recent, norm, onRaw, jidOf, watchShop, history },
 };

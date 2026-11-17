@@ -162,6 +162,8 @@ test('WhatsApp: agents sell as in the portal; customers buy in the chat, their t
   assert.equal(refused.status, 403);
   assert.match(refused.body.error, /على السيرفر/);
   assert.equal((await call(admin, 'POST', '/api/whatsapp/test', { phone: '0599000111' })).status, 404, 'no test message from the portal');
+  // Linking by the shop's phone number (a code typed on the phone instead of the QR): a wrong number is refused first.
+  assert.equal((await call(admin, 'POST', '/api/whatsapp/connect', { phone: '123' })).status, 400);
   assert.equal(wa.config().aiDailyUsd, 0.5, 'half a dollar a day unless the owner changes it');
   assert.equal(wa.config().aiProvider, 'vertex', 'Gemini on the owner\'s Google Cloud only, no key');
   const saved = wa.saveConfig({ admins: '0599000111', shopUrl: 'https://shop.example.com/shop', aiDailyUsd: 0 });
