@@ -90,13 +90,13 @@ function servedEsim(ref, number) {
   return v && now() - v.at < SERVED_MS ? v : null;
 }
 // A bill line's numbers: the ones the site offers for its package (only for the companies whose order it knows).
-async function billFreeNumbers(ref) {
+async function billFreeNumbers(ref, sim = '') {
   if (!getSettings().aylolConfigured) fail(503, 'الأرقام غير متاحة الآن. تواصل مع المدير.');
   const row = q('SELECT supplier_company FROM packages WHERE art_card_id = ?').get(ref);
-  if (!ay.billAuto(ref, row?.supplier_company)) fail(404, 'رقم هذه الرزمة يختاره المدير عند التنفيذ');
+  if (!(sim ? ay.billShop(ref, row?.supplier_company) : ay.billAuto(ref, row?.supplier_company))) fail(404, 'رقم هذه الرزمة يختاره المدير عند التنفيذ');
   let list;
   try {
-    list = await ay.billNumbers(ref.split(':')[3], aylolCredentials());
+    list = await ay.billNumbers(ref.split(':')[3], aylolCredentials(), sim);
   } catch (e) {
     if (e instanceof ay.AylolError) { console.error('aylol bill numbers', e.message); fail(502, 'تعذّر جلب الأرقام الآن. حاول بعد قليل.'); }
     throw e;

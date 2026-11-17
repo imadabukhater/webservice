@@ -134,7 +134,7 @@ function shopCatalogResponse() {
   const s = getSettings();
   const packages = s.shopEnabled ? q(`SELECT p.*, c.name AS company_name, c.esim_fee AS company_esim_fee FROM packages p JOIN companies c ON c.id = p.company_id
       WHERE p.active = 1 AND p.shop_price > 0 ORDER BY c.sort, c.id, p.sort, p.id`).all()
-      .filter((p) => !/^ay:bill:/.test(p.art_card_id || '') || require('../aylol').billAuto(p.art_card_id, p.supplier_company)) : [];
+      .filter((p) => !/^ay:bill:/.test(p.art_card_id || '') || require('../aylol').billShop(p.art_card_id, p.supplier_company)) : [];
   const ids = new Set(packages.map((p) => p.company_id));
   return {
     // Every order is paid and verified before it is carried out: there is no instant (unpaid) activation.
@@ -273,7 +273,7 @@ function createOrder(body, { ip, clientId = '' }) {
                WHERE p.id = ? AND p.active = 1 AND p.shop_price > 0`).get(Number(body.packageId));
   if (!p) fail(404, 'الباقة غير متوفرة');
   if (/^ay:bill:/.test(p.art_card_id || '')) {
-    if (!require('../aylol').billAuto(p.art_card_id, p.supplier_company)) fail(404, 'الباقة غير متوفرة');
+    if (!require('../aylol').billShop(p.art_card_id, p.supplier_company)) fail(404, 'الباقة غير متوفرة');
     return aylolLineOrder(body, ip, clientId, p);
   }
   require('./aylol').ensureBalanceFor(p);
@@ -299,7 +299,7 @@ async function aylolLineOrder(body, ip, clientId, p) {
   const sim = validIccid(normalizeIccid(body.sim));
   if (q("SELECT 1 FROM lines WHERE sim = ? AND status != 'disconnected'").get(sim)) fail(409, 'هذه الشريحة مرتبطة برقم آخر');
   const contact = body.contactPhone ? validPhone(normalizePhone(body.contactPhone)) : '';
-  const list = await require('./aylol').billFreeNumbers(p.art_card_id);
+  const list = await require('./aylol').billFreeNumbers(p.art_card_id, sim);
   const held = new Set(heldNumbers().map((h) => h.number));
   const free = list.filter((n) => !held.has(n.phone) && !q("SELECT 1 FROM lines WHERE number = ? AND status != 'disconnected'").get(n.phone));
   if (!free.length) fail(409, 'ما في أرقام متاحة لهذه الباقة الآن. جرّب بعد قليل أو باقة أخرى.');

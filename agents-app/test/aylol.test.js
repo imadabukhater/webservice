@@ -48,6 +48,7 @@ const server = http.createServer((req, res) => {
       const cat = Number(m[1]);
       const type = u.searchParams.get('type');
       if (type === 'credit' && cat === 10) return json({ success: true, last_page: 1, data: site.cardListed ? [{ id: 41, name: 'Hot 50 شيكل', price: site.cardPrice }] : [] });
+      if (type === 'bill' && cat === 15) return json({ success: true, last_page: 1, data: [{ id: 88, display_name: 'Pelephone 100GB', price: 30, data_gb: 100, days: 30, company_id: 5, category_id: 15 }] });
       if (type === 'bill' && cat === 12) return json({ success: true, last_page: 1, data: [{ id: 77, display_name: 'Hot 100GB', price: 35, data_gb: 100, days: 30, company_id: 7, category_id: 12 }] });
       return json({ success: true, last_page: 1, data: [] });
     }
@@ -62,12 +63,21 @@ const server = http.createServer((req, res) => {
       site.purchases.push(JSON.parse(body));
       return json({ success: true, data: { phone: STOCK.phone, sim_number: STOCK.sim_number, lpa: 'LPA:1$smdp.hot.example$ACT-900' } });
     }
+    if (u.pathname === '/dashboard/charge-system/package/88') {
+      return json({ success: true, data: { id: 88, price: 30, company_id: 5, category_id: 15, month_number: null, period_id: null, is_task_based: false,
+        duration_options: [{ id: '9', value: '1', label: '1 شهر' }, { id: '10', value: '2', label: '2 شهر' }] } });
+    }
     if (u.pathname === '/dashboard/charge-system/package/77') {
       return json({ success: true, data: { id: 77, price: 35, company_id: 7, category_id: 12, month_number: null, period_id: null, sim_type: null } });
     }
     if (u.pathname === '/dashboard/charge-system/available-numbers' && req.method === 'POST') {
       const f = new URLSearchParams(body);
       site.numberLookups = (site.numberLookups || 0) + 1;
+      // Company 5: the numbers offered for the SIM given.
+      if (f.get('package_id') === '88') {
+        if (f.get('type') !== 'sim_number' || !/^\d{18,22}$/.test(f.get('sim_number') || '')) return json({ success: true, data: [{ id: 1, number: '0500000001', selection_key: '1', sim_number: '8997250408008240211' }] });
+        return json({ success: true, data: [{ id: 760026, number: '0555037832', phone: '0555037832', selection_key: '760026', sim_number: f.get('sim_number'), status: 'available', package_id: 88 }] });
+      }
       if (f.get('package_id') !== '77' || f.get('sim_type') !== 'sim' || f.get('is_esim') !== '0') return json({ success: true, data: [] });
       return json({ success: true, meta: { count: 2 }, data: [
         { id: 'k-1', number: '0512000001', phone: '0512000001', selection_key: 'k-1', status: 'available', package_id: 77 },
@@ -75,7 +85,7 @@ const server = http.createServer((req, res) => {
         { id: 'k-3', number: '0512000003', phone: '0512000003', selection_key: 'k-3', status: 'available', package_id: 77 }] });
     }
     if (u.pathname === '/dashboard/charge-system/subscribe' && req.method === 'POST') {
-      const f = Object.fromEntries(new URLSearchParams(body));
+      const f = String(req.headers['content-type'] || '').includes('application/json') ? { ...JSON.parse(body), json: true } : Object.fromEntries(new URLSearchParams(body));
       site.subscribes.push(f);
       if (f.action === 'subscription') {
         return json({ success: true, message: 'تم إنشاء الخط الجديد بنجاح', data: { subscription_id: 33832, status: 'active', mobile_number: f.phone, phone: f.phone, sim_number: f.sim_number, esim_qr: null, is_esim: false, company_id: 7 } });
@@ -153,16 +163,16 @@ test('Aylol: credentials only from the settings, real supplier catalog, eSIM num
   // Sync: only what the site lists, at its price (the signature is checked by the fake site).
   const card = await ok(call(admin, 'POST', '/api/aylol/sync', { kind: 'card' }));
   const invoice = await ok(call(admin, 'POST', '/api/aylol/sync', { kind: 'invoice' }));
-  assert.deepEqual([card.total, invoice.total], [1, 2]);
+  assert.deepEqual([card.total, invoice.total], [1, 3]);
   assert.equal(site.badSignatures, 0);
   const cat = await ok(call(admin, 'GET', '/api/catalog'));
   const ayPkgs = cat.packages.filter((p) => p.supplier === 'ay');
-  assert.deepEqual(ayPkgs.map((p) => p.cost).sort((a, b) => a - b), [35, 40, 47.5]);
+  assert.deepEqual(ayPkgs.map((p) => p.cost).sort((a, b) => a - b), [30, 35, 40, 47.5]);
   assert.equal(ayPkgs.some((p) => /empty|استرداد/i.test(p.name)), false, 'no made-up packages');
   const esimPkg = ayPkgs.find((p) => p.esimEnabled && p.cost === 40);
   assert.ok(esimPkg);
   // No agents' price of its own yet: the manager sets it, and agents do not see the package until then.
-  assert.deepEqual(ayPkgs.map((p) => p.price), [0, 0, 0]);
+  assert.deepEqual(ayPkgs.map((p) => p.price), [0, 0, 0, 0]);
   priceAylol();
 
   // The cookie jar lives beside the data, never in the app folder.
@@ -271,8 +281,27 @@ test('Aylol: credentials only from the settings, real supplier catalog, eSIM num
     ['subscription', '0512000003', 'k-3', SIM2, 'Sami', 'Khaled']);
   await until(async () => (await ok(call(null, 'GET', `/api/shop/orders/${shopOrder.code}`))).stage === 'done');
 
+  // A Pelephone line (Aylol's company 5, Sky5G): its numbers depend on the customer's SIM, so it is sold in the shop
+  // (where the SIM's number comes with the order) and sent as its page sends it, with the package's one-month period.
+  const pelePkg = (await ok(call(admin, 'GET', '/api/catalog'))).packages.find((p) => p.supplier === 'ay' && p.cost === 30);
+  dbq('UPDATE packages SET shop_price = 45 WHERE id = ?').run(pelePkg.id);
+  assert.equal((await ok(call(null, 'GET', '/api/shop'))).packages.find((p) => p.id === pelePkg.id)?.simLine, true);
+  const SIM3 = '8997250000000000001';
+  const peleOrder = await ok(call(null, 'POST', '/api/shop/orders', { packageId: pelePkg.id, kind: 'new', sim: SIM3, customerName: 'Rami Saleh' }));
+  assert.equal(dbq('SELECT number FROM shop_orders WHERE code = ?').get(peleOrder.code).number, '0555037832', 'a number Aylol offers for this SIM');
+  dbq(`INSERT INTO payment_mails (uid_validity, uid, message_id, trusted, from_addr, subject, received_at, amount, reference, sender_phone, sender_name, body, created_at)
+       VALUES (1, 8002, '<pele@jp>', 1, 'noreply@jawwalpay.ps', 'Jawwal Pay', ?, 45, 'REF4545', '', '', 'incoming', ?)`).run(Date.now(), Date.now());
+  await ok(call(null, 'POST', `/api/shop/orders/${peleOrder.code}/proof`, { payReference: 'REF4545' }));
+  const sky = await until(() => site.subscribes.find((x) => x.phone === '0555037832'));
+  assert.equal(sky.json, true, 'sent as JSON, as the page does');
+  assert.deepEqual([sky.action, sky.package_id, sky.company_id, sky.subscriber_id, sky.sim_number, sky.first_name, sky.last_name, sky.period_id, sky.duration, sky.esim],
+    ['subscription', '88', '5', '760026', SIM3, 'Rami', 'Saleh', '9', '1', 0]);
+  // An agent's Pelephone sale (no SIM known before the number) stays a request for the manager.
+  const peleSeen = (await ok(call(agent, 'GET', '/api/catalog'))).packages.find((p) => p.id === pelePkg.id);
+  assert.equal(peleSeen ? peleSeen.pool : false, false);
+
   // The password, the tokens and the customers' details never appear on curl's command line.
   const argv = fs.readFileSync(path.join(dataDir, 'argv.log'), 'utf8');
   assert.ok(argv.includes('/login'), 'the wrapper saw the requests');
-  for (const secret of ['right-pass', 'wrong-pass', 'CSRF-LOGIN', '0529998877', 'زبون', 'Abukhater', 'Khaled', SIM, SIM2]) assert.equal(argv.includes(secret), false, `${secret} on the command line`);
+  for (const secret of ['right-pass', 'wrong-pass', 'CSRF-LOGIN', '0529998877', 'زبون', 'Abukhater', 'Khaled', 'Saleh', SIM, SIM2, SIM3]) assert.equal(argv.includes(secret), false, `${secret} on the command line`);
 });
