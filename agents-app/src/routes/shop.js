@@ -132,8 +132,8 @@ function byCode(code, ip) {
 // ---------- in stock: only what has a number free now ----------
 // Every few minutes the shop asks each supplier which numbers it has free for each package sold with a number from
 // it (its eSIMs, and Aylol's new lines on a SIM card or as an eSIM). A package with none, or a way of its line with
-// none, is not shown, on the site or in WhatsApp; the numbers other customers' orders hold count as taken. Not asked
-// yet, or the supplier not answering for a while: shown (the order itself asks again). A Pelephone line on a SIM card
+// none, is not shown, on the site or in WhatsApp; the numbers other customers' orders hold count as taken. A supplier
+// not answering counts as none. Not asked yet (just started): shown (the order itself asks). A Pelephone line on a SIM card
 // is not asked: its numbers depend on the customer's SIM.
 const STOCK_MS = Number(process.env.SHOP_STOCK_MS) || 10 * 60_000;
 const stock = new Map(); // `${packageId}:${'sim'|'esim'}` -> { phones, at }
@@ -172,9 +172,10 @@ function refreshStock() {
           try {
             setStock(p.id, mode, (await ask()).map((n) => n.phone));
           } catch (e) {
-            // Not set up at that supplier: nothing to sell there. Otherwise the last answer stands for a while.
-            if (e.status === 503) setStock(p.id, mode, []);
-            else console.error('shop stock', p.id, mode, e.message);
+            // The supplier not set up, or not giving its numbers: nothing can be sold there now (an order would fail the
+            // same way), so not shown until it answers again.
+            setStock(p.id, mode, []);
+            if (e.status !== 503) console.error('shop stock', p.id, mode, e.message);
           }
         }
       }
