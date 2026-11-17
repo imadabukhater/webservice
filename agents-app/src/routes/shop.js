@@ -220,6 +220,15 @@ route('POST', '/api/shop/orders', null, ({ body, ip, req }) => {
 
 // A new order, with every check the web page's orders get (also made over WhatsApp, where ip and clientId name the chat).
 function createOrder(body, { ip, clientId = '' }) {
+  // At most so many orders an hour from one customer (their browser or chat, or their contact phone).
+  const perHour = getSettings().shopHourLimit;
+  if (perHour > 0) {
+    let contact = '';
+    try { contact = validPhone(normalizePhone(body.contactPhone || body.number || '')); } catch {}
+    const n = q(`SELECT COUNT(*) AS c FROM shop_orders WHERE created_at > ? AND ((? != '' AND client_id = ?) OR (? != '' AND contact_phone = ?))`)
+      .get(now() - 60 * 60_000, clientId, clientId, contact, contact)?.c || 0;
+    if (n >= perHour) fail(429, `وصلت إلى الحد الأقصى (${perHour} طلبات في الساعة). حاول لاحقاً أو تواصل معنا.`);
+  }
   const s = enabled();
   shop.expireUnconfirmed();
 
@@ -259,6 +268,7 @@ function createOrder(body, { ip, clientId = '' }) {
   const p = q(`SELECT p.*, c.name AS company_name, c.esim_fee AS company_esim_fee FROM packages p JOIN companies c ON c.id = p.company_id
                WHERE p.id = ? AND p.active = 1 AND p.shop_price > 0`).get(Number(body.packageId));
   if (!p) fail(404, 'الباقة غير متوفرة');
+  require('./aylol').ensureBalanceFor(p);
   const kind = body.kind === 'new' ? 'new' : 'recharge';
   const number = validPhone(normalizePhone(body.number));
   const sim = kind === 'new' ? validIccid(normalizeIccid(body.sim)) : '';
@@ -276,6 +286,7 @@ function createOrder(body, { ip, clientId = '' }) {
 async function esimOrder(body, ip, clientId = '') {
   const s = getSettings();
   const pk = esimPackage(body.packageId);
+  require('./aylol').ensureBalanceFor(pk);
   const customerName = str(body.customerName, 80);
   if (customerName.length < 2) fail(400, 'اكتب اسمك — مطلوب لتسجيل الخط');
   const email = str(body.email, 120).toLowerCase();

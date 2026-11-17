@@ -108,7 +108,26 @@ function page(url, ref, extra = [], body = null) {
   ], body);
 }
 
-const state = { seed: '', csrf: '', user: '', loggedAt: 0, chargeHtml: '', balance: null };
+const state = { seed: '', csrf: '', user: '', loggedAt: 0, chargeHtml: '', balance: null, balanceAt: 0 };
+// The balance the site last showed (its charge page), lowered by each sale made since; the manager is told when low.
+function sawBalance(h) {
+  const b = exBalance(h);
+  state.balance = b;
+  state.balanceAt = b === null || b === undefined ? 0 : Date.now();
+  try { require('./routes/aylol').balanceSeen(state.balance); } catch (e) { console.error('aylol balance', e.message); }
+}
+const BALANCE_FRESH_MS = 6 * 60 * 60_000;
+function knownBalance() {
+  return state.balance !== null && state.balance !== undefined && Date.now() - state.balanceAt < BALANCE_FRESH_MS
+    ? { value: Number(state.balance), at: state.balanceAt } : null;
+}
+function spent(amount) {
+  const n = Number(amount) || 0;
+  if (n > 0 && state.balance !== null && state.balance !== undefined) {
+    state.balance = Math.round((Number(state.balance) - n) * 100) / 100;
+    try { require('./routes/aylol').balanceSeen(state.balance); } catch (e) { console.error('aylol balance', e.message); }
+  }
+}
 
 function signedHeaders(p) {
   const ts = String(Date.now());
@@ -225,7 +244,8 @@ async function login(creds) {
     const seed = exSeed(h);
     const csrf = exCsrf(h);
     if (seed && csrf) {
-      Object.assign(state, { seed, csrf, user: c.user, loggedAt: Date.now(), chargeHtml: h, balance: exBalance(h) });
+      Object.assign(state, { seed, csrf, user: c.user, loggedAt: Date.now(), chargeHtml: h });
+      sawBalance(h);
       return { ok: true, user: c.user, balance: state.balance };
     }
   }
@@ -240,7 +260,8 @@ async function login(creds) {
   if (!exSeed(ch)) ch = (await passTwoFactor(c)) || ch;
   const seed = exSeed(ch);
   if (!seed) throw new AylolError('أيلول رفض الدخول — راجع البريد وكلمة المرور', { refused: true });
-  Object.assign(state, { seed, csrf: exCsrf(ch) || csrf1, user: c.user, loggedAt: Date.now(), chargeHtml: ch, balance: exBalance(ch) });
+  Object.assign(state, { seed, csrf: exCsrf(ch) || csrf1, user: c.user, loggedAt: Date.now(), chargeHtml: ch });
+  sawBalance(ch);
   return { ok: true, user: c.user, balance: state.balance };
 }
 async function ensureSession(creds) {
@@ -565,7 +586,15 @@ async function balance(creds) {
   return state.balance;
 }
 
+// A sale carried out lowers the balance known here by its price, until the site shows it again.
+async function executeOrderCounted(args, creds) {
+  const r = await executeOrder(args, creds);
+  spent(args?.price);
+  return r;
+}
+
 module.exports = {
+  knownBalance, executeOrder: executeOrderCounted,
   AylolError, login, balance, esimAgentPrice, listedPrice, parseCategoriesFromHtml, fetchPackages, syncAll, fetchEsimPage, fetchEsimPackages, fetchEsimReadyStocks,
-  purchaseEsim, lookupAvailableNumbers, executeOrder, currentPrice, mapToEsimCategoryId, esimCodeAndQr, twoFactorForm, twoFactorFields, _state: state,
+  purchaseEsim, lookupAvailableNumbers, currentPrice, mapToEsimCategoryId, esimCodeAndQr, twoFactorForm, twoFactorFields, _state: state,
 };

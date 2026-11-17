@@ -448,6 +448,9 @@ const DEFAULT_SETTINGS = {
   ly_user: '', ly_pass: '', ly_secret: '', ly_markup: '15',
   tc_user: '', tc_pass: '', tc_mail_user: '', tc_mail_pass: '', tc_markup: '15', tc_reg_address: '', tc_reg_city: '', tc_reg_zip: '',
   aylol_user: '', aylol_pass: '', aylol_markup: '15',
+  // Safety: a paid customer order above this amount waits for the manager (0: none); orders a customer may make in an
+  // hour; Aylol's balance under which the manager is told.
+  shop_auto_max: '200', shop_hour_limit: '3', aylol_low_balance: '100',
 };
 function getSettings() {
   const out = { ...DEFAULT_SETTINGS };
@@ -516,6 +519,9 @@ function getSettings() {
     // Customer shop paid by JawwalPay or instant self-service; transfers are confirmed from the notification emails in Gmail.
     shopEnabled: out.shop_enabled === '1',
     shopInstant: out.shop_instant === '1',
+    shopAutoMax: Math.max(0, Number(out.shop_auto_max ?? 200) || 0),
+    shopHourLimit: Math.max(0, Number(out.shop_hour_limit ?? 3) || 0),
+    aylolLowBalance: Math.max(0, Number(out.aylol_low_balance ?? 100) || 0),
     shopTitle: out.shop_title || '',
     shopSubtitle: out.shop_subtitle || '',
     jawwalpayNumber: out.jawwalpay_number,

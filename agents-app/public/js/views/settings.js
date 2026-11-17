@@ -134,6 +134,9 @@ export default {
             <div class="field"><label for="aylol-secret">المفتاح السري لـ Google Authenticator (التحقق بخطوتين)</label>
               <input class="input ltr" id="aylol-secret" name="aylolSecret" type="password" autocomplete="off" placeholder="${s.aylolHasSecret ? 'محفوظ — اتركه فارغاً للإبقاء' : 'المفتاح تحت رمز QR، أو رابط otpauth'}">
               <span class="hint">أيلول يطلب رمزاً من Google Authenticator بعد كلمة المرور. انسخ المفتاح المكتوب تحت رمز QR عند تفعيل التحقق بخطوتين في أيلول (أو رابط التصدير من التطبيق)، فيصنع السيرفر الرمز بنفسه. يبقى على السيرفر ولا يظهر بعد حفظه.</span></div>
+            <div class="field"><label for="aylol-low">نبّهني عندما ينزل رصيد أيلول تحت (₪)</label>
+              <input class="input ltr" id="aylol-low" name="aylolLowBalance" type="number" min="0" step="1" inputmode="numeric" value="${s.aylolLowBalance ?? 100}">
+              <span class="hint">يصلك تنبيه في البوابة وعلى واتساب (مرة كل 6 ساعات على الأكثر). وأي طلب لا يكفيه الرصيد يُرفض قبل أن يدفع الزبون أو يُخصم من الوكيل. 0 = بلا تنبيه.</span></div>
             <div class="msg info">${icon('info')}<span>بعد الحفظ تُزامَن رزم أيلول فوراً، ثم كل ساعتين تلقائياً. الأرقام المتاحة والسعر يُقرآن من أيلول مباشرة عند كل طلب. نسبة الربح لكل نظام في «الشركات والرزم» ← تبويب «أيلول».</span></div>
             <div id="aylol-msg"></div>
             <div class="btn-row">
@@ -299,7 +302,7 @@ export default {
       const form = e.currentTarget;
       const msg = root.querySelector('#aylol-msg');
       try {
-        S.settings = await api.put('/api/settings', { aylolUser: field(form, 'aylolUser'), aylolPass: form.elements.aylolPass.value, aylolSecret: form.elements.aylolSecret.value });
+        S.settings = await api.put('/api/settings', { aylolUser: field(form, 'aylolUser'), aylolPass: form.elements.aylolPass.value, aylolSecret: form.elements.aylolSecret.value, aylolLowBalance: field(form, 'aylolLowBalance') });
         form.elements.aylolPass.value = '';
         form.elements.aylolSecret.value = '';
         toast('تم حفظ إعدادات أيلول');

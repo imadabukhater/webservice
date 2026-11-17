@@ -73,6 +73,10 @@ function openSettings() {
     body: `
       <label class="switch-row"><span class="grow"><b>المتجر مفتوح للزبائن</b><small>الباقات التي لها «سعر الزبون» في الشركات والرزم تظهر فيه</small></span><input class="switch" type="checkbox" name="shopEnabled" ${s.shopEnabled ? 'checked' : ''}></label>
       <label class="switch-row"><span class="grow"><b>وضع التفعيل التجريبي بدون انتظار الدفع</b><small>إتاحة تفعيل الطلبات وإظهار كود QR مباشرة عبر واجهة البرمجة دون انتظار التحقق من الدفع (أبقِه مغلقاً في الوضع الفعلي)</small></span><input class="switch" type="checkbox" name="shopInstant" ${s.shopInstant ? 'checked' : ''}></label>
+      <div class="row2"><div class="field"><label for="st-max">حد التنفيذ التلقائي (₪)</label><input class="input ltr" id="st-max" name="shopAutoMax" type="number" min="0" step="1" inputmode="numeric" value="${s.shopAutoMax ?? 200}">
+          <span class="hint">طلب أغلى من هذا يُفحص دفعه تلقائياً، لكنه ينتظر موافقتك قبل التفعيل. 0 = بلا حد.</span></div>
+        <div class="field"><label for="st-hour">أقصى عدد طلبات للزبون في الساعة</label><input class="input ltr" id="st-hour" name="shopHourLimit" type="number" min="0" max="100" step="1" inputmode="numeric" value="${s.shopHourLimit ?? 3}">
+          <span class="hint">من نفس المتصفح أو محادثة واتساب أو رقم التواصل. 0 = بلا حد.</span></div></div>
       <div class="row2"><div class="field"><label for="st-title">عنوان المتجر الترحيبي <span class="opt">(اختياري)</span></label><input class="input" id="st-title" name="shopTitle" value="${esc(s.shopTitle || '')}" placeholder="فعّل خطك أو شريحتك الإلكترونية eSIM فوراً"></div>
         <div class="field"><label for="st-sub">وصف المتجر الفرعي <span class="opt">(اختياري)</span></label><input class="input" id="st-sub" name="shopSubtitle" value="${esc(s.shopSubtitle || '')}" placeholder="أفضل الباقات المحلية والـ eSIM بأسعار شفافة وتفعيل فوري"></div></div>
       <div class="row2"><div class="field"><label for="st-jp">رقم محفظة جوال باي</label><input class="input ltr" id="st-jp" name="jawwalpayNumber" value="${esc(s.jawwalpayNumber)}" inputmode="tel"></div>
@@ -103,6 +107,7 @@ function openSettings() {
       V.settings = await api.put('/api/settings', {
         shopEnabled: form.elements.shopEnabled.checked,
         shopInstant: form.elements.shopInstant.checked,
+        shopAutoMax: field(form, 'shopAutoMax'), shopHourLimit: field(form, 'shopHourLimit'),
         shopTitle: field(form, 'shopTitle'),
         shopSubtitle: field(form, 'shopSubtitle'),
         jawwalpayNumber: field(form, 'jawwalpayNumber'), jawwalpayName: field(form, 'jawwalpayName'),

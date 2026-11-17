@@ -25,6 +25,37 @@ const pendingCount = (kind) => q(`SELECT COUNT(*) AS n FROM packages WHERE ${REF
 // eSIM: they are not listed until that purchase is known.
 const ESIM_CATS = [{ id: 10, name: 'هوت موبايل' }, { id: 28, name: '019' }];
 
+// ---------- the balance: a sale it cannot pay for is refused before anyone pays; the manager is told when low ----------
+const LOW_EVERY_MS = 6 * 60 * 60_000;
+function tellManager(title, body) {
+  try { require('../domain').notify({ role: 'admin', kind: 'task', title, body, link: '#/settings' }); } catch (e) { console.error('aylol notify', e.message); }
+  try { Promise.resolve(require('../whatsapp').tellAdmins?.(`⚠️ ${title}\n${body}`)).catch(() => {}); } catch {}
+}
+function balanceSeen(balance) {
+  if (balance === null || balance === undefined) return;
+  const low = getSettings().aylolLowBalance;
+  if (!(low > 0) || Number(balance) >= low) return;
+  const last = Number(q("SELECT value FROM settings WHERE key = 'aylol_low_alert_at'").get()?.value || 0);
+  if (now() - last < LOW_EVERY_MS) return;
+  setSetting('aylol_low_alert_at', String(now()));
+  tellManager('رصيد أيلول منخفض', `رصيدك في أيلول ${round(balance)} ₪، أقل من ${low} ₪. اشحنه حتى لا تتوقف المبيعات.`);
+}
+// What the site takes for the package (its own cost when known, else its listed price).
+const siteCost = (pkg) => round(Number(pkg.supplier_cost ?? pkg.art_price ?? pkg.cost) || 0);
+function ensureBalanceFor(pkg) {
+  if (!/^ay:/.test(pkg?.art_card_id || '')) return;
+  const b = ay.knownBalance();
+  if (!b) return; // not known yet: the sale's own check at the site stops it
+  const need = siteCost(pkg);
+  if (!(need > 0) || b.value >= need) return;
+  const last = Number(q("SELECT value FROM settings WHERE key = 'aylol_short_alert_at'").get()?.value || 0);
+  if (now() - last > 60 * 60_000) {
+    setSetting('aylol_short_alert_at', String(now()));
+    tellManager('رصيد أيلول لا يكفي', `طلب ${pkg.name} (${need} ₪) رُفض قبل الدفع: رصيدك في أيلول ${round(b.value)} ₪. اشحنه.`);
+  }
+  fail(503, 'هذه الباقة غير متوفرة الآن. جرّب بعد قليل أو اختر باقة أخرى.');
+}
+
 const wrap = async (fn) => {
   if (!getSettings().aylolConfigured) fail(400, 'أدخل بريد وكلمة مرور أيلول في الإعدادات أولاً');
   try { return await fn(aylolCredentials()); } catch (e) { if (e instanceof ay.AylolError) fail(502, e.message); throw e; }
@@ -217,4 +248,4 @@ route('GET', '/api/aylol/reprice', ADMIN, ({ query }) => {
   return { total: r.total, edited: r.edited || 0, pending: pendingCount(kind), markup: markupFor(kind) };
 });
 
-module.exports = { syncKind, REF, freeNumbers, rememberEsim, servedEsim };
+module.exports = { syncKind, REF, freeNumbers, rememberEsim, servedEsim, balanceSeen, ensureBalanceFor };

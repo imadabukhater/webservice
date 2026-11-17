@@ -1102,6 +1102,6 @@ async function flush() {
 if (linked()) setTimeout(() => start().catch((e) => console.error('whatsapp start', e.message)), 3_000).unref();
 
 module.exports = {
-  start, logout, status, config, configView, saveConfig, sendTo, taskResolved, handle,
+  start, logout, status, config, configView, saveConfig, sendTo, taskResolved, handle, tellAdmins,
   _test: { safeIntro, safeReply, aiCallsByChat, askedAbout, setTransport: (fn) => { transport = fn; }, setDownloader: (fn) => { downloader = fn; }, sessions, recent, norm, onRaw, jidOf, watchShop, history },
 };

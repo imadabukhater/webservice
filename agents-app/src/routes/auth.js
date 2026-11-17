@@ -135,6 +135,13 @@ route('PUT', '/api/settings', ADMIN, ({ body }) => {
   }
   if (body.shopEnabled !== undefined) setSetting('shop_enabled', body.shopEnabled ? '1' : '0');
   if (body.shopInstant !== undefined) setSetting('shop_instant', body.shopInstant ? '1' : '0');
+  for (const [field, key, max, label] of [['shopAutoMax', 'shop_auto_max', 100000, 'حد التنفيذ التلقائي'],
+    ['shopHourLimit', 'shop_hour_limit', 100, 'عدد الطلبات في الساعة'], ['aylolLowBalance', 'aylol_low_balance', 100000, 'حد تنبيه رصيد أيلول']]) {
+    if (body[field] === undefined || body[field] === '') continue;
+    const n = Number(body[field]);
+    if (!Number.isFinite(n) || n < 0 || n > max) fail(400, `${label}: رقم من 0 إلى ${max}`);
+    setSetting(key, String(Math.round(n * 100) / 100));
+  }
   if (body.shopTitle !== undefined) setSetting('shop_title', str(body.shopTitle, 120));
   if (body.shopSubtitle !== undefined) setSetting('shop_subtitle', str(body.shopSubtitle, 240));
   if (body.jawwalpayNumber !== undefined) {

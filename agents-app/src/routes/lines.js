@@ -68,6 +68,8 @@ function createLine(user, body) {
   }
 
   const { pkg, offer, unit: quoted } = D.quote(agent.id, { packageId: body.packageId, offerId: body.offerId });
+  // An Aylol sale the account cannot pay for is refused before the agent is charged.
+  require('./aylol').ensureBalanceFor(pkg);
   // QuickLine's two systems cannot stand in for each other: a new-line package opens a line, an extension extends one.
   if (kind === 'external' && /^(qln|lyn|tcn):/.test(pkg.art_card_id || '')) fail(400, 'هذه رزمة تفعيل خط جديد، وليست شحناً لرقم');
   if (kind === 'new' && /^(ql|ly|tc):/.test(pkg.art_card_id || '')) fail(400, 'هذه رزمة تمديد: اختر رزمة تفعيل خط جديد');

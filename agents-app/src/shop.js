@@ -255,7 +255,18 @@ function tryMatch(orderId) {
   const o = q("SELECT * FROM shop_orders WHERE id = ? AND status IN ('verifying','review')").get(orderId);
   if (!o) return false;
   const hit = findMail(o);
-  if (!hit || !claim(o.id, hit.mail.id, `تلقائي: ${hit.by}`)) return false;
+  if (!hit) return false;
+  // Above the cap the payment found waits for the manager, who approves it with that notice (the order's review).
+  const cap = getSettings().shopAutoMax;
+  if (cap > 0 && Number(o.amount) > cap) {
+    if (o.status === 'verifying') {
+      q("UPDATE shop_orders SET status = 'review', updated_at = ? WHERE id = ? AND status = 'verifying'").run(now(), o.id);
+      D.notify({ role: 'admin', kind: 'task', title: `طلب زبون فوق حد التنفيذ التلقائي ${o.code}`,
+        body: `${o.package_label} — ${o.amount} ₪ (الحد ${cap} ₪). وُجد إشعار دفع مطابق: راجعه ووافق.`, link: '#/shop' });
+    }
+    return false;
+  }
+  if (!claim(o.id, hit.mail.id, `تلقائي: ${hit.by}`)) return false;
   fulfil(o.id);
   return true;
 }
