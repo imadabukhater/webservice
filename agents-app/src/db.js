@@ -481,6 +481,8 @@ const DEFAULT_SETTINGS = {
   aylol_user: '', aylol_pass: '', aylol_markup: '15',
   // Direct Jawwal Pay through the MaalCards corporate API: the subscriber (manager_id) and the corporate account.
   jc_enabled: '0', jc_manager_id: '', jc_user: '', jc_pass: '',
+  // Paying by a manual transfer, confirmed from the payment e-mails: on unless the manager stops it.
+  mail_pay: '1',
   // Safety: a paid customer order above this amount waits for the manager (0: none); orders a customer may make in an
   // hour; Aylol's balance under which the manager is told.
   shop_auto_max: '200', shop_hour_limit: '3', aylol_low_balance: '100',
@@ -570,6 +572,7 @@ function getSettings() {
     jcUser: out.jc_user,
     jcConfigured: !!(out.jc_manager_id && out.jc_user && out.jc_pass),
     jcReady: out.jc_enabled === '1' && !!(out.jc_manager_id && out.jc_user && out.jc_pass),
+    mailPay: out.mail_pay !== '0',
   };
 }
 function jcCredentials() {

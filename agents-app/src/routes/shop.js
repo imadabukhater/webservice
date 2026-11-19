@@ -249,6 +249,8 @@ function shopCatalogResponse() {
     payPhone: s.jawwalpayNumber || s.palpayNumber || '',
     // Paying straight from the customer's Jawwal Pay wallet with a code texted to them (corporate API).
     jawwalDirect: s.jcReady,
+    // A manual transfer, confirmed from the payment e-mails (the manager may stop it: direct payment only).
+    manualPay: s.mailPay || !s.jcReady,
     jawwalpay: { number: s.jawwalpayNumber, name: s.jawwalpayName },
     palpay: { number: s.palpayNumber || s.jawwalpayNumber, name: s.palpayName || s.jawwalpayName },
     companies: q('SELECT id, name, color, logo, esim_fee FROM companies ORDER BY sort, id').all().filter((c) => ids.has(c.id)).map((c) => ({
@@ -503,6 +505,11 @@ async function submitProof(order, body) {
   if (o.status === 'cancelled') fail(400, 'انتهت مهلة حجز الرقم (10 دقائق) دون تأكيد الإرسال وتم إلغاء الطلبية تلقائياً');
   if (!['awaiting_payment', 'verifying', 'review'].includes(o.status)) fail(400, 'تم التعامل مع هذا الطلب');
   const prevTries = Number(o.proof_tries) || 0;
+  // Manual transfers stopped: a new one is not taken (one already sent may still be corrected).
+  const st = getSettings();
+  if (!st.mailPay && st.jcReady && o.status === 'awaiting_payment' && !prevTries) {
+    fail(400, 'الدفع بالتحويل اليدوي متوقف حالياً — ادفع مباشرة من جوال باي من صفحة طلبك (يصلك رمز تحقق).');
+  }
   if (prevTries >= 2) fail(400, 'لقد استنفدت فرصة تصحيح البيانات — الطلب الآن قيد المراجعة');
   if (prevTries === 1 && o.status === 'review') fail(400, 'انتهت مهلة تصحيح البيانات (3 دقائق) — الطلب الآن قيد المراجعة');
   let payPhone = body.payPhone ? validPhone(normalizePhone(toLatinDigits(body.payPhone))) : '';

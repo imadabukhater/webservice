@@ -637,7 +637,8 @@ async function run(force) {
   const open = q("SELECT MIN(created_at) AS t, COUNT(*) AS n FROM shop_orders WHERE status IN ('awaiting_payment','verifying','review') AND created_at > ?")
     .get(now() - 3 * 864e5);
   let fetched = 0;
-  if (s.gmailConfigured && (force || open.n)) {
+  const proofsWaiting = q("SELECT COUNT(*) AS n FROM shop_orders WHERE status IN ('verifying','review')").get().n;
+  if (s.gmailConfigured && (s.mailPay || !s.jcReady ? (force || open.n) : proofsWaiting)) {
     const creds = gmailCredentials();
     const last = q('SELECT uid_validity FROM payment_mails ORDER BY id DESC LIMIT 1').get()?.uid_validity;
     const known = new Set(last ? q('SELECT uid FROM payment_mails WHERE uid_validity = ?').all(last).map((r) => r.uid) : []);

@@ -2052,10 +2052,11 @@ function renderOrder() {
   // direct payment is being checked, no manual transfer is offered (it would be paid twice).
   const jcChecking = Boolean(o.jawwal?.checking);
   const showDirect = Boolean((S.data?.jawwalDirect || jcChecking) && isInitialConfirm);
-  const canShowForm = (isInitialConfirm || isRetryChance) && !jcChecking;
-  const isSupportNeeded = Boolean(!canShowForm && payable && (o.needsSupport || (o.waitUntil && Date.now() >= Number(o.waitUntil))));
+  const manualOk = S.data?.manualPay !== false;
+  const canShowForm = ((isInitialConfirm && (manualOk || !showDirect)) || isRetryChance) && !jcChecking;
+  const isSupportNeeded = Boolean(!canShowForm && !showDirect && payable && (o.needsSupport || (o.waitUntil && Date.now() >= Number(o.waitUntil))));
   const statusPillCls = isSupportNeeded ? 's-bad' : st.cls;
-  const statusPillLabel = isSupportNeeded ? 'يرجى التحدث مع الدعم' : jcChecking ? 'جارٍ التحقق من الدفع…' : (!canShowForm && payable ? 'بانتظار التحقق (حتى 15 دقيقة)' : st.label);
+  const statusPillLabel = isSupportNeeded ? 'يرجى التحدث مع الدعم' : jcChecking ? 'جارٍ التحقق من الدفع…' : (!canShowForm && payable && !showDirect ? 'بانتظار التحقق (حتى 15 دقيقة)' : st.label);
   const wa = waHref(S.data?.supportWhatsapp, `مرحباً، بخصوص الطلب ${o.code}`);
   const appleInstallHref = o.esimCode && /^LPA:1\$/i.test(String(o.esimCode).trim())
     ? `https://esimsetup.apple.com/esim_qrcode_provisioning?carddata=${encodeURIComponent(String(o.esimCode).trim())}`

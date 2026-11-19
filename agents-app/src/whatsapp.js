@@ -938,7 +938,9 @@ function shopSheet(shop) {
     }
   }
   return `الباقات المتوفرة هلأ بالمتجر (رقم الباقة، الاسم، الخدمة، السعر):${lines.join('\n')}
-الدفع: بجوال باي${shop.jawwalpay?.number ? ` على ${shop.jawwalpay.number}${shop.jawwalpay.name ? ` (${shop.jawwalpay.name})` : ''}` : ''} خلال ${minutes} دقايق من الطلب. التفعيل بيصير لحاله بعد ما المتجر يتأكد من التحويل، وبيوصل الزبون هون (وللـ eSIM رمز QR).`;
+${shop.manualPay === false
+    ? `الدفع: مباشرة من محفظة جوال باي برمز تحقق بيوصل الزبون، من صفحة طلبه بالمتجر، خلال ${minutes} دقايق من الطلب. *ما في تحويل يدوي*: لا تطلب منه يحوّل ولا يبعت اسم المحوِّل. التفعيل بيصير لحاله بعد الدفع، وبيوصل الزبون هون (وللـ eSIM رمز QR).`
+    : `الدفع: بجوال باي${shop.jawwalpay?.number ? ` على ${shop.jawwalpay.number}${shop.jawwalpay.name ? ` (${shop.jawwalpay.name})` : ''}` : ''} خلال ${minutes} دقايق من الطلب. التفعيل بيصير لحاله بعد ما المتجر يتأكد من التحويل، وبيوصل الزبون هون (وللـ eSIM رمز QR).`}`;
 }
 
 function agentSystem(shop, cfg) {
@@ -1019,8 +1021,13 @@ async function askAgent(system, contents) {
 function orderFacts(o, shop) {
   const minutes = Math.max(1, Math.round(require('./shop').RESERVE_MS / 60_000));
   const where = shop.jawwalpay?.number ? ` على *${shop.jawwalpay.number}*${shop.jawwalpay.name ? ` (${shop.jawwalpay.name})` : ''}` : '';
-  return [`✅ انحجز طلبك رقم *${o.code}*`, ...(reservedNumber(o) ? [`📞 رقمك الجديد: *${reservedNumber(o)}* (محجوزلك لحد ما تدفع)`] : []),
-    `💳 حوّل *${round(o.amount)} ₪* بجوال باي${where} خلال ${minutes} دقايق.`,
+  const head = [`✅ انحجز طلبك رقم *${o.code}*`, ...(reservedNumber(o) ? [`📞 رقمك الجديد: *${reservedNumber(o)}* (محجوزلك لحد ما تدفع)`] : [])];
+  if (shop.manualPay === false) {
+    const base = config().shopUrl;
+    return [...head, `💳 ادفع *${round(o.amount)} ₪* مباشرة من محفظتك بجوال باي خلال ${minutes} دقايق${base ? ` من صفحة طلبك:\n${base}#/order/${o.code}` : ' من صفحة طلبك بالمتجر'}`,
+      'بتكتب رقم جوال باي وبيوصلك رمز تحقق، وبعدها بيتفعّل طلبك لحاله.'].join('\n');
+  }
+  return [...head, `💳 حوّل *${round(o.amount)} ₪* بجوال باي${where} خلال ${minutes} دقايق.`,
     'وبعد ما تحوّل ابعتلي هون *اسم اللي حوّل* أو *رقم تلفونه* أو *الرقم المرجعي*.'].join('\n');
 }
 const stageFacts = (o, stage) => `🧾 طلب *${o.code}* — ${o.package_label}\n${STAGE_TEXT[stage] || stage}`;

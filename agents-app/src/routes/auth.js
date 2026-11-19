@@ -168,6 +168,16 @@ route('PUT', '/api/settings', ADMIN, ({ body }) => {
   }
   if (body.jcUser !== undefined) setSetting('jc_user', str(body.jcUser, 120));
   if (body.jcPass) setSetting('jc_pass', String(body.jcPass).slice(0, 200));
+  if (body.mailPay !== undefined) setSetting('mail_pay', body.mailPay ? '1' : '0');
+  if (body.mailPay !== undefined || body.jcEnabled !== undefined) {
+    const after = getSettings();
+    if (!after.mailPay && !after.jcReady) {
+      // Undo what this request turned off (the other way stays as it was).
+      if (body.mailPay !== undefined && !body.mailPay) setSetting('mail_pay', '1');
+      if (body.jcEnabled !== undefined && !body.jcEnabled) setSetting('jc_enabled', '1');
+      fail(400, 'لا يمكن إيقاف الدفع بالتحويل (الإيميل) والدفع المباشر معاً — فعّل الدفع المباشر عبر جوال باي أولاً');
+    }
+  }
   if (body.supportWhatsapp !== undefined) {
     // International format without + or leading zeros, as wa.me expects: 972567725080.
     const wa = String(body.supportWhatsapp).replace(/\D/g, '').replace(/^00/, '');

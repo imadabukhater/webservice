@@ -50,7 +50,8 @@ function keyRow(k) {
 
 function setupNote() {
   const s = V.settings;
-  const missing = [!s.shopEnabled && 'المتجر مغلق', !(s.jawwalpayNumber || s.palpayNumber) && 'رقم المحفظة (جوال باي / بال باي)', !s.gmailConfigured && 'ربط Gmail'].filter(Boolean);
+  const manual = s.mailPay || !s.jcReady;
+  const missing = [!s.shopEnabled && 'المتجر مغلق', manual && !(s.jawwalpayNumber || s.palpayNumber) && 'رقم المحفظة (جوال باي / بال باي)', manual && !s.gmailConfigured && 'ربط Gmail'].filter(Boolean);
   if (!missing.length) return '';
   return `<div class="msg warn">${icon('info')}<span>لإكمال الإعداد: ${missing.join('، ')}. <button class="btn btn-sm btn-soft" data-action="settings">${icon('sliders')}الإعدادات</button></span></div>`;
 }
@@ -257,7 +258,9 @@ export default {
     return `
       <div class="page-head"><div><h2 class="dot-title">متجر الزبائن</h2><p>رابط المتجر: <a class="ltr" href="/" target="_blank" rel="noopener">${esc(location.origin)}/</a></p></div>
         <div class="btn-row">${V.tab === 'sites' ? `<button class="btn btn-primary" data-action="add-key">${icon('plus')}مفتاح جديد</button>` : ''}
+          <button class="btn${V.settings.mailPay ? '' : ' btn-primary'}" data-action="toggle-mail-pay" title="الدفع بالتحويل اليدوي، المؤكَّد من إشعارات الإيميل">${icon('power')}${V.settings.mailPay ? 'إيقاف الدفع عبر الإيميل' : 'تفعيل الدفع عبر الإيميل'}</button>
           <button class="btn" data-action="check-mail">${icon('refresh')}فحص البريد</button><button class="btn" data-action="settings">${icon('sliders')}الإعدادات</button></div></div>
+      ${V.settings.mailPay ? '' : `<div class="msg">${icon('info')}<span>الدفع عبر الإيميل (التحويل اليدوي) <b>متوقف</b>: الزبائن يدفعون مباشرة من جوال باي برمز تحقق فقط.</span></div>`}
       ${setupNote()}
       <div class="segmented">${tabs.map(([k, l]) => `<button data-action="tab" data-tab="${k}" aria-pressed="${V.tab === k}">${l}</button>`).join('')}</div>
       ${body}`;
@@ -266,6 +269,17 @@ export default {
     tab(btn, e, ctx) { V.tab = btn.dataset.tab; ctx.rerender(); },
     async filter(btn, e, ctx) { V.filter = btn.dataset.f; await ctx.reload(); },
     settings: openSettings,
+    async 'toggle-mail-pay'(btn, e, ctx) {
+      const on = !V.settings.mailPay;
+      if (!on && !V.settings.jcReady) { toast('فعّل الدفع المباشر عبر جوال باي أولاً — وإلا لن يبقى للزبائن طريقة للدفع', { error: true }); return; }
+      if (!on && !confirm('إيقاف الدفع بالتحويل اليدوي (المؤكَّد من الإيميل)؟ سيدفع الزبائن مباشرة من جوال باي برمز تحقق فقط، في الموقع وواتساب.')) return;
+      btn.disabled = true;
+      try {
+        V.settings = await api.put('/api/settings', { mailPay: on });
+        toast(on ? 'تم تفعيل الدفع عبر الإيميل' : 'تم إيقاف الدفع عبر الإيميل');
+        ctx.rerender();
+      } catch (ex) { toast(ex.message, { error: true }); } finally { btn.disabled = false; }
+    },
     async 'check-mail'(btn, e, ctx) {
       btn.disabled = true;
       try {

@@ -304,3 +304,33 @@ test('paid only once the invoice, read on its own, is confirmed for the order: s
   assert.equal(row(e).status, 'paid');
   assert.equal(logOf(e).filter((l) => l.event === 'paid').length, 1);
 });
+
+test('the manager stops or allows paying by transfer (e-mail): never both ways off', async () => {
+  require('../src/routes/shop')._resetThrottle();
+  const admin = (await ok(call(null, 'POST', '/api/login', { username: 'admin', password: 'admin-pass' }))).token;
+  const esim = await QL.esimPackage(call, ok, admin, 60);
+  assert.equal((await ok(call(null, 'GET', '/api/shop'))).manualPay, true, 'on by default');
+  // Off (direct payment is on): the shop offers no transfer, and a transfer's details are not taken for a new order.
+  let s = await ok(call(admin, 'PUT', '/api/settings', { mailPay: false }));
+  assert.equal(s.mailPay, false);
+  assert.equal((await ok(call(null, 'GET', '/api/shop'))).manualPay, false);
+  const o = await ok(call(null, 'POST', '/api/shop/orders', { kind: 'esim', packageId: esim.id, customerName: 'بلا تحويل' }));
+  const r = await call(null, 'POST', `/api/shop/orders/${o.code}/proof`, { payName: 'محمد احمد' });
+  assert.equal(r.status, 400);
+  assert.match(r.body.error, /التحويل اليدوي متوقف/);
+  // Direct payment cannot be turned off now: the customers would have no way to pay.
+  const both = await call(admin, 'PUT', '/api/settings', { jcEnabled: false });
+  assert.equal(both.status, 400);
+  assert.match(both.body.error, /معاً/);
+  assert.equal((await ok(call(null, 'GET', '/api/shop'))).jawwalDirect, true);
+  // On again: the transfer is taken as before.
+  s = await ok(call(admin, 'PUT', '/api/settings', { mailPay: true }));
+  assert.equal(s.mailPay, true);
+  assert.equal((await ok(call(null, 'POST', `/api/shop/orders/${o.code}/proof`, { payName: 'محمد احمد' }))).status, 'verifying');
+  // Without direct payment, the e-mail way cannot be stopped.
+  await ok(call(admin, 'PUT', '/api/settings', { jcEnabled: false }));
+  const lone = await call(admin, 'PUT', '/api/settings', { mailPay: false });
+  assert.equal(lone.status, 400);
+  assert.equal((await ok(call(admin, 'GET', '/api/settings'))).mailPay, true);
+  await ok(call(admin, 'PUT', '/api/settings', { jcEnabled: true }));
+});
