@@ -418,7 +418,8 @@ async function fetchEsimReadyStocks({ categoryId }, creds) {
 // drawn here from the code. No code: no QR.
 const LPA = /^LPA:1\$/i;
 function esimCodeAndQr(d = {}, rawObj = {}) {
-  const fields = [d.lpa, d.activation_code, d.esim_code, d.matching_id, d.qr_code, d.qr, d.esim_qr, d.payload, rawObj.lpa, rawObj.qr_code, rawObj.qr];
+  // qr_payload: the activation code a new line's subscription comes back with (company 7, seen 2026-11-19).
+  const fields = [d.lpa, d.activation_code, d.esim_code, d.matching_id, d.qr_payload, d.qr_code, d.qr, d.esim_qr, d.payload, rawObj.lpa, rawObj.qr_payload, rawObj.qr_code, rawObj.qr];
   const code = fields.map((v) => (typeof v === 'string' ? v.trim() : '')).find((v) => LPA.test(v)) || '';
   const image = [d.qr_image, d.qr_code, d.qr, d.esim_barcode, d.esim_qr, d.barcode, rawObj.qr_code]
     .find((v) => typeof v === 'string' && /^data:image\/(?:png|jpe?g|gif|webp);base64,/i.test(v)) || '';

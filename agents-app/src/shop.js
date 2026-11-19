@@ -10,6 +10,7 @@ const { ApiError, now, round } = require('./util');
 const { hashPassword } = require('./passwords');
 const D = require('./domain');
 const mail = require('./mail');
+const claudepay = require('./claudepay');
 const smtp = require('./smtp');
 const ql = require('./quickline');
 const qr = require('./qr');
@@ -223,7 +224,8 @@ function matchReason(o, m) {
 
 // The oldest unused authenticated email with at least the order's amount that matches the customer's details.
 // Attempt 1 searches emails in the last 5 minutes (FIRST_WINDOW_MS); Attempt 2 (retry) searches the last 8 minutes (RETRY_WINDOW_MS).
-function findMail(o) {
+// names: false when Claude judges the names (src/claudepay.js) — only a reference or the sender's phone is matched here.
+function findMail(o, { names = true } = {}) {
   const tries = Number(o.proof_tries) || 1;
   const windowMs = tries >= 2 ? RETRY_WINDOW_MS : FIRST_WINDOW_MS;
   const refTime = o.proof_at || o.created_at || now();
@@ -234,6 +236,7 @@ function findMail(o) {
   let best = null;
   for (const m of mails) {
     const by = matchReason(o, m);
+    if (by === 'اسم المحوِّل' && !names) continue;
     if (by && (!best || rank[by] < rank[best.by])) best = { mail: m, by };
   }
   return best;
@@ -305,11 +308,16 @@ function reconcileDirect({ force = false } = {}) {
   return reconciling;
 }
 
-function tryMatch(orderId) {
+function tryMatch(orderId, { names } = {}) {
   const o = q("SELECT * FROM shop_orders WHERE id = ? AND status IN ('verifying','review')").get(orderId);
   if (!o) return false;
-  const hit = findMail(o);
+  const hit = findMail(o, { names: names ?? !claudepay.ready() });
   if (!hit) return false;
+  return payWith(o, hit.mail.id, `تلقائي: ${hit.by}`);
+}
+
+// The order is paid with this e-mail and carried out; above the automatic cap it waits for the manager instead.
+function payWith(o, mailId, verifiedBy) {
   // Above the cap the payment found waits for the manager, who approves it with that notice (the order's review).
   const cap = getSettings().shopAutoMax;
   if (cap > 0 && Number(o.amount) > cap) {
@@ -320,9 +328,39 @@ function tryMatch(orderId) {
     }
     return false;
   }
-  if (!claim(o.id, hit.mail.id, `تلقائي: ${hit.by}`)) return false;
+  if (!claim(o.id, mailId, verifiedBy)) return false;
   fulfil(o.id);
   return true;
+}
+
+// ---------- Claude reviews the payments ----------
+// The waiting orders and the unused payment e-mails of the last 15 minutes go to Claude, which says which e-mail paid
+// which order (the money rules are checked again in claudepay.allowed, and each e-mail pays one order: claim).
+// When Claude cannot be reached, the names are matched by the rules above, as before.
+let reviewing = null;
+const claudeState = { at: 0, error: '', matched: 0 };
+function claudeReview({ force = false } = {}) {
+  if (!claudepay.ready()) return Promise.resolve(0);
+  if (reviewing) return reviewing;
+  reviewing = (async () => {
+    let matched = 0;
+    try {
+      const picks = await claudepay.review({ force });
+      claudeState.error = '';
+      for (const p of picks) {
+        const o = q("SELECT * FROM shop_orders WHERE id = ? AND status IN ('verifying','review')").get(p.order.id);
+        if (o && payWith(o, p.mail.id, `Claude: ${p.reason || 'مطابق'}`)) matched++;
+      }
+    } catch (e) {
+      claudeState.error = String(e.message || e).slice(0, 300);
+      console.error('claude pay', claudeState.error);
+      for (const { id } of q("SELECT id FROM shop_orders WHERE status IN ('verifying','review') ORDER BY proof_at").all()) if (tryMatch(id, { names: true })) matched++;
+    }
+    claudeState.at = now();
+    claudeState.matched += matched;
+    return matched;
+  })().finally(() => { reviewing = null; });
+  return reviewing;
 }
 
 // ---------- fulfilment ----------
@@ -547,6 +585,8 @@ async function run(force) {
   }
   let matched = 0;
   for (const { id } of q("SELECT id FROM shop_orders WHERE status IN ('verifying','review') ORDER BY proof_at").all()) if (tryMatch(id)) matched++;
+  // Claude's answer takes a few seconds: the customer's page sees the order paid on its next look.
+  claudeReview().catch((e) => console.error('claude pay', e.message));
   const escalated = escalate();
   let mailed = 0;
   try { mailed = await deliverQr(); } catch (e) { console.error('shop qr mail', e.message); }
@@ -559,5 +599,5 @@ timer.unref();
 
 module.exports = {
   RESERVE_MS, FIRST_WINDOW_MS, RETRY_WINDOW_MS, VERIFY_MS, WAIT_REVIEW_MS, CHECK_COOLDOWN_MS,
-  shopAgent, namesMatch, matchReason, findMail, claim, tryMatch, fulfil, settleDirect, reconcileDirect, checkMail, escalate, expireUnconfirmed, saveMail, deliverQr, makeEsimQr, isMadeUpCode, isMadeUpQr, realCode, realQr,
+  shopAgent, namesMatch, matchReason, findMail, claim, tryMatch, payWith, claudeReview, claudeState, fulfil, settleDirect, reconcileDirect, checkMail, escalate, expireUnconfirmed, saveMail, deliverQr, makeEsimQr, isMadeUpCode, isMadeUpQr, realCode, realQr,
 };

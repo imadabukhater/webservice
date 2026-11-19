@@ -168,6 +168,13 @@ route('PUT', '/api/settings', ADMIN, ({ body }) => {
   }
   if (body.jcUser !== undefined) setSetting('jc_user', str(body.jcUser, 120));
   if (body.jcPass) setSetting('jc_pass', String(body.jcPass).slice(0, 200));
+  // Claude's payment review (src/claudepay.js). The key is write-only.
+  if (body.claudePay !== undefined) setSetting('claude_pay', body.claudePay ? '1' : '0');
+  if (body.claudeKey) {
+    const k = String(body.claudeKey).trim();
+    if (!/^sk-ant-[\w-]{20,300}$/.test(k)) fail(400, 'مفتاح Claude API يبدأ بـ sk-ant-');
+    setSetting('claude_key', k);
+  }
   if (body.supportWhatsapp !== undefined) {
     // International format without + or leading zeros, as wa.me expects: 972567725080.
     const wa = String(body.supportWhatsapp).replace(/\D/g, '').replace(/^00/, '');

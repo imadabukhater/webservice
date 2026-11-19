@@ -12,6 +12,7 @@
     "test": "node --disable-warning=ExperimentalWarning --test test/*.test.js"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "1.10.0",
     "@whiskeysockets/baileys": "7.0.0-rc14"
   }
 }
