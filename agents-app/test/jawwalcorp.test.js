@@ -25,6 +25,8 @@ const api = {
   revokeAlways: false, // every request answers token_revoked, even with a new token
   lostAnswer: false, // confirm_payment is carried out but answers 502
   invoicesDown: false, // the invoice list answers 502
+  listAmountDelta: 0, // the invoice list shows a different amount than was charged
+  failNoRetry: false, // confirm_payment refuses for good (e.g. not enough balance)
   log: [],
 };
 const CREDS = { manager_id: 173, username: 'corp-test', password: 'p@ss word#1' };
@@ -59,6 +61,8 @@ const fakeApi = http.createServer((req, res) => {
       const inv = api.invoices.get(body.cor_invoice_id);
       if (!inv) return send(res, 404, { success: false, error: 'invoice_not_found' });
       if (inv.status === 'confirmed') return send(res, 409, { success: false, error: 'invoice_confirmed' });
+      if (inv.status === 'expired' || inv.exp < Date.now()) { inv.status = 'expired'; return send(res, 409, { success: false, error: 'invoice_expired' }); }
+      if (api.failNoRetry) { inv.status = 'failed'; return send(res, 402, { success: false, error: 'jawwal_confirm_failed', data: { failure_code: 'insufficient_balance', can_retry: false } }); }
       if (body.otp !== inv.otp) return send(res, 402, { success: false, error: 'jawwal_confirm_failed', data: { failure_code: 'wrong_otp', can_retry: true } });
       inv.status = 'confirmed';
       if (api.lostAnswer) return send(res, 502, { success: false, message: 'bad gateway' });
@@ -68,7 +72,7 @@ const fakeApi = http.createServer((req, res) => {
       if (api.invoicesDown) return send(res, 502, {});
       const id = url.searchParams.get('cor_invoice_id');
       const list = [...api.invoices.values()].filter((i) => !id || i.id === id)
-        .map((i) => ({ cor_invoice_id: i.id, status: i.status, amount: i.amount, mobile_number: i.mobile }));
+        .map((i) => ({ cor_invoice_id: i.id, status: i.status, amount: i.amount + api.listAmountDelta, mobile_number: i.mobile }));
       return send(res, 200, { success: true, data: list });
     }
     send(res, 404, { success: false });
@@ -225,4 +229,78 @@ test('direct Jawwal Pay: code, confirmation, token reused, one sign-in on revoke
 
   // Never a refresh, and only the four paths.
   assert.ok(api.log.every((l) => /^(POST \/api\/auth\/corporate_sign_in|POST \/api\/jawwal\/corporate\/(send_otp|confirm_payment)|GET \/api\/jawwal\/corporate\/invoices)$/.test(l)), api.log.join('\n'));
+});
+
+test('paid only once the invoice, read on its own, is confirmed for the order: success, mismatch, expired, failed, duplicate, logged without the OTP', async () => {
+  const { q } = require('../src/db');
+  const S = require('../src/shop');
+  const admin = (await ok(call(null, 'POST', '/api/login', { username: 'admin', password: 'admin-pass' }))).token;
+  require('../src/db').setSetting('jc_wait_until', 0);
+  require('../src/routes/shop')._resetThrottle(); // one machine plays every customer here
+  const esim = await QL.esimPackage(call, ok, admin, 70);
+  let n = 0;
+  const order = async () => ok(call(null, 'POST', '/api/shop/orders', { kind: 'esim', packageId: esim.id, customerName: `دفع ${++n}` }));
+  const otp = (o, mobile) => ok(call(null, 'POST', `/api/shop/orders/${o.code}/jawwal/otp`, { mobile }));
+  const confirm = (o, code = '123456') => call(null, 'POST', `/api/shop/orders/${o.code}/jawwal/confirm`, { otp: code });
+  const row = (o) => q('SELECT * FROM shop_orders WHERE code = ?').get(o.code);
+  const logOf = (o) => q('SELECT event, status, detail FROM jc_log WHERE order_id = ? ORDER BY id').all(row(o).id);
+
+  // Success: confirm says yes, the invoice list is read and agrees (confirmed, 70 ₪, the same mobile): paid once.
+  const a = await order();
+  await otp(a, '0599200001');
+  assert.equal(row(a).jc_status, 'pending');
+  const before = api.log.filter((l) => l.startsWith('GET')).length;
+  assert.equal((await confirm(a)).body.status, 'paid');
+  assert.ok(api.log.filter((l) => l.startsWith('GET')).length > before, 'the invoice list was asked after confirming');
+  assert.equal(row(a).jc_status, 'confirmed');
+  assert.deepEqual(logOf(a).map((l) => l.event), ['otp_sent', 'confirm_ok', 'verified', 'paid']);
+  assert.equal(JSON.stringify(logOf(a)).includes('123456'), false, 'the OTP is never logged');
+  // Duplicate: confirming again neither pays nor carries it out twice.
+  assert.equal((await confirm(a)).body.status, 'paid');
+  assert.equal(logOf(a).filter((l) => l.event === 'paid').length, 1);
+  const detail = await ok(call(admin, 'GET', `/api/shop/admin/orders/${row(a).id}`));
+  assert.equal(detail.jawwal.status, 'confirmed');
+  assert.equal(detail.jawwalLog.length, 4, 'the manager sees the log');
+
+  // The invoice says another amount than the order: confirmed by the API, but nothing is carried out; the manager is told.
+  const b = await order();
+  await otp(b, '0599200002');
+  api.listAmountDelta = -10;
+  const rb = await confirm(b);
+  api.listAmountDelta = 0;
+  assert.equal(rb.body.status, 'awaiting_payment');
+  assert.match(row(b).error, /لا تطابق الطلب/);
+  assert.equal(logOf(b).at(-1).event, 'mismatch');
+  assert.ok(q('SELECT 1 FROM notifications WHERE title = ?').get(`فاتورة جوال باي لا تطابق الطلب ${b.code}`));
+
+  // Expired invoice: 410, its state kept, not paid.
+  const c = await order();
+  await otp(c, '0599200003');
+  [...api.invoices.values()].at(-1).exp = Date.now() - 1;
+  assert.equal((await confirm(c)).status, 410);
+  assert.equal(row(c).jc_status, 'expired');
+  assert.equal(row(c).status, 'awaiting_payment');
+
+  // Refused for good (not enough balance): 402, failed, a new code needed.
+  const d = await order();
+  await otp(d, '0599200004');
+  api.failNoRetry = true;
+  const rd = await confirm(d);
+  api.failNoRetry = false;
+  assert.equal(rd.status, 402);
+  assert.equal(row(d).jc_status, 'failed');
+  assert.match(logOf(d).at(-1).detail, /insufficient_balance/);
+  assert.equal((await confirm(d)).status, 410, 'that code cannot be used again');
+
+  // Confirm says yes but the invoice list cannot be read: not paid yet, checked again, then paid once.
+  const e = await order();
+  await otp(e, '0599200005');
+  api.invoicesDown = true;
+  const re = await confirm(e);
+  api.invoicesDown = false;
+  assert.equal(re.body.status, 'awaiting_payment');
+  assert.equal(re.body.jawwal.checking, true);
+  assert.equal(await S.reconcileDirect({ force: true }), 1);
+  assert.equal(row(e).status, 'paid');
+  assert.equal(logOf(e).filter((l) => l.event === 'paid').length, 1);
 });

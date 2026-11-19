@@ -220,6 +220,17 @@ CREATE TABLE IF NOT EXISTS shop_orders (
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
 );
+-- Direct Jawwal Pay (corporate API): what happened to each order's payment, for the manager. Never the OTP.
+CREATE TABLE IF NOT EXISTS jc_log (
+  id INTEGER PRIMARY KEY,
+  order_id INTEGER NOT NULL,
+  invoice_id TEXT NOT NULL DEFAULT '',
+  event TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT '',
+  detail TEXT NOT NULL DEFAULT '',
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS jc_log_order ON jc_log(order_id);
 CREATE TABLE IF NOT EXISTS payment_mails (
   id INTEGER PRIMARY KEY,
   uid_validity INTEGER NOT NULL,
@@ -428,6 +439,8 @@ ensureColumn('shop_orders', 'jc_sent_at', 'jc_sent_at INTEGER');
 ensureColumn('shop_orders', 'jc_sends', 'jc_sends INTEGER NOT NULL DEFAULT 0');
 ensureColumn('shop_orders', 'jc_tries', 'jc_tries INTEGER NOT NULL DEFAULT 0');
 ensureColumn('shop_orders', 'jc_unsure', 'jc_unsure INTEGER NOT NULL DEFAULT 0');
+// The invoice's last known state at the corporate API: pending | confirmed | expired | failed ('' before any).
+ensureColumn('shop_orders', 'jc_status', "jc_status TEXT NOT NULL DEFAULT ''");
 db.exec("CREATE INDEX IF NOT EXISTS shop_orders_client_status ON shop_orders(client_id, status)");
 db.exec("CREATE INDEX IF NOT EXISTS shop_orders_ip_status ON shop_orders(ip, status)");
 // Before gone_at, a sync that briefly got an incomplete list from QuickLine hid packages for good. The manager hid

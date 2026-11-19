@@ -132,7 +132,7 @@ function orderView(o, { admin = false } = {}) {
       sendsLeft: Math.max(0, JC_SENDS_MAX - (o.jc_sends || 0)),
       triesLeft: Math.max(0, JC_TRIES_MAX - (o.jc_tries || 0)),
       checking: !!o.jc_unsure,
-      ...(admin ? { invoiceId: o.jc_invoice_id } : {}),
+      ...(admin ? { invoiceId: o.jc_invoice_id, status: o.jc_status || '' } : {}),
     } : null,
     esimQr: o.esim && qr ? qr : null,
     esimCode: o.esim && (admin || o.status === 'paid') ? esimCode : null,
@@ -600,16 +600,19 @@ route('POST', '/api/shop/orders/:code/jawwal/otp', null, async ({ params, body, 
     } catch (e) {
       // Counted even when refused: a number that cannot take codes is not tried forever.
       q('UPDATE shop_orders SET jc_sends = jc_sends + 1, jc_sent_at = ?, updated_at = ? WHERE id = ?').run(now(), now(), o.id);
+      shop.jcLog(o, 'otp_failed', { detail: `${e.code || e.status || ''} ${e.message || ''}`.trim() });
       jcFail(e);
     }
     // The invoice must be for exactly the order's amount, or it is not used.
     if (r.amount !== null && Math.abs(r.amount - Number(o.amount)) > 0.005) {
       console.error('jawwal amount mismatch', o.code, o.amount, r.amount);
+      shop.jcLog({ ...o, jc_invoice_id: r.invoiceId }, 'otp_mismatch', { detail: `المبلغ ${r.amount} وليس ${o.amount}` });
       fail(502, 'رد جوال باي بمبلغ مختلف عن الطلب. تواصل مع الدعم.');
     }
     const until = Math.min(r.expiresAt && r.expiresAt > now() ? r.expiresAt : now() + JC_HOLD_MS, now() + JC_HOLD_MS);
     q(`UPDATE shop_orders SET jc_invoice_id = ?, jc_mobile = ?, jc_expires_at = ?, jc_sent_at = ?, jc_sends = jc_sends + 1, jc_tries = 0,
-         updated_at = ? WHERE id = ? AND status = 'awaiting_payment'`).run(r.invoiceId, mobile, until, now(), now(), o.id);
+         jc_status = 'pending', updated_at = ? WHERE id = ? AND status = 'awaiting_payment'`).run(r.invoiceId, mobile, until, now(), now(), o.id);
+    shop.jcLog({ ...o, jc_invoice_id: r.invoiceId }, 'otp_sent', { status: 'pending', detail: `${r.amount ?? o.amount} ₪ → ${maskMobile(mobile)}` });
   } finally {
     jcBusy.delete(o.id);
   }
@@ -641,12 +644,14 @@ route('POST', '/api/shop/orders/:code/jawwal/confirm', null, async ({ params, bo
       if (!(e instanceof jc.JawwalCorpError)) throw e;
       if (e.code === 'invoice_confirmed') paid = true; // an earlier confirmation that got no answer went through
       else if (e.code === 'invoice_expired' || e.code === 'invoice_not_found') {
-        q('UPDATE shop_orders SET jc_expires_at = ?, jc_unsure = 0, updated_at = ? WHERE id = ?').run(now(), now(), o.id);
+        q("UPDATE shop_orders SET jc_expires_at = ?, jc_unsure = 0, jc_status = 'expired', updated_at = ? WHERE id = ?").run(now(), now(), o.id);
+        shop.jcLog(o, 'expired', { status: 'expired', detail: e.code });
         fail(410, 'انتهت صلاحية رمز التحقق — اطلب رمزاً جديداً');
       } else if (e.code === 'jawwal_confirm_failed') {
         const canRetry = !!(e.data && (e.data.can_retry === true || e.data.can_retry === 1 || e.data.can_retry === '1'));
         console.error('jawwal confirm refused', o.code, e.data?.failure_code, e.message);
-        if (!canRetry) q('UPDATE shop_orders SET jc_expires_at = ?, updated_at = ? WHERE id = ?').run(now(), now(), o.id);
+        shop.jcLog(o, 'confirm_refused', { status: canRetry ? 'pending' : 'failed', detail: `${e.data?.failure_code || ''}${canRetry ? ' (يمكن إعادة المحاولة)' : ''}` });
+        if (!canRetry) q("UPDATE shop_orders SET jc_expires_at = ?, jc_status = 'failed', updated_at = ? WHERE id = ?").run(now(), now(), o.id);
         fail(402, canRetry
           ? 'رمز التحقق غير صحيح أو رُفض الدفع — تأكد من الرمز وحاول مرة أخرى.'
           : 'رفض جوال باي الدفع (قد يكون الرصيد غير كافٍ). اشحن محفظتك ثم اطلب رمزاً جديداً، أو ادفع بالتحويل اليدوي.');
@@ -654,6 +659,7 @@ route('POST', '/api/shop/orders/:code/jawwal/confirm', null, async ({ params, bo
         // The payment may have gone through: its invoice says.
         let inv = null;
         try { inv = await jc.invoice(creds, o.jc_invoice_id); } catch (e2) { console.error('jawwal invoice', e2.message); }
+        shop.jcLog(o, 'confirm_unclear', { status: inv?.status || '', detail: e.message });
         if (inv?.status === 'confirmed') paid = true;
         else if (inv && inv.status === 'pending') fail(502, 'لم يكتمل تأكيد الدفع — أعد إدخال الرمز. لن يُخصم المبلغ مرتين.');
         else if (!inv) {
@@ -662,7 +668,14 @@ route('POST', '/api/shop/orders/:code/jawwal/confirm', null, async ({ params, bo
         } else jcFail(e);
       } else jcFail(e);
     }
-    if (paid) shop.settleDirect(o.id);
+    if (paid) {
+      // Confirming said yes: the order is paid only once its invoice, read on its own from the invoice list, is
+      // confirmed for this order's amount and mobile. Not readable now: checked again within the minute.
+      shop.jcLog(o, 'confirm_ok', { status: 'confirmed' });
+      let inv = null;
+      try { inv = await jc.invoice(creds, o.jc_invoice_id); } catch (e2) { console.error('jawwal invoice', e2.message); }
+      shop.settleVerified(o, inv);
+    }
   } finally {
     jcBusy.delete(o.id);
   }
@@ -714,7 +727,8 @@ route('GET', '/api/shop/admin/orders/:id', ADMIN, ({ params }) => {
   // Unused emails with at least the order's amount, to confirm by hand.
   const candidates = q(`SELECT * FROM payment_mails WHERE order_id IS NULL AND amount IS NOT NULL AND amount + 0.005 >= ?
                         ORDER BY received_at DESC LIMIT 20`).all(o.amount);
-  return { ...orderView(o, { admin: true }), receipt: o.receipt, mail: m && { ...mailView(m), body: m.body }, candidates: candidates.map(mailView) };
+  const jawwalLog = q('SELECT event, status, detail, created_at AS at FROM jc_log WHERE order_id = ? ORDER BY id').all(o.id);
+  return { ...orderView(o, { admin: true }), receipt: o.receipt, mail: m && { ...mailView(m), body: m.body }, candidates: candidates.map(mailView), jawwalLog };
 });
 
 // Payment confirmed by the manager, optionally with the email that shows it.
@@ -799,4 +813,4 @@ route('GET', '/api/shop/admin/summary', ADMIN, () => ({
   agentId: shop.shopAgent().id,
 }));
 
-module.exports = { shopCatalogResponse, shopCatalog, ensureStock, submitProof, orderView, byCode, createOrder, cancelOrder, refreshStock };
+module.exports = { shopCatalogResponse, shopCatalog, ensureStock, submitProof, orderView, byCode, createOrder, cancelOrder, refreshStock, _resetThrottle: () => hits.clear() };

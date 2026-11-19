@@ -167,7 +167,8 @@ async function openOrder(id) {
         ${kv('رقم التواصل', o.contactPhone && o.contactPhone !== o.number ? phone(o.contactPhone) : '')}${kv('أُنشئ', fmtDateTime(o.createdAt))}${kv('أرسل التحويل', o.proofAt ? fmtDateTime(o.proofAt) : '')}
         ${kv('الرقم المرجعي', o.payReference ? `<span class="ltr">${esc(o.payReference)}</span>` : '')}${kv('رقم المحوِّل', o.payPhone ? phone(o.payPhone) : '')}${kv('اسم المحوِّل', esc(o.payName))}
         ${kv('التحقق', esc(o.verifiedBy))}${kv('البريد', o.email ? `<span class="ltr">${esc(o.email)}</span>` : '')}
-        ${o.jawwal ? kv('جوال باي مباشر', `${o.jawwal.mobile ? phone(o.jawwal.mobile) : ''} ${o.jawwal.invoiceId ? `<span class="ltr small">${esc(o.jawwal.invoiceId)}</span>` : ''}${o.jawwal.checking ? ' · <b>بانتظار رد جوال باي</b>' : ''}`) : ''}
+        ${o.jawwal ? kv('جوال باي مباشر', `${o.jawwal.mobile ? phone(o.jawwal.mobile) : ''} ${o.jawwal.invoiceId ? `<span class="ltr small">${esc(o.jawwal.invoiceId)}</span>` : ''}${o.jawwal.status ? ` · الفاتورة: <b>${esc(o.jawwal.status)}</b>` : ''}${o.jawwal.checking ? ' · <b>بانتظار رد جوال باي</b>' : ''}`) : ''}
+        ${(o.jawwalLog || []).length ? kv('سجل الدفع المباشر', o.jawwalLog.map((l) => `<div class="small">${esc(new Date(l.at).toLocaleTimeString('ar'))} — ${esc(l.event)}${l.status ? ` (${esc(l.status)})` : ''}${l.detail ? `: ${esc(l.detail)}` : ''}</div>`).join('')) : ''}
         ${o.esim ? kv('رسوم QR', fmtMoney(o.esimFee || 0)) : ''}
         ${o.esim ? kv('رمز QR', o.qrMailedAt ? `أُرسل بالبريد ${fmtDateTime(o.qrMailedAt)}` : o.email ? 'يُرسل بالبريد بعد التفعيل' : 'يظهر للزبون في صفحة الطلب') : ''}
         ${o.esimCode ? kv('كود التفعيل اليدوي', `<code class="ltr small">${esc(o.esimCode)}</code>`) : ''}</div>

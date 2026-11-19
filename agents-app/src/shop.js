@@ -255,6 +255,58 @@ function claim(orderId, mailId, verifiedBy) {
 }
 
 // ---------- direct Jawwal Pay (corporate API) ----------
+// The payment log: each step of an order's direct payment (code sent, refused, confirmed, checked, paid). Never the OTP.
+function jcLog(o, event, { status = '', detail = '' } = {}) {
+  try {
+    q('INSERT INTO jc_log (order_id, invoice_id, event, status, detail, created_at) VALUES (?, ?, ?, ?, ?, ?)')
+      .run(o.id, String(o.jc_invoice_id || ''), event, status, String(detail || '').slice(0, 300), now());
+  } catch (e) { console.error('jawwal log', e.message); }
+}
+
+// Why this invoice does not pay this order ('' when it does): it is the order's own invoice, confirmed, for exactly the
+// order's amount and on the mobile the code was sent to. Asked of the invoice list, independently of what confirming said.
+const localMobile = (s) => String(s || '').replace(/\D/g, '').replace(/^(?:00)?97[02]/, '0');
+function invoiceMismatch(o, inv) {
+  if (!inv) return 'الفاتورة غير موجودة';
+  if (inv.invoiceId !== String(o.jc_invoice_id)) return 'رقم فاتورة مختلف';
+  if (inv.status !== 'confirmed') return `حالة الفاتورة ${inv.status || 'غير معروفة'}`;
+  if (inv.amount !== null && inv.amount !== undefined && Math.abs(Number(inv.amount) - Number(o.amount)) > 0.005) return `مبلغ الفاتورة ${inv.amount} ₪ وليس ${o.amount} ₪`;
+  if (inv.mobile && o.jc_mobile && localMobile(inv.mobile) !== localMobile(o.jc_mobile)) return 'رقم جوال مختلف عن الذي أُرسل له الرمز';
+  return '';
+}
+
+// The order's invoice as the corporate API lists it decides: confirmed and matching → paid and carried out (once);
+// still pending → looked up again (the minute's reconcile); expired or failed → not paid; confirmed but not matching →
+// the manager is told and nothing is carried out. Returns true when it paid the order.
+function settleVerified(order, inv) {
+  const o = q('SELECT * FROM shop_orders WHERE id = ?').get(order.id);
+  if (!o || !o.jc_invoice_id) return false;
+  const status = String(inv?.status || '');
+  if (status) q('UPDATE shop_orders SET jc_status = ?, updated_at = ? WHERE id = ?').run(status, now(), o.id);
+  if (!inv || status === 'pending') {
+    q('UPDATE shop_orders SET jc_unsure = 1, updated_at = ? WHERE id = ?').run(now(), o.id);
+    jcLog(o, 'check_later', { status, detail: inv ? 'الفاتورة ما زالت pending' : 'لم تُقرأ الفاتورة' });
+    return false;
+  }
+  if (status !== 'confirmed') {
+    q('UPDATE shop_orders SET jc_unsure = 0, updated_at = ? WHERE id = ?').run(now(), o.id);
+    jcLog(o, 'not_paid', { status });
+    return false;
+  }
+  const bad = invoiceMismatch(o, inv);
+  if (bad) {
+    q('UPDATE shop_orders SET jc_unsure = 0, error = ?, updated_at = ? WHERE id = ?').run(`جوال باي مباشر: الفاتورة لا تطابق الطلب (${bad}) — راجعها`, now(), o.id);
+    jcLog(o, 'mismatch', { status, detail: bad });
+    D.notify({ role: 'admin', kind: 'task', title: `فاتورة جوال باي لا تطابق الطلب ${o.code}`,
+      body: `${bad}. لم يُنفَّذ الطلب: راجع الفاتورة ${o.jc_invoice_id} في حساب الشركة.`, link: '#/shop' });
+    return false;
+  }
+  jcLog(o, 'verified', { status, detail: `${Number(inv.amount ?? o.amount)} ₪` });
+  const done = settleDirect(o.id);
+  if (done) jcLog(o, 'paid', { status });
+  return done;
+}
+
 // The customer's wallet was charged through the corporate API (jawwalcorp.js): the order is paid. Also an order whose
 // number hold ran out while the payment was being confirmed — the money was taken, so the order goes on (the
 // manager is told if its number went to someone else). Above the automatic cap the order waits for the manager,
@@ -288,7 +340,7 @@ let reconciledAt = 0;
 function reconcileDirect({ force = false } = {}) {
   if (reconciling) return reconciling;
   if (!force && now() - reconciledAt < LOOP_MS - 1000) return Promise.resolve(0);
-  const rows = q(`SELECT id, jc_invoice_id FROM shop_orders WHERE jc_unsure = 1 AND jc_invoice_id != ''
+  const rows = q(`SELECT * FROM shop_orders WHERE jc_unsure = 1 AND jc_invoice_id != ''
                   AND status IN ('awaiting_payment','cancelled') AND created_at > ?`).all(now() - 2 * 864e5);
   if (!rows.length || !getSettings().jcConfigured) return Promise.resolve(0);
   reconciledAt = now();
@@ -299,9 +351,8 @@ function reconcileDirect({ force = false } = {}) {
     for (const r of rows) {
       let inv;
       try { inv = await jc.invoice(creds, r.jc_invoice_id); } catch (e) { console.error('jawwal reconcile', e.message); break; }
-      if (inv?.status === 'confirmed') { if (settleDirect(r.id)) settled++; } else if (inv && inv.status !== 'pending') {
-        q('UPDATE shop_orders SET jc_unsure = 0, updated_at = ? WHERE id = ?').run(now(), r.id);
-      }
+      // Not listed (yet): looked up again next time; listed: its state decides (settleVerified).
+      if (inv && settleVerified(r, inv)) settled++;
     }
     return settled;
   })().finally(() => { reconciling = null; });
@@ -615,5 +666,5 @@ timer.unref();
 
 module.exports = {
   RESERVE_MS, FIRST_WINDOW_MS, RETRY_WINDOW_MS, VERIFY_MS, WAIT_REVIEW_MS, CHECK_COOLDOWN_MS,
-  shopAgent, namesMatch, matchReason, findMail, claim, tryMatch, payWith, aiReview, aiState, fulfil, settleDirect, reconcileDirect, checkMail, escalate, expireUnconfirmed, saveMail, deliverQr, makeEsimQr, isMadeUpCode, isMadeUpQr, realCode, realQr,
+  shopAgent, namesMatch, matchReason, findMail, claim, tryMatch, payWith, jcLog, invoiceMismatch, settleVerified, aiReview, aiState, fulfil, settleDirect, reconcileDirect, checkMail, escalate, expireUnconfirmed, saveMail, deliverQr, makeEsimQr, isMadeUpCode, isMadeUpQr, realCode, realQr,
 };
