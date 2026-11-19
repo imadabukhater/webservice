@@ -375,7 +375,8 @@ test('WhatsApp: agents sell as in the portal; customers buy in the chat, their t
 
   // "I paid": the shop checks the transfer, and the order's state is written under the reply.
   r = await ask('حولت باسم سامي خالد', [{ call: 'submit_payment', args: { payer: 'سامي خالد' } }, { text: 'وصلت، عم نشيك عالتحويل' }]);
-  assert.match(r.got, /وصلت، عم نشيك/);
+  assert.doesNotMatch(r.got, /وصلت، عم نشيك/, 'the transfer\'s state from the shop alone: the assistant\'s words would say it again');
+  assert.match(r.got, /عم نفحص التحويل/);
   assert.match(r.got, new RegExp(`${aiCode}[\\s\\S]*لسا ما وصل`));
   // "Where is my order?": its state, from the shop.
   r = await ask('شو صار بطلبي', [{ call: 'order_status', args: {} }, { text: 'هاي حالة طلبك' }]);

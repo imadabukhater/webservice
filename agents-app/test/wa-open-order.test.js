@@ -88,3 +88,35 @@ test('a conversation ends after 15 minutes without a message', () => {
   assert.match(src, /CONVERSATION_IDLE_MS = Number\(process\.env\.WA_CONVERSATION_IDLE_MS\) \|\| 15 \* 60_000/);
   assert.match(src, /SESSION_MS = CONVERSATION_IDLE_MS/);
 });
+
+test('the same WhatsApp message delivered twice is answered once', async () => {
+  const sent = [];
+  wa._test.setTransport(async (jid, content) => { sent.push({ jid, ...content }); });
+  wa._test.recent.clear();
+  const msg = (id) => ({ key: { remoteJid: '972500000333@s.whatsapp.net', id, fromMe: false }, messageTimestamp: Math.floor(Date.now() / 1000), message: { conversation: 'مرحبا' } });
+  await wa._test.onRaw(msg('MSG-1'));
+  await wa._test.onRaw(msg('MSG-1')); // delivered again
+  assert.equal(sent.length, 1);
+  await wa._test.onRaw(msg('MSG-2')); // another message: answered
+  assert.equal(sent.length, 2);
+});
+
+test('one chat\'s messages are answered in turn, not at once', async () => {
+  const order2 = [];
+  wa._test.setTransport(async (jid, content) => { await new Promise((r) => setTimeout(r, 30)); order2.push(content.text); });
+  wa._test.recent.clear();
+  const at = Math.floor(Date.now() / 1000);
+  const m = (id, text) => ({ key: { remoteJid: '972500000444@s.whatsapp.net', id, fromMe: false }, messageTimestamp: at, message: { conversation: text } });
+  const t0 = Date.now();
+  await Promise.all([wa._test.onRaw(m('Q-1', 'أول')), wa._test.onRaw(m('Q-2', 'تاني'))]);
+  assert.equal(order2.length, 2);
+  assert.ok(Date.now() - t0 >= 55, 'the second answer waited for the first');
+});
+
+test('a reply already sent in the conversation is caught as a repeat (short words may come again)', () => {
+  const jid = '972500000555@s.whatsapp.net';
+  wa._test.history.set(jid, [{ role: 'model', text: 'أهلين فيك 👋 عنا eSIM هوت وبيلفون، شو بتحب؟', at: Date.now() }]);
+  assert.equal(wa._test.saidBefore(jid, 'أهلين فيك! عنا eSIM هوت وبيلفون، شو بتحب'), true);
+  assert.equal(wa._test.saidBefore(jid, 'تمام 👍'), false);
+  assert.equal(wa._test.saidBefore(jid, 'هوت 200 جيجا بـ 40 شيكل، بتحب أعملك الطلب؟'), false);
+});

@@ -235,11 +235,24 @@ const textOf = (m) => {
     || x.listResponseMessage?.title || '').trim();
 };
 
+// Messages already answered, by their WhatsApp id: one delivered again (a retry, or once by the phone number and once
+// by its @lid) gets no second answer.
+const seenMessages = new Map();
+function seenBefore(id) {
+  if (!id) return false;
+  const t = Date.now();
+  if (seenMessages.has(id)) return true;
+  seenMessages.set(id, t);
+  if (seenMessages.size > 5000) for (const [k, at] of seenMessages) { if (t - at < 60 * 60_000) break; seenMessages.delete(k); }
+  return false;
+}
+
 async function onRaw(m) {
   if (!m?.message || m.key?.fromMe) return;
   const jid = m.key.remoteJid || '';
   // Private chats only: no groups, statuses or channels.
   if (!/@(s\.whatsapp\.net|lid)$/.test(jid)) return;
+  if (seenBefore(m.key.id)) return;
   // Old messages delivered after a reconnect are not answered (a «نعم» from yesterday must not sell anything).
   const raw = m.messageTimestamp;
   const ts = raw && typeof raw === 'object' ? (typeof raw.toNumber === 'function' ? raw.toNumber() : Number(raw.low) || 0) : Number(raw || 0);
@@ -336,7 +349,17 @@ const phoneIn = (t) => {
   return '';
 };
 
-async function handle({ jid, phone, text = '', image = null }) {
+// One chat's messages are answered in turn: a second message waits for the first one's answer, and is then answered
+// with that answer in the conversation (two answered at once would each say the same).
+const chatQueues = new Map();
+function handle(msg) {
+  const prev = chatQueues.get(msg.jid) || Promise.resolve();
+  const next = prev.catch(() => {}).then(() => handleNow(msg));
+  chatQueues.set(msg.jid, next);
+  next.finally(() => { if (chatQueues.get(msg.jid) === next) chatQueues.delete(msg.jid); }).catch(() => {});
+  return next;
+}
+async function handleNow({ jid, phone, text = '', image = null }) {
   const cfg = config();
   if (!cfg.enabled || tooMany(jid)) return;
   const who = whoIs(phone);
@@ -713,7 +736,15 @@ const REWRITE = {
   price: (w) => `ردّك فيه سعر «${w}» مش من أسعار القائمة. استعمل الأسعار زي ما هي بالقائمة بس، واكتب الرد من جديد.`,
   long: () => 'ردّك طويل كتير. اختصره لسطرين أو أربعة.',
   empty: () => 'ما كتبت رد. اكتب ردّك للزبون.',
+  repeat: () => 'ردّك نفس كلام قلته قبل بالمحادثة. لا تعيده: جاوب على رسالة الزبون الجديدة بس، بكلام جديد وقصير.',
 };
+// The same words as a reply already sent in this conversation (spaces, emoji and punctuation aside).
+const plainWords = (s) => String(s || '').replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+function saidBefore(jid, text) {
+  const w = plainWords(text);
+  if (w.length < 12) return false; // «تمام 👍», «تكرم»: short words may come again
+  return (history.get(jid) || []).some((m) => m.role === 'model' && plainWords(m.text).includes(w));
+}
 const AI_ACTIONS = { agent: ['balance', 'recharge', 'esim', 'packages', 'answer'], customer: ['packages', 'buy', 'package', 'verify', 'status', 'answer'] };
 
 // One question to the model, within the allowances (200 an hour in all, 20 per chat). Its JSON answer, or null.
@@ -1076,6 +1107,7 @@ async function agentTool(name, args, ctx) {
       const v = S.cancelOrder(o);
       drafts.delete(jid);
       follow(jid, o, v.stage); // already told here: no second message about it
+      ctx.codeOnly = true;
       ctx.facts.push(`🧾 طلب *${o.code}* — ${o.package_label}\n❌ انلغى الطلب زي ما طلبت.${sentDetails ? ' إذا كنت حوّلت المبلغ، المتجر بيتواصل معك بخصوصه.' : ''} فيك تطلب باقة تانية وقت ما بدك.`);
       return { ok: true, order_code: o.code, stage: v.stage, note: 'انلغى الطلب. إذا بدّه باقة تانية بتقدر تعمله طلب جديد.' };
     }
@@ -1099,6 +1131,7 @@ async function agentTool(name, args, ctx) {
         ctx.facts.push(stageFacts(o, v.stage));
         ctx.prices.add(round(o.amount));
         if (v.stage === 'done' && o.esim) ctx.after.push(() => orderUpdate(jid, o, v)); // the eSIM's QR, from the shop
+        ctx.codeOnly = true;
         orders.push({ order_code: o.code, package: o.package_label, stage: v.stage });
       }
       return { orders, note: 'حالة كل طلب بتنضاف تحت ردّك لحالها.' };
@@ -1118,6 +1151,7 @@ async function agentTool(name, args, ctx) {
       const v = await S.submitProof(o, { payName: payer });
       follow(jid, o, v.stage);
       ctx.facts.push(stageFacts(o, v.stage));
+      ctx.codeOnly = true;
       return { ok: true, order_code: o.code, stage: v.stage };
     }
     return { error: 'أداة غير معروفة' };
@@ -1151,6 +1185,7 @@ async function customerAgent(jid, raw, phone, shop) {
     const text = r.parts.map((x) => x.text || '').join('').trim();
     if (!calls.length) {
       checked = checkReply(waFormat(text), { prices: [...ctx.prices], phones: [...ctx.phones], max: 1200 });
+      if (!checked.problem && saidBefore(jid, checked.text)) checked = { problem: 'repeat' };
       // Not fit to send: it is told why and writes it again, once.
       if (checked.problem && rewrites < 1 && step < AGENT_STEPS) {
         rewrites++;
@@ -1170,6 +1205,8 @@ async function customerAgent(jid, raw, phone, shop) {
     contents.push({ role: 'user', parts: responses });
   }
   const text = checked.problem ? '' : checked.text;
+  // Said already, and nothing new from the shop: nothing is sent again.
+  if (!text && !ctx.facts.length && checked.problem === 'repeat') return true;
   if (!text && !ctx.facts.length) return ['claim', 'phone', 'price', 'long'].includes(checked.problem) ? 'blocked' : checked.problem;
   // An order's summary, or the order just made: the code's words alone (the assistant would repeat them in its own).
   await say(jid, (ctx.codeOnly && ctx.facts.length ? ctx.facts : [text || 'تمام 👍', ...(ctx.facts.length ? ['━━━━━━━━━━', ...ctx.facts] : [])]).join('\n\n'));
@@ -1330,5 +1367,5 @@ if (linked()) setTimeout(() => start().catch((e) => console.error('whatsapp star
 
 module.exports = {
   start, logout, status, config, configView, saveConfig, sendTo, taskResolved, handle, tellAdmins, jidOf, askModel,
-  _test: { phoneIn, drafts, agentTool, unansweredAt, checkReply, waFormat, askModel, vertexAuth, spendToday, priceOf, safeReply, AGENT_TOOLS, agentSystem, vertexAccess, vertexUrl, aiCallsByChat, askedAbout, setTransport: (fn) => { transport = fn; }, setDownloader: (fn) => { downloader = fn; }, sessions, recent, norm, onRaw, jidOf, watchShop, history },
+  _test: { phoneIn, drafts, agentTool, saidBefore, seenMessages, unansweredAt, checkReply, waFormat, askModel, vertexAuth, spendToday, priceOf, safeReply, AGENT_TOOLS, agentSystem, vertexAccess, vertexUrl, aiCallsByChat, askedAbout, setTransport: (fn) => { transport = fn; }, setDownloader: (fn) => { downloader = fn; }, sessions, recent, norm, onRaw, jidOf, watchShop, history },
 };
