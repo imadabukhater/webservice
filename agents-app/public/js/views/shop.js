@@ -126,11 +126,17 @@ function openSettings() {
           toast(`Gemini يعمل (${r.model})`);
         } catch (ex) { toast(ex.message, { error: true }); } finally { btn.disabled = false; }
       });
-      // Tests what is saved (save first): reuses the token held, signs in only when none is.
+      // What was typed in the three fields is saved first (the password only when typed), then the connection is tested:
+      // it reuses the token held, and signs in only when none is.
       form.querySelector('#st-jctest').addEventListener('click', async (e) => {
         const btn = e.currentTarget;
         btn.disabled = true;
         try {
+          const typed = { jcManagerId: field(form, 'jcManagerId'), jcUser: field(form, 'jcUser'), jcPass: field(form, 'jcPass') };
+          V.settings = await api.put('/api/settings', typed);
+          if (!V.settings.jcConfigured) throw new Error('اكتب رقم المشترك (manager_id) واسم مستخدم الشركة وكلمة المرور، ثم اضغط الاختبار');
+          form.elements.jcPass.value = '';
+          form.elements.jcPass.placeholder = 'محفوظة';
           const r = await api.post('/api/shop/admin/jawwal/test');
           toast(`الاتصال يعمل${r.tokenExpiresAt ? ` — الرمز صالح حتى ${new Date(r.tokenExpiresAt).toLocaleTimeString('ar')}` : ''}`);
         } catch (ex) { toast(ex.message, { error: true }); } finally { btn.disabled = false; }
