@@ -982,12 +982,14 @@ async function askAgent(system, contents) {
   }
 }
 
-// An order's details as the code writes them under the assistant's reply.
+// The order just made, as the code writes it (alone: the summary was confirmed, so it is not repeated): its number,
+// how much to pay and where, then what to send once paid.
 function orderFacts(o, shop) {
   const minutes = Math.max(1, Math.round(require('./shop').RESERVE_MS / 60_000));
-  const pay = shop.jawwalpay?.number ? `حوّل بجوال باي على *${shop.jawwalpay.number}*${shop.jawwalpay.name ? ` (${shop.jawwalpay.name})` : ''}` : 'حوّل بجوال باي';
-  return [`🧾 طلب رقم *${o.code}* — ${o.package_label}`, ...(reservedNumber(o) ? [`📞 رقمك الجديد: *${reservedNumber(o)}* (محجوزلك لحد ما تدفع)`] : []),
-    `💰 المبلغ: *${round(o.amount)} ₪*`, `💳 ${pay} خلال ${minutes} دقايق، وبعدها ابعتلي هون *اسم اللي حوّل* أو *رقم تلفونه* أو *الرقم المرجعي*، أو *صورة الإشعار*.`].join('\n');
+  const where = shop.jawwalpay?.number ? ` على *${shop.jawwalpay.number}*${shop.jawwalpay.name ? ` (${shop.jawwalpay.name})` : ''}` : '';
+  return [`✅ انحجز طلبك رقم *${o.code}*`, ...(reservedNumber(o) ? [`📞 رقمك الجديد: *${reservedNumber(o)}* (محجوزلك لحد ما تدفع)`] : []),
+    `💳 حوّل *${round(o.amount)} ₪* بجوال باي${where} خلال ${minutes} دقايق.`,
+    'وبعد ما تحوّل ابعتلي هون *اسم اللي حوّل* أو *رقم تلفونه* أو *الرقم المرجعي*.'].join('\n');
 }
 const stageFacts = (o, stage) => `🧾 طلب *${o.code}* — ${o.package_label}\n${STAGE_TEXT[stage] || stage}`;
 const OPEN = ['awaiting_payment', 'verifying', 'review'];
@@ -1046,6 +1048,7 @@ async function agentTool(name, args, ctx) {
           `الاسم: ${name2}`, 'الرقم الجديد: بيعطيك ياه المتجر ومحجوز إلك بعد التأكيد، ورمز QR بيوصلك هون بعد التفعيل',
           '', 'إذا كله صح ابعت *نعم*، وإذا بدك تغيّر إشي احكيلي.'].join('\n'));
         if (!ctx.facts.includes(summary)) ctx.facts.push(summary); // once, however often it is asked in one message
+        ctx.codeOnly = true; // sent without the assistant's words, which would only say it again
         return { ok: false, awaiting_confirmation: true, note: 'ملخص الطلب كامل بينضاف تحت ردّك لحاله: اكتب سطر واحد قصير بس (مثلاً «هاي تفاصيل طلبك، إذا تمام ابعت نعم 👍») ولا تعيد الباقة أو السعر أو الاسم. لما يوافق اطلب create_order مع confirmed=true.' };
       }
       draft.pendingKey = '';
@@ -1056,7 +1059,9 @@ async function agentTool(name, args, ctx) {
       const o = S.byCode(v.code);
       drafts.delete(jid);
       follow(jid, o, v.stage);
+      ctx.facts = ctx.facts.filter((f) => !f.startsWith('📝')); // the summary it was made from: not again
       ctx.facts.push(orderFacts(o, shop));
+      ctx.codeOnly = true;
       ctx.prices.add(round(o.amount));
       if (o.number) ctx.phones.add(o.number);
       if (reservedNumber(o)) ctx.phones.add(reservedNumber(o));
@@ -1166,7 +1171,8 @@ async function customerAgent(jid, raw, phone, shop) {
   }
   const text = checked.problem ? '' : checked.text;
   if (!text && !ctx.facts.length) return ['claim', 'phone', 'price', 'long'].includes(checked.problem) ? 'blocked' : checked.problem;
-  await say(jid, [text || 'تمام 👍', ...(ctx.facts.length ? ['━━━━━━━━━━', ...ctx.facts] : [])].join('\n\n'));
+  // An order's summary, or the order just made: the code's words alone (the assistant would repeat them in its own).
+  await say(jid, (ctx.codeOnly && ctx.facts.length ? ctx.facts : [text || 'تمام 👍', ...(ctx.facts.length ? ['━━━━━━━━━━', ...ctx.facts] : [])]).join('\n\n'));
   for (const f of ctx.after) await f().catch((e) => console.error('whatsapp after', e.message));
   return true;
 }

@@ -256,6 +256,12 @@ test('WhatsApp: agents sell as in the portal; customers buy in the chat, their t
   assert.ok(code, reserved);
   assert.match(reserved, /0599000000/);
   assert.match(reserved, /رقمك الجديد: \*053\d{7}\*/, 'the supplier\'s free number, never typed by the customer');
+  // The payment message alone: how much and where, then what to send. The summary is not repeated, no receipt asked for,
+  // and the assistant's own words (which would say it all again) are not added.
+  assert.match(reserved, /حوّل \*\d+ ₪\* بجوال باي على \*0599000000\*/);
+  assert.match(reserved, /وبعد ما تحوّل ابعتلي هون \*اسم اللي حوّل\*/);
+  assert.doesNotMatch(reserved, /تأكيد الطلب|صورة الإشعار|حجزتلك ياها/);
+  assert.equal(reserved.includes(esimPkg.name), false, 'the package is not said again');
   const order = await ok(call(null, 'GET', `/api/shop/orders/${code}`));
   assert.equal(order.status, 'awaiting_payment');
   assert.equal(site.purchases.length, 1, 'nothing bought before the payment');
@@ -351,11 +357,12 @@ test('WhatsApp: agents sell as in the portal; customers buy in the chat, their t
   assert.match(r.got, new RegExp(`${esimPkg.name}[\\s\\S]*${esimTotal} ₪[\\s\\S]*سامي خالد`));
   assert.doesNotMatch(r.got, /رقم الشريحة|رقم الهاتف/);
   assert.equal(r.got.split('تأكيد الطلب').length, 2, 'the summary once');
+  assert.doesNotMatch(r.got, /بتأكدلي/, 'the assistant\'s own summary is not sent beside the code\'s');
   assert.equal(q('SELECT COUNT(*) AS n FROM shop_orders').get().n, ordersBefore, 'not before the customer says yes');
   assert.equal(toolAnswer(r.calls[2]).response.awaiting_confirmation, true);
   // The customer says yes: the order is made, with what was given before (here, the name).
   r = await ask('نعم', [{ call: 'create_order', args: { confirmed: true } }, { text: 'تمام، حجزتلك الشريحة 👍' }]);
-  assert.match(r.got, /تمام، حجزتلك الشريحة/);
+  assert.doesNotMatch(r.got, /تمام، حجزتلك الشريحة/, 'the order made: the code\'s payment message alone');
   const aiCode = /رقم \*([A-Z0-9]{8})\*/.exec(r.got)?.[1];
   assert.ok(aiCode, r.got);
   assert.match(r.got, new RegExp(`${esimTotal} ₪`));
