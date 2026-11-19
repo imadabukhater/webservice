@@ -2054,9 +2054,14 @@ function renderOrder() {
   const showDirect = Boolean((S.data?.jawwalDirect || jcChecking) && isInitialConfirm);
   const manualOk = S.data?.manualPay !== false;
   const canShowForm = ((isInitialConfirm && (manualOk || !showDirect)) || isRetryChance) && !jcChecking;
-  const isSupportNeeded = Boolean(!canShowForm && !showDirect && payable && (o.needsSupport || (o.waitUntil && Date.now() >= Number(o.waitUntil))));
+  // A transfer's details were sent and are being checked: only then the wait (up to 15 minutes), never for a direct payment.
+  const transferChecking = Boolean(payable && !canShowForm && !jcChecking && o.proofSent && o.status !== 'awaiting_payment');
+  const isSupportNeeded = Boolean(transferChecking && (o.needsSupport || (o.waitUntil && Date.now() >= Number(o.waitUntil))));
   const statusPillCls = isSupportNeeded ? 's-bad' : st.cls;
-  const statusPillLabel = isSupportNeeded ? 'يرجى التحدث مع الدعم' : jcChecking ? 'جارٍ التحقق من الدفع…' : (!canShowForm && payable && !showDirect ? 'بانتظار التحقق (حتى 15 دقيقة)' : st.label);
+  const stageDesc = o.status === 'awaiting_payment' && showDirect && !canShowForm
+    ? 'ادفع مباشرة من محفظة جوال باي: اكتب رقمك ويصلك رمز تحقق، وبعد الدفع يتفعّل طلبك تلقائياً.'
+    : jcChecking ? 'نتأكد من دفعتك لدى جوال باي — لا تدفع مرة أخرى.' : st.desc;
+  const statusPillLabel = isSupportNeeded ? 'يرجى التحدث مع الدعم' : jcChecking ? 'جارٍ التحقق من الدفع…' : (transferChecking ? 'بانتظار التحقق (حتى 15 دقيقة)' : st.label);
   const wa = waHref(S.data?.supportWhatsapp, `مرحباً، بخصوص الطلب ${o.code}`);
   const appleInstallHref = o.esimCode && /^LPA:1\$/i.test(String(o.esimCode).trim())
     ? `https://esimsetup.apple.com/esim_qrcode_provisioning?carddata=${encodeURIComponent(String(o.esimCode).trim())}`
@@ -2116,14 +2121,14 @@ function renderOrder() {
             ${icon('clock')}
             <span>المحاولة الثانية: <b id="retry-countdown" class="ltr mono">${fmtRemaining(o.retryUntil)}</b></span>
           </span>
-        ` : !canShowForm && payable && !isSupportNeeded && o.waitUntil ? `
+        ` : transferChecking && !isSupportNeeded && o.waitUntil ? `
           <span class="shop-reserve-pill" title="مهلة الانتظار القصوى (15 دقيقة)">
             ${icon('clock')}
             <span>مهلة الانتظار: <b id="wait-countdown" class="ltr mono">${fmtRemaining(o.waitUntil)}</b></span>
           </span>
         ` : `<small class="muted">${fmtDateTime(o.createdAt)}</small>`}
       </div>
-      ${st.desc ? `<p class="muted" style="margin:0;font-size:.86rem">${esc(st.desc)}</p>` : ''}
+      ${stageDesc ? `<p class="muted" style="margin:0;font-size:.86rem">${esc(stageDesc)}</p>` : ''}
       ${o.response ? `<div class="esim-ready-notice">${icon('info')}<span>${esc(o.response)}</span></div>` : ''}
       ${o.expiresAt ? `<div class="shop-kv"><span>صلاحية الباقة حتى</span><b>${fmtDate(o.expiresAt)}</b></div>` : ''}
       ${['awaiting_payment', 'verifying', 'review'].includes(o.status) ? `
@@ -2231,7 +2236,7 @@ function renderOrder() {
           <button class="btn primary lg" type="submit">${icon('checkCircle')}<span>${isRetryChance ? 'تأكيد البيانات وإعادة التحقق' : 'أرسلت المبلغ — تأكيد الآن'}</span></button>
         </form>
       </div>
-    ` : payable && !jcChecking ? `
+    ` : transferChecking ? `
       <div class="card shop-pay no-print">
         ${isSupportNeeded ? `
           <div class="esim-ready-notice" style="background:rgba(220,38,38,.09);border-color:rgba(220,38,38,.35)">
@@ -2380,7 +2385,7 @@ function renderOrder() {
         } catch {}
       }
     }, 1000);
-  } else if (!canShowForm && payable && !isSupportNeeded && o.waitUntil) {
+  } else if (transferChecking && !isSupportNeeded && o.waitUntil) {
     S.countdownTimer = setInterval(async () => {
       const el = document.getElementById('wait-countdown');
       if (!el) { clearInterval(S.countdownTimer); return; }
