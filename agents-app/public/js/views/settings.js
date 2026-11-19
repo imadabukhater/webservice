@@ -17,8 +17,25 @@ const TABS = [['general', 'عام', 'sliders'], ['suppliers', 'المورّدو�
 
 // ---------- WhatsApp: the link (QR code), and who it answers ----------
 const WA_LABEL = { off: 'غير مربوط', missing: 'مكتبة واتساب غير مثبتة على السيرفر', connecting: 'جارٍ الاتصال…', qr: 'امسح رمز QR من هاتف المتجر', code: 'أدخل الكود على هاتف المتجر', connected: 'مربوط ويعمل' };
+// Every number linked to the shop (one card each), the button to add one, and the bot's switch (for all of them).
 function waStatusHtml(w) {
   if (!w) return `<div class="msg">${icon('alert')}<span>تعذّر جلب حالة واتساب.</span></div>`;
+  const list = w.links?.length ? w.links : [{ ...w, id: 'main' }];
+  const cards = list.map((l, i) => `<div class="card card-pad" style="margin-bottom:12px" data-wa-link="${esc(l.id)}">
+      <div class="row between" style="gap:8px;flex-wrap:wrap;margin-bottom:8px"><b>رقم واتساب ${i + 1}</b>
+        ${l.id !== 'main' ? `<button class="btn btn-sm" type="button" data-action="wa-remove" data-id="${esc(l.id)}">${icon('trash')}حذف الرقم</button>` : ''}</div>
+      ${waLinkHtml(l)}</div>`).join('');
+  const canAdd = list.length < (w.maxLinks || 5);
+  return `${cards}
+    ${canAdd ? `<button class="btn" type="button" data-action="wa-add">${icon('plus')}إضافة رقم واتساب</button>
+      <p class="hint">كل رقم يُربط من هاتفه. كل زبون يرد عليه البوت من نفس الرقم اللي كتبله عليه.</p>` : `<p class="hint">وصلت للحد الأقصى (${w.maxLinks || 5} أرقام).</p>`}
+    <div class="msg ${w.config?.enabled === false ? '' : 'info'}" style="margin-top:12px">${icon(w.config?.enabled === false ? 'alert' : 'checkCircle')}
+      <span class="grow"><b>${w.config?.enabled === false ? 'البوت موقوف: ما بيرد على حدا' : 'البوت شغّال: بيرد على الرسائل'}</b>${list.length > 1 ? ' <small>(على كل الأرقام)</small>' : ''}</span>
+      <button class="btn btn-sm ${w.config?.enabled === false ? 'btn-primary' : ''}" type="button" data-action="wa-replies" data-on="${w.config?.enabled === false ? '1' : '0'}">
+        ${icon(w.config?.enabled === false ? 'play' : 'power')}${w.config?.enabled === false ? 'تشغيل البوت' : 'إيقاف البوت'}</button></div>`;
+}
+// One number: its state, its QR code or pairing code, and its buttons.
+function waLinkHtml(w) {
   const busy = w.status === 'connecting' || w.status === 'qr' || w.status === 'code';
   return `<div class="msg ${w.status === 'connected' ? 'info' : ''}">${icon(w.status === 'connected' ? 'checkCircle' : w.status === 'qr' ? 'qr' : 'whatsapp')}
       <span><b>${WA_LABEL[w.status] || WA_LABEL.off}</b>${w.phone ? ` · <span class="ltr">${esc(w.phone)}</span>` : ''}</span></div>
@@ -31,19 +48,17 @@ function waStatusHtml(w) {
     ${w.error ? `<div class="msg">${icon('alert')}<span>${esc(w.error)}</span></div>` : ''}
     <div class="btn-row">
       ${w.status === 'connected'
-        ? `<button class="btn" type="button" data-action="wa-logout">${icon('logout')}إلغاء الربط</button>`
-        : `<button class="btn btn-primary" type="button" data-action="wa-connect" ${busy ? 'disabled' : ''}>${icon('qr')}ربط واتساب</button>
-           ${busy ? `<button class="btn" type="button" data-action="wa-connect" data-fresh="1">${icon('refresh')}رمز جديد</button>` : ''}`}
+        ? `<button class="btn" type="button" data-action="wa-logout" data-id="${esc(w.id)}">${icon('logout')}إلغاء الربط</button>`
+        : `<button class="btn btn-primary" type="button" data-action="wa-connect" data-id="${esc(w.id)}" ${busy ? 'disabled' : ''}>${icon('qr')}ربط واتساب</button>
+           ${busy ? `<button class="btn" type="button" data-action="wa-connect" data-id="${esc(w.id)}" data-fresh="1">${icon('refresh')}رمز جديد</button>` : ''}`}
     </div>
-    ${w.status === 'connected' ? '' : `<div class="field" style="margin-top:12px"><label for="wa-pair-phone">أو اربط برقم الهاتف بدل مسح الرمز</label>
-      <div class="row" style="gap:8px"><input class="input ltr grow" id="wa-pair-phone" inputmode="tel" placeholder="رقم واتساب المتجر 05XXXXXXXX">
-      <button class="btn" type="button" data-action="wa-pair">${icon('phone')}اطلب كود</button></div>
-      <span class="hint">مفيد إذا هاتف المتجر هو نفس الجهاز اللي فاتح عليه البوابة.</span></div>`}
-    <div class="msg ${w.config?.enabled === false ? '' : 'info'}" style="margin-top:12px">${icon(w.config?.enabled === false ? 'alert' : 'checkCircle')}
-      <span class="grow"><b>${w.config?.enabled === false ? 'البوت موقوف: ما بيرد على حدا' : 'البوت شغّال: بيرد على الرسائل'}</b></span>
-      <button class="btn btn-sm ${w.config?.enabled === false ? 'btn-primary' : ''}" type="button" data-action="wa-replies" data-on="${w.config?.enabled === false ? '1' : '0'}">
-        ${icon(w.config?.enabled === false ? 'play' : 'power')}${w.config?.enabled === false ? 'تشغيل البوت' : 'إيقاف البوت'}</button></div>`;
+    ${w.status === 'connected' ? '' : `<div class="field" style="margin-top:12px"><label for="wa-pair-phone-${esc(w.id)}">أو اربط برقم الهاتف بدل مسح الرمز</label>
+      <div class="row" style="gap:8px"><input class="input ltr grow" id="wa-pair-phone-${esc(w.id)}" inputmode="tel" placeholder="رقم واتساب 05XXXXXXXX">
+      <button class="btn" type="button" data-action="wa-pair" data-id="${esc(w.id)}">${icon('phone')}اطلب كود</button></div>
+      <span class="hint">مفيد إذا هاتف هذا الرقم هو نفس الجهاز اللي فاتح عليه البوابة.</span></div>`}`;
 }
+// What changes on screen (the QR codes rotate; a number comes up once scanned).
+const waSig = (w) => JSON.stringify([(w?.links || []).map((l) => [l.id, l.status, l.qr, l.phone, l.error, l.pairCode]), w?.config?.enabled]);
 function waHtml(w) {
   const c = w?.config || {};
   return `
@@ -228,7 +243,7 @@ export default {
         try {
           const w = await api.get('/api/whatsapp');
           if (!document.getElementById('wa-status')) return;
-          if (JSON.stringify([w.status, w.qr, w.phone, w.error, w.pairCode, w.config?.enabled]) !== JSON.stringify([V.wa?.status, V.wa?.qr, V.wa?.phone, V.wa?.error, V.wa?.pairCode, V.wa?.config?.enabled])) {
+          if (waSig(w) !== waSig(V.wa) && !document.querySelector('#wa-status input:focus')) {
             V.wa = w;
             box.innerHTML = waStatusHtml(w);
           }
@@ -330,7 +345,7 @@ export default {
       btn.disabled = true;
       box.insertAdjacentHTML('afterbegin', `<div class="msg info">${icon('clock')}<span>جارٍ تجهيز رمز QR…</span></div>`);
       try {
-        V.wa = await api.post('/api/whatsapp/connect', { fresh: btn.dataset.fresh === '1' });
+        V.wa = await api.post('/api/whatsapp/connect', { id: btn.dataset.id || 'main', fresh: btn.dataset.fresh === '1' });
       } catch (err) {
         V.wa = { ...(V.wa || {}), status: 'off', error: err.message };
       }
@@ -349,22 +364,36 @@ export default {
       document.getElementById('wa-status').innerHTML = waStatusHtml(V.wa);
     },
     async 'wa-pair'(btn) {
-      const phone = (document.getElementById('wa-pair-phone')?.value || '').trim();
+      const phone = (document.getElementById(`wa-pair-phone-${btn.dataset.id || 'main'}`)?.value || '').trim();
       if (!phone) { toast('اكتب رقم واتساب المتجر', { error: true }); return; }
       const box = document.getElementById('wa-status');
       btn.disabled = true;
       box.insertAdjacentHTML('afterbegin', `<div class="msg info">${icon('clock')}<span>جارٍ طلب كود الربط…</span></div>`);
       try {
-        V.wa = await api.post('/api/whatsapp/connect', { phone });
+        V.wa = await api.post('/api/whatsapp/connect', { id: btn.dataset.id || 'main', phone });
       } catch (err) {
         V.wa = { ...(V.wa || {}), status: 'off', error: err.message };
       }
       box.innerHTML = waStatusHtml(V.wa);
     },
     async 'wa-logout'(btn) {
-      if (!confirm('إلغاء ربط واتساب المتجر بالسيرفر؟ يتوقف الرد التلقائي حتى تربطه من جديد.')) return;
+      if (!confirm('إلغاء ربط هذا الرقم بالسيرفر؟ يتوقف الرد التلقائي عليه حتى تربطه من جديد.')) return;
       btn.disabled = true;
-      try { V.wa = await api.post('/api/whatsapp/logout'); } catch (err) { toast(err.message, { error: true }); }
+      try { V.wa = await api.post('/api/whatsapp/logout', { id: btn.dataset.id || 'main' }); } catch (err) { toast(err.message, { error: true }); }
+      document.getElementById('wa-status').innerHTML = waStatusHtml(V.wa);
+    },
+    async 'wa-add'(btn) {
+      btn.disabled = true;
+      try {
+        V.wa = await api.post('/api/whatsapp/links');
+        toast('أُضيفت خانة رقم جديد — اضغط «ربط واتساب» فيها');
+      } catch (err) { toast(err.message, { error: true }); }
+      document.getElementById('wa-status').innerHTML = waStatusHtml(V.wa);
+    },
+    async 'wa-remove'(btn) {
+      if (!confirm('حذف هذا الرقم؟ يُلغى ربطه بالسيرفر ويتوقف الرد عليه.')) return;
+      btn.disabled = true;
+      try { V.wa = await api.del(`/api/whatsapp/links/${encodeURIComponent(btn.dataset.id)}`); } catch (err) { toast(err.message, { error: true }); }
       document.getElementById('wa-status').innerHTML = waStatusHtml(V.wa);
     },
     async 'art-check'(btn) {

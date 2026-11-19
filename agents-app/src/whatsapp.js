@@ -33,20 +33,39 @@ function configView() {
     aiPrice: price, aiModels: AI_MODELS, aiSpend: spendToday() };
 }
 
-// ---------- the linked session (kept beside the database, like the suppliers' cookies) ----------
+// ---------- the linked numbers (each kept beside the database, like the suppliers' cookies) ----------
+// The shop may link several WhatsApp numbers: 'main' (the first, linked as before) and any added since (n2, n3…). Each
+// has its own session folder, socket and state. A customer is answered from the number they wrote to (chatLink, and an
+// order's chat keeps its number: wa_shop.link); the manager's notices go from any number linked.
+const MAIN = 'main';
+const MAX_LINKS = 5;
 let dir = null;
-function authDir() {
-  if (dir) return dir;
-  dir = process.env.WA_DATA || (DB_FILE === ':memory:' ? path.join(os.tmpdir(), `agents-wa-${process.pid}`) : path.join(path.dirname(DB_FILE), 'whatsapp'));
-  return dir;
+function authDir(id = MAIN) {
+  if (!dir) dir = process.env.WA_DATA || (DB_FILE === ':memory:' ? path.join(os.tmpdir(), `agents-wa-${process.pid}`) : path.join(path.dirname(DB_FILE), 'whatsapp'));
+  return id === MAIN ? dir : `${dir}-${id}`;
 }
-const linked = () => {
-  try { return !!JSON.parse(fs.readFileSync(path.join(authDir(), 'creds.json'), 'utf8')).me; } catch { return false; }
+function linkIds() {
+  let extra = [];
+  try { extra = JSON.parse(get('wa_links') || '[]'); } catch {}
+  return [MAIN, ...(Array.isArray(extra) ? extra : []).filter((x) => /^n\d{1,3}$/.test(x))];
+}
+const linked = (id = MAIN) => {
+  try { return !!JSON.parse(fs.readFileSync(path.join(authDir(id), 'creds.json'), 'utf8')).me; } catch { return false; }
 };
+const links = new Map(); // id → the number's state
+function link(id = MAIN) {
+  let L = links.get(id);
+  if (!L) {
+    L = { id, sock: null, status: 'off', qr: '', qrAt: 0, phone: '', error: '', starting: false, retries: 0, pairPhone: '', pairCode: '', pairAsking: false };
+    links.set(id, L);
+  }
+  return L;
+}
 
 let lib = null; // the loaded library (downloading a receipt photo needs it)
 let downloader = null; // tests: replaces the download
-const state = { sock: null, status: 'off', qr: '', qrAt: 0, phone: '', error: '', starting: false, retries: 0, aiError: '', aiErrorFor: '' };
+// The main number's state, which also holds the assistant's (aiError…), as before.
+const state = Object.assign(link(MAIN), { aiError: '', aiErrorFor: '' });
 // The assistant's last error, shown only while the settings are still the ones it happened with.
 const aiSig = (c = config()) => [c.aiModel, c.aiDailyUsd].join('|');
 const aiErrorNow = () => (state.aiError && state.aiErrorFor === aiSig() ? state.aiError : '');
@@ -61,41 +80,80 @@ function logger() {
 }
 
 const phoneOfJid = (jid) => normalizePhone(String(jid || '').split('@')[0].split(':')[0]);
-const connected = () => !!transport || (state.status === 'connected' && !!state.sock);
+const up = (L) => !!(L && L.status === 'connected' && L.sock);
+const connected = () => !!transport || [...links.values()].some(up);
 
-function status() {
+// The number a chat is on: the one it last wrote to (or its order's), else the main one, else any number linked.
+const chatLink = new Map(); // jid → link id
+function savedLink(jid) {
+  try { return q("SELECT link FROM wa_shop WHERE jid = ? AND link != '' ORDER BY created_at DESC LIMIT 1").get(jid)?.link || ''; } catch { return ''; }
+}
+function linkFor(jid) {
+  const want = chatLink.get(jid) || savedLink(jid);
+  if (want && up(links.get(want))) return links.get(want);
+  if (up(links.get(MAIN))) return links.get(MAIN);
+  return [...links.values()].find(up) || null;
+}
+
+function linkView(L) {
   return {
-    status: state.status, qr: state.status === 'qr' ? state.qr : '', qrAt: state.qrAt, phone: state.phone, error: state.error,
-    pairCode: state.status === 'code' ? state.pairCode : '',
-    linked: linked(), config: configView(), aiError: aiErrorNow(),
+    id: L.id, status: L.status, qr: L.status === 'qr' ? L.qr : '', qrAt: L.qrAt, phone: L.phone, error: L.error,
+    pairCode: L.status === 'code' ? L.pairCode : '', linked: linked(L.id),
   };
+}
+// The main number's state at the top (as before), and every number's in links.
+function status() {
+  const all = linkIds().map((id) => linkView(link(id)));
+  return { ...all[0], links: all, maxLinks: MAX_LINKS, config: configView(), aiError: aiErrorNow() };
+}
+
+// A new number to link (up to MAX_LINKS): its id. Removing one unlinks it and forgets its session (not the main one).
+function addLink() {
+  const ids = linkIds();
+  if (ids.length >= MAX_LINKS) require('./util').fail(400, `الحد الأقصى ${MAX_LINKS} أرقام واتساب`);
+  const n = Math.max(1, ...ids.filter((x) => x !== MAIN).map((x) => Number(x.slice(1)))) + 1;
+  const id = `n${n}`;
+  setSetting('wa_links', JSON.stringify([...ids.filter((x) => x !== MAIN), id]));
+  link(id);
+  return id;
+}
+async function removeLink(id) {
+  if (id === MAIN) require('./util').fail(400, 'الرقم الأول لا يُحذف — ألغِ ربطه فقط');
+  if (!linkIds().includes(id)) require('./util').fail(404, 'الرقم غير موجود');
+  await logout(id);
+  links.delete(id);
+  setSetting('wa_links', JSON.stringify(linkIds().filter((x) => x !== MAIN && x !== id)));
+  for (const [jid, l] of chatLink) if (l === id) chatLink.delete(jid);
+  return status();
 }
 
 // Linked by its QR code, or, given the shop's phone number, by an 8-character code typed on that phone
 // (WhatsApp → Linked devices → Link a device → Link with phone number instead).
-async function start({ fresh = false, pairPhone = '' } = {}) {
-  if (state.starting) return status();
-  if (state.sock && !fresh && !pairPhone) return status();
+async function start({ fresh = false, pairPhone = '', id = MAIN } = {}) {
+  if (!linkIds().includes(id)) return status();
+  const L = link(id);
+  if (L.starting) return status();
+  if (L.sock && !fresh && !pairPhone) return status();
   if (pairPhone) fresh = true;
-  state.starting = true;
-  state.pairPhone = pairPhone;
-  state.pairCode = '';
+  L.starting = true;
+  L.pairPhone = pairPhone;
+  L.pairCode = '';
   try {
     let B;
     try {
       B = await import('@whiskeysockets/baileys');
       lib = B;
     } catch {
-      state.status = 'missing';
-      state.error = 'مكتبة واتساب غير مثبتة على السيرفر بعد. شغّل أمر التحديث (agents-update) ثم أعد المحاولة.';
+      L.status = 'missing';
+      L.error = 'مكتبة واتساب غير مثبتة على السيرفر بعد. شغّل أمر التحديث (agents-update) ثم أعد المحاولة.';
       return status();
     }
     if (fresh) {
-      closeSocket();
-      fs.rmSync(authDir(), { recursive: true, force: true });
+      closeSocket(L);
+      fs.rmSync(authDir(id), { recursive: true, force: true });
     }
-    fs.mkdirSync(authDir(), { recursive: true, mode: 0o700 });
-    const { state: auth, saveCreds } = await B.useMultiFileAuthState(authDir());
+    fs.mkdirSync(authDir(id), { recursive: true, mode: 0o700 });
+    const { state: auth, saveCreds } = await B.useMultiFileAuthState(authDir(id));
     let version;
     try {
       version = (await Promise.race([B.fetchLatestBaileysVersion(), new Promise((r) => setTimeout(r, 10_000, null))]))?.version;
@@ -106,90 +164,100 @@ async function start({ fresh = false, pairPhone = '' } = {}) {
       browser: B.Browsers?.ubuntu ? B.Browsers.ubuntu('Chrome') : ['Ubuntu', 'Chrome', '22.04'],
       ...(version ? { version } : {}),
     });
-    state.sock = sock;
-    state.status = 'connecting';
-    state.error = '';
+    L.sock = sock;
+    L.status = 'connecting';
+    L.error = '';
     sock.ev.on('creds.update', saveCreds);
-    sock.ev.on('connection.update', (u) => onConnection(B, sock, auth, u));
+    sock.ev.on('connection.update', (u) => onConnection(B, L, sock, auth, u));
     sock.ev.on('messages.upsert', ({ messages, type }) => {
       if (type !== 'notify') return;
-      for (const m of messages || []) onRaw(m).catch((e) => console.error('whatsapp message', e.message));
+      for (const m of messages || []) onRaw(m, id).catch((e) => console.error('whatsapp message', e.message));
     });
   } catch (e) {
-    state.status = 'off';
-    state.error = `تعذّر بدء واتساب: ${e.message}`;
+    L.status = 'off';
+    L.error = `تعذّر بدء واتساب: ${e.message}`;
   } finally {
-    state.starting = false;
+    L.starting = false;
   }
   return status();
 }
 
-function closeSocket() {
-  const s = state.sock;
-  state.sock = null;
+function closeSocket(L = state) {
+  const s = L.sock;
+  L.sock = null;
   if (s) try { s.end(undefined); } catch {}
 }
 
-function onConnection(B, sock, auth, u) {
-  if (state.sock !== sock) return;
-  if (u.qr && state.pairPhone) {
+function onConnection(B, L, sock, auth, u) {
+  if (L.sock !== sock) return;
+  if (u.qr && L.pairPhone) {
     // Ready to link: the code for the shop's phone, asked once (it stays valid while the QR codes rotate).
-    if (!state.pairCode && !state.pairAsking) {
-      state.pairAsking = true;
-      sock.requestPairingCode(state.pairPhone)
-        .then((c) => { if (state.sock === sock) Object.assign(state, { status: 'code', pairCode: String(c).replace(/^(.{4})(.{4})$/, '$1-$2'), qrAt: now() }); })
-        .catch((e) => { if (state.sock === sock) Object.assign(state, { status: 'off', error: `تعذّر طلب كود الربط: ${e.message}` }); })
-        .finally(() => { state.pairAsking = false; });
+    if (!L.pairCode && !L.pairAsking) {
+      L.pairAsking = true;
+      sock.requestPairingCode(L.pairPhone)
+        .then((c) => { if (L.sock === sock) Object.assign(L, { status: 'code', pairCode: String(c).replace(/^(.{4})(.{4})$/, '$1-$2'), qrAt: now() }); })
+        .catch((e) => { if (L.sock === sock) Object.assign(L, { status: 'off', error: `تعذّر طلب كود الربط: ${e.message}` }); })
+        .finally(() => { L.pairAsking = false; });
     }
   } else if (u.qr) {
-    state.status = 'qr';
-    state.qr = qrcode.dataUrl(u.qr, { scale: 6 });
-    state.qrAt = now();
+    L.status = 'qr';
+    L.qr = qrcode.dataUrl(u.qr, { scale: 6 });
+    L.qrAt = now();
   }
   if (u.connection === 'open') {
-    state.status = 'connected';
-    state.qr = '';
-    state.pairCode = '';
-    state.pairPhone = '';
-    state.error = '';
-    state.retries = 0;
-    state.phone = phoneOfJid(sock.user?.id);
+    L.status = 'connected';
+    L.qr = '';
+    L.pairCode = '';
+    L.pairPhone = '';
+    L.error = '';
+    L.retries = 0;
+    L.phone = phoneOfJid(sock.user?.id);
+    // The same number linked twice (as two entries): the older entry is closed, so a chat is answered once.
+    for (const other of links.values()) {
+      if (other !== L && other.phone === L.phone && up(other)) {
+        closeSocket(other);
+        Object.assign(other, { status: 'off', error: `هذا الرقم (${L.phone}) مربوط في خانة أخرى — احذف هذه الخانة.` });
+      }
+    }
     flush().catch((e) => console.error('whatsapp flush', e.message));
   }
   if (u.connection === 'close') {
     const code = u.lastDisconnect?.error?.output?.statusCode || 0;
     const R = B.DisconnectReason || {};
-    state.sock = null;
+    L.sock = null;
     if (code === (R.loggedOut ?? 401) || code === 403) {
-      fs.rmSync(authDir(), { recursive: true, force: true });
-      Object.assign(state, { status: 'off', qr: '', phone: '', error: 'أُلغي ربط واتساب من الهاتف. اضغط «ربط واتساب» لربطه من جديد.' });
+      fs.rmSync(authDir(L.id), { recursive: true, force: true });
+      Object.assign(L, { status: 'off', qr: '', phone: '', error: 'أُلغي ربط واتساب من الهاتف. اضغط «ربط واتساب» لربطه من جديد.' });
     } else if (code === (R.connectionReplaced ?? 440)) {
-      Object.assign(state, { status: 'off', qr: '', error: 'فُتح واتساب هذا الرقم من مكان آخر بدل السيرفر. اضغط «ربط واتساب» لإعادته.' });
+      Object.assign(L, { status: 'off', qr: '', error: 'فُتح واتساب هذا الرقم من مكان آخر بدل السيرفر. اضغط «ربط واتساب» لإعادته.' });
     } else if (!auth.creds?.me && code !== (R.restartRequired ?? 515)) {
       // Not linked yet: stop until the manager asks again (the QR expired, or WhatsApp could not be reached).
-      const why = state.status === 'qr' ? 'انتهت مهلة رمز QR قبل مسحه.' : state.status === 'code' ? 'انتهت مهلة كود الربط قبل إدخاله.' : `تعذّر الوصول إلى خوادم واتساب (${u.lastDisconnect?.error?.message || code || 'بلا رد'}).`;
-      Object.assign(state, { status: 'off', qr: '', pairCode: '', pairPhone: '', error: `${why} اضغط «ربط واتساب» للمحاولة من جديد.` });
+      const why = L.status === 'qr' ? 'انتهت مهلة رمز QR قبل مسحه.' : L.status === 'code' ? 'انتهت مهلة كود الربط قبل إدخاله.' : `تعذّر الوصول إلى خوادم واتساب (${u.lastDisconnect?.error?.message || code || 'بلا رد'}).`;
+      Object.assign(L, { status: 'off', qr: '', pairCode: '', pairPhone: '', error: `${why} اضغط «ربط واتساب» للمحاولة من جديد.` });
     } else {
-      state.status = 'connecting';
-      const wait = Math.min(60_000, 2_000 * 2 ** state.retries++);
-      setTimeout(() => { if (!state.sock) start().catch(() => {}); }, wait).unref();
+      L.status = 'connecting';
+      const wait = Math.min(60_000, 2_000 * 2 ** L.retries++);
+      setTimeout(() => { if (!L.sock && linkIds().includes(L.id)) start({ id: L.id }).catch(() => {}); }, wait).unref();
     }
   }
 }
 
-async function logout() {
-  const s = state.sock;
+async function logout(id = MAIN) {
+  const L = link(id);
+  const s = L.sock;
   if (s) try { await s.logout(); } catch {}
-  closeSocket();
-  fs.rmSync(authDir(), { recursive: true, force: true });
-  Object.assign(state, { status: 'off', qr: '', phone: '', error: '', pairCode: '', pairPhone: '' });
+  closeSocket(L);
+  fs.rmSync(authDir(id), { recursive: true, force: true });
+  Object.assign(L, { status: 'off', qr: '', phone: '', error: '', pairCode: '', pairPhone: '' });
   return status();
 }
 
+// Sent from the number the chat is on (see linkFor).
 async function send(jid, content) {
   if (transport) return transport(jid, content);
-  if (!connected()) throw new Error('واتساب غير مربوط الآن');
-  return state.sock.sendMessage(jid, content);
+  const L = linkFor(jid);
+  if (!L) throw new Error('واتساب غير مربوط الآن');
+  return L.sock.sendMessage(jid, content);
 }
 const say = async (jid, text) => {
   remember2(jid, 'model', text);
@@ -247,12 +315,16 @@ function seenBefore(id) {
   return false;
 }
 
-async function onRaw(m) {
+async function onRaw(m, linkId = MAIN) {
   if (!m?.message || m.key?.fromMe) return;
   const jid = m.key.remoteJid || '';
   // Private chats only: no groups, statuses or channels.
   if (!/@(s\.whatsapp\.net|lid)$/.test(jid)) return;
   if (seenBefore(m.key.id)) return;
+  // The chat is answered from the number it wrote to.
+  chatLink.delete(jid);
+  chatLink.set(jid, linkId);
+  if (chatLink.size > 5000) chatLink.delete(chatLink.keys().next().value);
   // Old messages delivered after a reconnect are not answered (a «نعم» from yesterday must not sell anything).
   const raw = m.messageTimestamp;
   const ts = raw && typeof raw === 'object' ? (typeof raw.toNumber === 'function' ? raw.toNumber() : Number(raw.low) || 0) : Number(raw || 0);
@@ -261,14 +333,15 @@ async function onRaw(m) {
   const text = textOf(m.message);
   const x = m.message.ephemeralMessage?.message || m.message.viewOnceMessage?.message || m.message;
   // A photo (a payment receipt), downloaded only when it is used.
-  const image = x.imageMessage ? () => downloadImage(m, x.imageMessage) : null;
+  const image = x.imageMessage ? () => downloadImage(m, x.imageMessage, linkId) : null;
   if (!text && !image) return;
   await handle({ jid, phone: pn ? phoneOfJid(pn) : '', text, image });
 }
-async function downloadImage(m, im) {
+async function downloadImage(m, im, linkId = MAIN) {
   if (downloader) return downloader(m);
-  if (!lib || !state.sock) throw new Error('واتساب غير مربوط');
-  const buffer = await lib.downloadMediaMessage(m, 'buffer', {}, { logger: logger(), reuploadRequest: state.sock.updateMediaMessage });
+  const sock = links.get(linkId)?.sock;
+  if (!lib || !sock) throw new Error('واتساب غير مربوط');
+  const buffer = await lib.downloadMediaMessage(m, 'buffer', {}, { logger: logger(), reuploadRequest: sock.updateMediaMessage });
   return { buffer, mime: /^image\/(png|jpe?g|webp)$/.test(im.mimetype || '') ? im.mimetype : 'image/jpeg' };
 }
 
@@ -368,7 +441,8 @@ async function handleNow({ jid, phone, text = '', image = null }) {
   const t = norm(text);
   if (text) remember2(jid, 'user', who.kind === 'customer' && payState(jid)?.codeSent && otpIn(text) ? '[رمز التحقق]' : text);
   // "typing…" while the answer is prepared.
-  if (state.sock && !transport) state.sock.sendPresenceUpdate?.('composing', jid)?.catch?.(() => {});
+  const typing = !transport && linkFor(jid);
+  if (typing) typing.sock.sendPresenceUpdate?.('composing', jid)?.catch?.(() => {});
   try {
     if (who.kind === 'customer' && image) return await customerImage(jid, image);
     if (!text) return undefined;
@@ -758,9 +832,10 @@ async function unanswered(jid, phone, raw, why) {
   unansweredAt.set(jid, now());
   if (unansweredAt.size > 2000) unansweredAt.delete(unansweredAt.keys().next().value);
   console.error('whatsapp unanswered', why);
+  const via = linkIds().length > 1 ? links.get(chatLink.get(jid))?.phone : '';
   await tellAdmins(`🔔 زبون ما انرد عليه${phone ? ` (${phone})` : ''}: ${UNANSWERED_WHY[why] || why || 'المساعد ما رد'}.
 رسالته: «${String(raw || '').slice(0, 200)}»
-ردّ عليه من واتساب المتجر.`);
+ردّ عليه من واتساب المتجر${via ? ` (كتب على الرقم ${via})` : ''}.`);
 }
 
 
@@ -1399,8 +1474,9 @@ const STAGE_TEXT = {
   cancelled: '⌛ خلصت مهلة الطلب وانلغى. فيك تطلب باقة جديدة وقت ما بدك.',
 };
 function follow(jid, o, stage) {
-  q(`INSERT INTO wa_shop (order_id, jid, stage, created_at) VALUES (?, ?, ?, ?)
-     ON CONFLICT(order_id) DO UPDATE SET jid = excluded.jid, stage = excluded.stage, done_at = NULL`).run(o.id, jid, stage, now());
+  q(`INSERT INTO wa_shop (order_id, jid, stage, link, created_at) VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT(order_id) DO UPDATE SET jid = excluded.jid, stage = excluded.stage, done_at = NULL,
+       link = CASE WHEN excluded.link != '' THEN excluded.link ELSE wa_shop.link END`).run(o.id, jid, stage, chatLink.get(jid) || '', now());
 }
 async function orderUpdate(jid, o, v) {
   if (v.stage === 'done' && o.esim) {
@@ -1502,10 +1578,12 @@ async function flush() {
   for (const r of due) await taskResolved(r.task_id);
 }
 
-// Linked before: reconnect when the server starts.
-if (linked()) setTimeout(() => start().catch((e) => console.error('whatsapp start', e.message)), 3_000).unref();
+// Linked before: every number reconnects when the server starts (a moment apart).
+linkIds().filter((id) => linked(id)).forEach((id, i) => {
+  setTimeout(() => start({ id }).catch((e) => console.error('whatsapp start', id, e.message)), 3_000 + i * 2_000).unref();
+});
 
 module.exports = {
-  start, logout, status, config, configView, saveConfig, sendTo, taskResolved, handle, tellAdmins, jidOf, askModel,
-  _test: { phoneIn, drafts, agentTool, saidBefore, seenMessages, payHere, payState, otpIn, payMobileIn, orderFacts, unansweredAt, checkReply, waFormat, askModel, vertexAuth, spendToday, priceOf, safeReply, AGENT_TOOLS, agentSystem, vertexAccess, vertexUrl, aiCallsByChat, askedAbout, setTransport: (fn) => { transport = fn; }, setDownloader: (fn) => { downloader = fn; }, sessions, recent, norm, onRaw, jidOf, watchShop, history },
+  start, logout, status, addLink, removeLink, config, configView, saveConfig, sendTo, taskResolved, handle, tellAdmins, jidOf, askModel,
+  _test: { links, link, linkFor, chatLink, linkIds, follow, phoneIn, drafts, agentTool, saidBefore, seenMessages, payHere, payState, otpIn, payMobileIn, orderFacts, unansweredAt, checkReply, waFormat, askModel, vertexAuth, spendToday, priceOf, safeReply, AGENT_TOOLS, agentSystem, vertexAccess, vertexUrl, aiCallsByChat, askedAbout, setTransport: (fn) => { transport = fn; }, setDownloader: (fn) => { downloader = fn; }, sessions, recent, norm, onRaw, jidOf, watchShop, history },
 };

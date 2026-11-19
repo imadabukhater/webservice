@@ -23,23 +23,40 @@ route('POST', '/api/whatsapp/replies', ADMIN, ({ body }) => {
   return wa.status();
 });
 
+// Several numbers may be linked: each request names its number (id from GET's links; the first, 'main', when none).
+function linkId(body) {
+  const id = String(body?.id || 'main');
+  if (!wa.status().links.some((l) => l.id === id)) fail(404, 'رقم واتساب غير موجود');
+  return id;
+}
+const linkState = (id) => wa.status().links.find((l) => l.id === id) || {};
+
+// A new number to link (its QR or code is then asked with /connect and its id).
+route('POST', '/api/whatsapp/links', ADMIN, () => {
+  const id = wa.addLink();
+  return { ...wa.status(), added: id };
+});
+// A number removed: unlinked, and its session forgotten (the first number is only unlinked: /logout).
+route('DELETE', '/api/whatsapp/links/:id', ADMIN, ({ params }) => wa.removeLink(String(params.id)));
+
 // Starts the link and waits a few seconds for the QR code (or the link, when it was linked before).
 // With a phone number: linked by an 8-character code typed on that phone instead of the QR code.
 route('POST', '/api/whatsapp/connect', ADMIN, async ({ body, req }) => {
+  const id = linkId(body);
   let pairPhone = '';
   if (body?.phone) {
     pairPhone = wa.jidOf(String(body.phone)).split('@')[0];
     if (!/^\d{11,15}$/.test(pairPhone)) fail(400, 'اكتب رقم واتساب المتجر، مثل 0599123456 أو 972599123456');
   }
   shopUrlFrom(req);
-  await wa.start({ fresh: !!body?.fresh, pairPhone });
+  await wa.start({ fresh: !!body?.fresh, pairPhone, id });
   for (let i = 0; i < 24; i++) {
-    const s = wa.status();
-    if (['qr', 'code', 'connected', 'missing', 'off'].includes(s.status) && !(s.status === 'off' && i < 2)) return s;
+    const s = linkState(id);
+    if (['qr', 'code', 'connected', 'missing', 'off'].includes(s.status) && !(s.status === 'off' && i < 2)) return wa.status();
     await new Promise((r) => setTimeout(r, 400));
   }
   return wa.status();
 });
 
-route('POST', '/api/whatsapp/logout', ADMIN, () => wa.logout());
+route('POST', '/api/whatsapp/logout', ADMIN, ({ body }) => wa.logout(linkId(body)));
 

@@ -441,6 +441,8 @@ ensureColumn('shop_orders', 'jc_tries', 'jc_tries INTEGER NOT NULL DEFAULT 0');
 ensureColumn('shop_orders', 'jc_unsure', 'jc_unsure INTEGER NOT NULL DEFAULT 0');
 // The invoice's last known state at the corporate API: pending | confirmed | expired | failed ('' before any).
 ensureColumn('shop_orders', 'jc_status', "jc_status TEXT NOT NULL DEFAULT ''");
+// The shop's WhatsApp number a followed order's chat is on (src/whatsapp.js: several numbers may be linked).
+ensureColumn('wa_shop', 'link', "link TEXT NOT NULL DEFAULT ''");
 db.exec("CREATE INDEX IF NOT EXISTS shop_orders_client_status ON shop_orders(client_id, status)");
 db.exec("CREATE INDEX IF NOT EXISTS shop_orders_ip_status ON shop_orders(ip, status)");
 // Before gone_at, a sync that briefly got an incomplete list from QuickLine hid packages for good. The manager hid
