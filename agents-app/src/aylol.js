@@ -551,7 +551,9 @@ async function billNumbers(packageId, creds, sim = '', esim = false) {
 }
 function splitName(name) {
   const parts = String(name || '').trim().split(/\s+/).filter(Boolean);
-  if (parts.length < 2) throw new AylolError('اكتب اسم الزبون كاملاً (الاسم والعائلة) — أيلول يطلبهما', { refused: true });
+  if (!parts.length) throw new AylolError('اكتب اسم الزبون — أيلول يطلبه', { refused: true });
+  // Aylol asks a first and a family name; a customer who gave only the first name has it sent as both.
+  if (parts.length < 2) return { first: parts[0], last: parts[0] };
   return { first: parts[0], last: parts.slice(1).join(' ') };
 }
 // Company 7's eSIM costs this much more at the site (its page says so: "يوجد تكلفة إضافية قدرها 5 ش على سعر الايسيم").

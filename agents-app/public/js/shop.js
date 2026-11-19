@@ -1736,8 +1736,8 @@ async function esimForm(pk, co) {
 
       ${pk.fullName ? `
         <div class="field">
-          <label for="f-cname">الاسم الكامل (الاسم والعائلة)</label>
-          <input id="f-cname" name="customerName" class="input" autocomplete="name" required minlength="5" placeholder="مثال: محمد أحمد خليل">
+          <label for="f-cname">الاسم</label>
+          <input id="f-cname" name="customerName" class="input" autocomplete="name" required minlength="2" placeholder="مثال: محمد">
           <span class="hint muted" style="font-size:.8rem">مطلوب لتسجيل الخط الجديد باسمك</span>
         </div>
       ` : ''}
@@ -1786,8 +1786,9 @@ async function esimForm(pk, co) {
     btn.disabled = true;
     const fd = new FormData(f);
     const customerName = String(fd.get('customerName') || '').trim();
-    if (pk.fullName && (customerName.split(/s+/).length < 2 || /d/.test(customerName))) {
-      notify('اكتب اسمك الكامل (الاسم والعائلة)', true);
+    // The first name is enough (letters only).
+    if (pk.fullName && (customerName.length < 2 || /\d/.test(customerName))) {
+      notify('اكتب اسمك', true);
       btn.disabled = false;
       return;
     }

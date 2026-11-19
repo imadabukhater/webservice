@@ -260,7 +260,7 @@ function shopCatalogResponse() {
       oldPrice: p.old_price ? round(p.old_price) : null, popular: !!p.popular, featured: !!p.popular,
       kind: 'esim', esim: true,
       dataGb: p.data_gb, gb: p.data_gb, minutes: p.minutes, sms: p.sms, tag: p.tag, description: p.description, days: p.days || null,
-      // An Aylol line registers the customer's first and family names.
+      // An Aylol line is registered in the customer's name, so it is asked (the first name is enough).
       fullName: shopKind(p) === 'line',
       esimFee: p.company_esim_fee === null || p.company_esim_fee === undefined ? s.esimFee : round(p.company_esim_fee),
     })),
@@ -399,7 +399,8 @@ async function aylolLineOrder(body, ip, clientId, p) {
   const AY = require('./aylol');
   AY.ensureBalanceFor(p);
   const customerName = str(body.customerName, 80);
-  if (customerName.split(/\s+/).filter(Boolean).length < 2 || /\d/.test(customerName)) fail(400, 'اكتب اسمك الكامل (الاسم والعائلة) — مطلوب لتسجيل الخط');
+  // The first name is enough: Aylol gets it as first and family name when only one is given (see aylol.splitName).
+  if (customerName.length < 2 || /\d/.test(customerName)) fail(400, 'اكتب اسمك — مطلوب لتسجيل الخط');
   const email = str(body.email, 120).toLowerCase();
   if (email && !validAddress(email)) fail(400, 'البريد الإلكتروني غير صحيح');
   // What the package's line can be on, as the site says (asked the first time): sold only when it can be an eSIM.

@@ -341,7 +341,10 @@ test('Aylol lines in the shop: as an eSIM only, with its QR; not on sale while e
   const shopBill = shopCat.packages.find((p) => p.id === billPkg.id);
   assert.deepEqual([shopBill.esim, shopBill.fullName, shopBill.lineModes], [true, true, undefined], 'an eSIM, registered with the full name');
   assert.equal(shopCat.packages.find((p) => p.id === hotPkg.id)?.esim, true);
-  assert.equal((await call(null, 'POST', '/api/shop/orders', { packageId: billPkg.id, kind: 'esim', customerName: 'Lina' })).status, 400, 'first and family names');
+  assert.equal((await call(null, 'POST', '/api/shop/orders', { packageId: billPkg.id, kind: 'esim', customerName: 'Lina 2' })).status, 400, 'a name, not digits');
+  // The first name is enough: Aylol gets it as first and family name.
+  assert.deepEqual(require('../src/aylol').splitName('Lina'), { first: 'Lina', last: 'Lina' });
+  assert.deepEqual(require('../src/aylol').splitName('Lina Haddad'), { first: 'Lina', last: 'Haddad' });
   // An agent still sells these lines on a SIM card only.
   const agent = (await ok(call(null, 'POST', '/api/login', { username: 'agent-ay', password: 'secret1' }))).token;
   assert.equal((await call(agent, 'POST', '/api/lines', { kind: 'new', esim: true, packageId: billPkg.id, number: '0513000001', customerName: 'Lina Haddad' })).status, 400);
@@ -375,7 +378,7 @@ test('Aylol lines in the shop: as an eSIM only, with its QR; not on sale while e
   const jid = '970599777666@s.whatsapp.net';
   const shopNow = await require('../src/routes/shop').shopCatalog();
   const ctx = () => ({ jid, phone: '0599777666', shop: shopNow, startedAt: Date.now(), facts: [], after: [], prices: new Set(), phones: new Set() });
-  const asked = await wa._test.agentTool('create_order', { package_id: billPkg.id, customer_name: 'Omar' }, ctx());
+  const asked = await wa._test.agentTool('create_order', { package_id: billPkg.id }, ctx());
   assert.deepEqual(asked.need, ['customer_name']);
   const c1 = ctx();
   const shown = await wa._test.agentTool('create_order', { customer_name: 'Omar Nasser' }, c1);

@@ -338,8 +338,8 @@ test('WhatsApp: agents sell as in the portal; customers buy in the chat, their t
   // A recharge is not sold: there is no such package to order.
   r = await ask('بدي شحن لرقمي', [{ call: 'create_order', args: { package_id: cardPkg.id } }, { text: 'عنا eSIM بس، بتحب أعرضلك؟' }]);
   assert.equal(toolAnswer(r.calls[1]).response.ok, false);
-  r = await ask('بدي eSIM هوت', [{ call: 'create_order', args: { package_id: esimPkg.id } }, { text: 'تكرم، شو اسمك الكامل؟' }]);
-  assert.match(r.got, /شو اسمك الكامل/);
+  r = await ask('بدي eSIM هوت', [{ call: 'create_order', args: { package_id: esimPkg.id } }, { text: 'تكرم، شو اسمك؟' }]);
+  assert.match(r.got, /شو اسمك/);
   assert.deepEqual(toolAnswer(r.calls[1]).response.need, ['customer_name']);
   const ordersBefore = q('SELECT COUNT(*) AS n FROM shop_orders').get().n;
   // With everything given, the code shows the order's summary and waits for the customer's yes: nothing is ordered in

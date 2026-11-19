@@ -878,7 +878,7 @@ const AGENT_STEPS = 4;
 // The shop sells eSIMs only (see routes/shop.js): every package in its catalog is one.
 const SVC = { esim: 'eSIM' };
 const AGENT_TOOLS = [{ functionDeclarations: [
-  { name: 'create_order', description: 'يعمل طلب حقيقي بالمتجر لشريحة eSIM اللي اختارها الزبون وأكدها. بدها customer_name (والباقات اللي مكتوب عندها «الاسم والعائلة» بدها الاسم والعائلة). رقم الخط الجديد بيعطيه المتجر: ما في رقم هاتف ولا رقم شريحة.',
+  { name: 'create_order', description: 'يعمل طلب حقيقي بالمتجر لشريحة eSIM اللي اختارها الزبون وأكدها. بدها customer_name (الاسم الأول بكفي). رقم الخط الجديد بيعطيه المتجر: ما في رقم هاتف ولا رقم شريحة.',
     parameters: { type: 'OBJECT', properties: {
       package_id: { type: 'INTEGER', description: 'رقم الباقة من قائمة الباقات بالتعليمات' },
       customer_name: { type: 'STRING', description: 'اسم الزبون الكامل' },
@@ -901,7 +901,7 @@ function shopSheet(shop) {
       const svc = serviceOf(p);
       const fee = svc === 'esim' ? round(p.esimFee || 0) : 0;
       const specs = [p.dataGb ? `${p.dataGb} جيجا` : '', p.minutes ? `${p.minutes} دقيقة` : '', `${p.days || 30} يوم`].filter(Boolean).join('، ');
-      lines.push(`- #${p.id} ${p.name} (${specs}) — ${SVC[svc] || 'eSIM'}${p.fullName ? ' (الاسم والعائلة)' : ''} — ${round(p.price)} ₪ + رسوم eSIM ${fee} ₪ = ${round(p.price + fee)} ₪`);
+      lines.push(`- #${p.id} ${p.name} (${specs}) — ${SVC[svc] || 'eSIM'} — ${round(p.price)} ₪ + رسوم eSIM ${fee} ₪ = ${round(p.price + fee)} ₪`);
     }
   }
   return `الباقات المتوفرة هلأ بالمتجر (رقم الباقة، الاسم، الخدمة، السعر):${lines.join('\n')}
@@ -918,7 +918,7 @@ ${shop.packages ? shopSheet(shop) : ''}
 - تذكّر كل شي حكاه الزبون بالمحادثة (اسمه، الباقة اللي اختارها) ولا تسأله عنه مرة تانية.
 - قبل ما ينعمل الطلب لازم الزبون يأكد: أول create_order بيعرض عليه ملخص (الباقة والسعر والاسم والرقم)، ولما يوافق اطلب create_order مرة تانية مع confirmed=true. إذا بدّه يغيّر إشي، اطلب create_order بالتغيير.
 - المتجر بيبيع شرائح eSIM بس: ما في شرايح عادية ولا شحن رصيد لرقم موجود. إذا طلب هيك، احكيله بلطف إنه عنا eSIM بس واعرض عليه الأنسب.
-- لما الزبون يختار باقة، اسأله عن اسمه الكامل بس (الاسم والعائلة للباقات اللي مكتوب عندها هيك). *ما بتسأله عن رقم هاتف ولا رقم شريحة أبداً*: رقمه الجديد بيعطيه المتجر.
+- لما الزبون يختار باقة، اسأله عن اسمه بس (الاسم الأول بكفي، ولا تطلب منه الاسم الكامل). *ما بتسأله عن رقم هاتف ولا رقم شريحة أبداً*: رقمه الجديد بيعطيه المتجر.
   وإذا مش متأكد شو ناقص، اطلب create_order باللي عندك: هو بيقلك شو ناقص بالزبط.
 - لما يسأل عن طلبه أو ليش تأخر: order_status. لما يقول إنه حوّل ويعطيك اسم اللي حوّل أو رقمه أو الرقم المرجعي: submit_payment.
 - النظام بيضيف تحت ردّك لحاله تفاصيل الطلب (رقمه، المبلغ، رقم الدفع، وحالته). لا تكتبهم إنت ولا تعيدهم، ولا تحكي إنه الدفع أو التفعيل أو الطلب تم أو صار جاهز: هاد النظام بس بيقرره.
@@ -1004,7 +1004,7 @@ async function agentTool(name, args, ctx) {
         const svc = serviceOf(p);
         const fee = svc === 'esim' ? round(p.esimFee || 0) : 0;
         return { id: p.id, name: p.name, gb: p.dataGb || null, days: p.days || 30, service: svc, price: round(p.price), esim_fee: fee, total: round(p.price + fee),
-          new_number_from_shop: true, ...(p.fullName ? { needs_full_name: true } : {}) };
+          new_number_from_shop: true };
       }) };
     }
     if (name === 'create_order') {
@@ -1016,10 +1016,9 @@ async function agentTool(name, args, ctx) {
       const p = shop.packages.find((x) => x.id === Number(f.package_id));
       if (!p) return { ok: false, error: 'ما في باقة بهالرقم بالمتجر' };
       const name2 = str(f.customer_name || '', 80);
-      // An eSIM on a new number the shop gives: only the customer's name (first and family for an Aylol line).
-      const fullName = name2.split(/\s+/).filter(Boolean).length >= 2;
-      if (name2.length < 2 || /\d/.test(name2) || (p.fullName && !fullName)) {
-        return { ok: false, need: ['customer_name'], ...(p.fullName ? { needs_full_name: true } : {}), message: 'ناقص من الزبون: اسمه الكامل (الباقي محفوظ، لا تسأله عنه)' };
+      // An eSIM on a new number the shop gives: only the customer's name (the first name is enough).
+      if (name2.length < 2 || /\d/.test(name2)) {
+        return { ok: false, need: ['customer_name'], message: 'ناقص من الزبون: اسمه (الاسم الأول بكفي؛ الباقي محفوظ، لا تسأله عنه)' };
       }
       // The customer confirms the order's summary (written by the code) before it is made: asked in one message, made only
       // on a later one, for exactly what was shown.
