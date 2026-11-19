@@ -65,6 +65,7 @@ test('a paid order is not cancelled, and a new one may be made beside it', async
   const r = await wa._test.agentTool('cancel_order', { order_code: o.code }, ctx());
   assert.equal(r.ok, false);
   assert.match(r.error, /مدفوع/);
+  assert.match(r.error, /فيك تعمل طلب جديد/, 'the customer is told a new order can be made');
   assert.equal(q('SELECT status FROM shop_orders WHERE id = ?').get(o.id).status, 'paid');
   assert.equal((await wa._test.agentTool('create_order', { package_id: 1, customer_name: 'عماد' }, ctx())).open_order, undefined);
 });

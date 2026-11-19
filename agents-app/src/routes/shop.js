@@ -681,7 +681,7 @@ const CUSTOMER_CANCELLED = 'ألغيت الطلب بنفسك';
 function cancelOrder(order) {
   const o = q('SELECT * FROM shop_orders WHERE id = ?').get(order.id);
   if (o.status === 'cancelled') return orderView(o);
-  if (!CANCELLABLE.includes(o.status)) fail(400, 'الطلب مدفوع وبيتنفّذ أو انتهى — ما بينلغى. تواصل مع الدعم.');
+  if (!CANCELLABLE.includes(o.status)) fail(400, 'الطلب مدفوع وبيتنفّذ أو انتهى — ما بينلغى. إذا في مشكلة تواصل مع الدعم، وفيك تعمل طلب جديد وقت ما بدك.');
   if (jcBusy.has(o.id) || o.jc_unsure) fail(409, 'جارٍ تأكيد الدفع من جوال باي — انتظر لحظة.');
   const done = q(`UPDATE shop_orders SET status = 'cancelled', response = ?, updated_at = ?
                   WHERE id = ? AND status IN ('awaiting_payment','verifying','review')`).run(CUSTOMER_CANCELLED, now(), o.id).changes;
