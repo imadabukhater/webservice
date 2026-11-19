@@ -676,7 +676,16 @@ async function payHere(jid, raw, phone) {
   const st = payState(jid);
   if (!st) { payMobiles.delete(jid); return false; }
   const S = require('./routes/shop');
-  const shopErr = async (e) => { if (!(e && e.status)) throw e; await say(jid, `⚠️ ${String(e.message).slice(0, 300)}`); return true; };
+  // The shop's refusal, said here: the page's «below» pointer becomes the chat's own way to transfer (while it is on).
+  const shopErr = async (e) => {
+    if (!(e && e.status)) throw e;
+    const s = getSettings();
+    const msg = String(e.message).replace(/\s*يمكنك الدفع بالتحويل اليدوي أدناه\.?/, '').slice(0, 300);
+    const transfer = s.mailPay && /أدناه/.test(e.message)
+      ? `\nأو إذا بتحب: حوّل بجوال باي${s.jawwalpayNumber ? ` على *${s.jawwalpayNumber}*` : ''} وابعتلي *اسم اللي حوّل*.` : '';
+    await say(jid, `⚠️ ${msg}${transfer}`);
+    return true;
+  };
   const otp = st.codeSent ? otpIn(raw) : '';
   if (otp) {
     let v;

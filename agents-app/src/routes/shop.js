@@ -577,6 +577,10 @@ function jcFail(e, o = null, step = '') {
     tellManager(e.code, `رفضت واجهة الشركات الدخول (${e.code}). راجع رقم المشترك واسم المستخدم وكلمة المرور في إعدادات المتجر.`);
   }
   if (e.status === 429 || e.status === 401 || e.status === 403 || e.code === 'not_configured') fail(503, `الدفع المباشر غير متاح الآن — حاول بعد دقيقة.${manual}`);
+  if (/^esdad_/.test(e.code || '')) {
+    tellManager('esdad', `مزوّد الدفع (MaalCards) لم يكمل العملية مع جوال باي: ${e.code} — ${String(e.message).slice(0, 200)}. هذا خلل عندهم: أرسل لهم الرمز والوقت.`);
+    fail(503, `الدفع المباشر من جوال باي متوقف مؤقتاً عند مزوّد الدفع — جرّب بعد قليل.${manual}`);
+  }
   const requestRefused = e.status >= 400 && e.status < 500;
   if (e.code === 'jawwal_send_otp_failed' || (step === 'send' && requestRefused)) fail(422, 'تعذّر إرسال رمز التحقق لهذا الرقم. تأكد أنه رقم جوال مفعّل عليه جوال باي.');
   if (step === 'confirm' && requestRefused) fail(402, 'رمز التحقق غير صحيح أو رُفض الدفع — تأكد من الرمز وحاول مرة أخرى.');
@@ -660,7 +664,25 @@ async function jcConfirmCode(order, otpInput) {
     } catch (e) {
       if (!(e instanceof jc.JawwalCorpError)) throw e;
       if (e.code === 'invoice_confirmed') paid = true; // an earlier confirmation that got no answer went through
-      else if (e.code === 'invoice_expired' || e.code === 'invoice_not_found') {
+      else if (e.code === 'esdad_session_gone') {
+        // The provider's payment session ended: this code can no longer be used (a payment it may have taken is still
+        // looked up, when one was unclear before).
+        q('UPDATE shop_orders SET jc_expires_at = ?, updated_at = ? WHERE id = ?').run(now(), now(), o.id);
+        shop.jcLog(o, 'session_gone', { detail: `${e.code} ${e.message}` });
+        fail(410, 'انتهت جلسة الدفع عند جوال باي — اطلب رمزاً جديداً.');
+      } else if (/^esdad_/.test(e.code || '')) {
+        // The provider could not say whether the payment went through (e.g. esdad_payment_not_confirmed): the
+        // invoice decides — now, then each minute — so a payment taken is never lost nor taken twice.
+        shop.jcLog(o, 'confirm_unclear', { detail: `${e.code} ${e.message}` });
+        console.error('jawwal confirm provider', o.code, e.code, e.message);
+        let inv = null;
+        try { inv = await jc.invoice(creds, o.jc_invoice_id); } catch (e2) { console.error('jawwal invoice', e2.message); }
+        if (inv?.status === 'confirmed') paid = true;
+        else {
+          q('UPDATE shop_orders SET jc_unsure = 1, updated_at = ? WHERE id = ?').run(now(), o.id);
+          fail(502, 'لم يصل تأكيد الدفع من جوال باي بعد — الدفعة غير مؤكدة. سنتحقق منها تلقائياً خلال دقائق؛ لا تدفع مرة أخرى.');
+        }
+      } else if (e.code === 'invoice_expired' || e.code === 'invoice_not_found') {
         q("UPDATE shop_orders SET jc_expires_at = ?, jc_unsure = 0, jc_status = 'expired', updated_at = ? WHERE id = ?").run(now(), now(), o.id);
         shop.jcLog(o, 'expired', { status: 'expired', detail: e.code });
         fail(410, 'انتهت صلاحية رمز التحقق — اطلب رمزاً جديداً');

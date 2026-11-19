@@ -53,6 +53,7 @@ const fakeApi = http.createServer((req, res) => {
     const auth = String(req.headers.authorization || '').replace(/^Bearer /, '');
     if (api.revokeAlways || !api.seat || auth !== api.seat.token) return send(res, 401, { success: false, error: 'token_revoked' });
     if (url.pathname === '/api/jawwal/corporate/send_otp') {
+      if (api.sendAs) return send(res, api.sendAs.status, { success: false, error: api.sendAs.error, message: api.sendAs.message || '' });
       if (body.mobile_number === api.notJawwalPay) return send(res, 422, { success: false, error: 'jawwal_send_otp_failed', message: 'mobile is not a jawwal pay wallet' });
       const id = `COR-${Date.now()}-${++api.n}`;
       api.invoices.set(id, { id, amount: body.amount, mobile: body.mobile_number, otp: '123456', status: 'pending', exp: Date.now() + 5 * 60_000 });
@@ -64,6 +65,7 @@ const fakeApi = http.createServer((req, res) => {
       if (inv.status === 'confirmed') return send(res, 409, { success: false, error: 'invoice_confirmed' });
       if (inv.status === 'expired' || inv.exp < Date.now()) { inv.status = 'expired'; return send(res, 409, { success: false, error: 'invoice_expired' }); }
       if (api.failNoRetry) { inv.status = 'failed'; return send(res, 402, { success: false, error: 'jawwal_confirm_failed', data: { failure_code: 'insufficient_balance', can_retry: false } }); }
+      if (api.confirmAs) return send(res, api.confirmAs.status, { success: false, error: api.confirmAs.error, message: api.confirmAs.message || '' });
       if (body.otp !== inv.otp && api.wrongOtpAs) return send(res, api.wrongOtpAs.status, { success: false, error: api.wrongOtpAs.error, message: 'otp is invalid' });
       if (body.otp !== inv.otp) return send(res, 402, { success: false, error: 'jawwal_confirm_failed', data: { failure_code: 'wrong_otp', can_retry: true } });
       inv.status = 'confirmed';
@@ -392,4 +394,47 @@ test('WhatsApp: the whole payment in the chat — the number, the code texted, t
   assert.match(hist, /\[رمز التحقق\]/);
   // Paid: a number or a code now is the assistant's to answer (nothing taken twice).
   assert.equal(wa._test.payState(jid), null);
+});
+
+test('MaalCards\' own link to Jawwal Pay failing (esdad_…): the provider\'s fault, never the customer\'s; a payment it cannot confirm is looked up', async () => {
+  require('../src/routes/shop')._resetThrottle();
+  require('../src/db').setSetting('jc_wait_until', 0);
+  const { q } = require('../src/db');
+  const admin = (await ok(call(null, 'POST', '/api/login', { username: 'admin', password: 'admin-pass' }))).token;
+  const esim = await QL.esimPackage(call, ok, admin, 45);
+  const order = async () => ok(call(null, 'POST', '/api/shop/orders', { kind: 'esim', packageId: esim.id, customerName: 'سداد' }));
+  // Sending: 422 esdad_not_wired — not «your number is not on Jawwal Pay»; the manager is told.
+  const a = await order();
+  api.sendAs = { status: 422, error: 'esdad_not_wired', message: "DirectPay replay step 'submit_identifier/otp-form' is not wired yet" };
+  const r1 = await call(null, 'POST', `/api/shop/orders/${a.code}/jawwal/otp`, { mobile: '0599400001' });
+  api.sendAs = null;
+  assert.equal(r1.status, 503);
+  assert.match(r1.body.error, /متوقف مؤقتاً عند مزوّد الدفع/);
+  assert.doesNotMatch(r1.body.error, /مفعّل عليه جوال باي/);
+  assert.ok(q("SELECT 1 FROM notifications WHERE body LIKE '%esdad_not_wired%'").get(), 'the manager is told, with the provider\'s code');
+  // Confirming: 409 esdad_payment_not_confirmed — not paid on its word, looked up; the invoice later confirmed → paid once.
+  const b = await order();
+  await ok(call(null, 'POST', `/api/shop/orders/${b.code}/jawwal/otp`, { mobile: '0599400002' }));
+  const inv = [...api.invoices.values()].at(-1);
+  api.confirmAs = { status: 409, error: 'esdad_payment_not_confirmed', message: 'لم يصل تأكيد الدفع من بوابة سداد بعد' };
+  const r2 = await call(null, 'POST', `/api/shop/orders/${b.code}/jawwal/confirm`, { otp: '123456' });
+  api.confirmAs = null;
+  assert.equal(r2.status, 502);
+  assert.match(r2.body.error, /الدفعة غير مؤكدة.*لا تدفع مرة أخرى/);
+  const vb = await ok(call(null, 'GET', `/api/shop/orders/${b.code}`));
+  assert.equal(vb.status, 'awaiting_payment');
+  assert.equal(vb.jawwal.checking, true);
+  assert.equal((await call(null, 'POST', `/api/shop/orders/${b.code}/jawwal/otp`, { mobile: '0599400002' })).status, 409, 'no second code while it may be paid');
+  inv.status = 'confirmed'; // the provider took it after all
+  assert.equal(await require('../src/shop').reconcileDirect({ force: true }), 1);
+  assert.equal((await ok(call(null, 'GET', `/api/shop/orders/${b.code}`))).status, 'paid');
+  // Confirming: 409 esdad_session_gone — a new code is needed (410).
+  const c = await order();
+  await ok(call(null, 'POST', `/api/shop/orders/${c.code}/jawwal/otp`, { mobile: '0599400003' }));
+  api.confirmAs = { status: 409, error: 'esdad_session_gone', message: 'انتهت جلسة الدفع، ابدأ من جديد' };
+  const r3 = await call(null, 'POST', `/api/shop/orders/${c.code}/jawwal/confirm`, { otp: '123456' });
+  api.confirmAs = null;
+  assert.equal(r3.status, 410);
+  assert.match(r3.body.error, /انتهت جلسة الدفع/);
+  assert.equal((await ok(call(null, 'GET', `/api/shop/orders/${c.code}`))).jawwal.otpSent, false);
 });
