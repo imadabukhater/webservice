@@ -334,3 +334,41 @@ test('the manager stops or allows paying by transfer (e-mail): never both ways o
   assert.equal((await ok(call(admin, 'GET', '/api/settings'))).mailPay, true);
   await ok(call(admin, 'PUT', '/api/settings', { jcEnabled: true }));
 });
+
+test('WhatsApp: the whole payment in the chat — the number, the code texted, the code sent back, paid; the code never kept', async () => {
+  require('../src/routes/shop')._resetThrottle();
+  require('../src/db').setSetting('jc_wait_until', 0);
+  const admin = (await ok(call(null, 'POST', '/api/login', { username: 'admin', password: 'admin-pass' }))).token;
+  const esim = await QL.esimPackage(call, ok, admin, 125);
+  const wa = require('../src/whatsapp');
+  const sent = [];
+  wa._test.setTransport(async (jid, content) => { sent.push({ jid, ...content }); });
+  const jid = '972599300001@s.whatsapp.net';
+  const said = () => sent.filter((m) => m.jid === jid).map((m) => m.text || m.caption || '').join('\n---\n');
+  const S = require('../src/routes/shop');
+  const v = await S.createOrder({ packageId: esim.id, kind: 'esim', esim: true, includeEsimFee: true, customerName: 'عماد' }, { ip: `wa:${jid}`, clientId: `wa:${jid}` });
+  const o = S.byCode(v.code);
+  // After the order: what to send, to pay here (never the site).
+  const facts = wa._test.orderFacts ? wa._test.orderFacts(o, S.shopCatalogResponse()) : '';
+  if (facts) { assert.match(facts, /ابعتلي \*رقم جوال باي\*/); assert.doesNotMatch(facts, /#\/order\//); }
+  // «نفس الرقم»: the code is texted to the chat's own number.
+  assert.equal(await wa._test.payHere(jid, 'نفس الرقم', '0599300001'), true);
+  assert.match(said(), /بعتنالك رمز تحقق برسالة على \*059••••001\* لدفع \*\d+ ₪\*/);
+  const inv = [...api.invoices.values()].at(-1);
+  assert.equal(inv.mobile, '0599300001');
+  // A wrong code: the shop's reason; the right one: paid, said here.
+  wa._test.recent.clear();
+  await wa.handle({ jid, phone: '0599300001', text: '000000' });
+  assert.match(said(), /رمز التحقق غير صحيح/);
+  wa._test.recent.clear();
+  await wa.handle({ jid, phone: '0599300001', text: 'الرمز ١٢٣٤٥٦' });
+  assert.match(said(), /✅ تم الدفع لطلبك \*[A-Z0-9]+\*/);
+  assert.equal(S.byCode(o.code).status, 'paid');
+  assert.equal(inv.status, 'confirmed');
+  // The code was never kept in the conversation (so never given to Gemini).
+  const hist = JSON.stringify(wa._test.history.get(jid) || []);
+  assert.equal(hist.includes('123456') || hist.includes('١٢٣٤٥٦') || hist.includes('000000'), false, hist);
+  assert.match(hist, /\[رمز التحقق\]/);
+  // Paid: a number or a code now is the assistant's to answer (nothing taken twice).
+  assert.equal(wa._test.payState(jid), null);
+});

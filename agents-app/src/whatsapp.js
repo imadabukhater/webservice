@@ -366,7 +366,7 @@ async function handleNow({ jid, phone, text = '', image = null }) {
   if (who.kind === 'blocked') return say(jid, 'حسابك موقوف. تواصل مع المدير.');
   if (who.kind === 'customer' && !cfg.customers) return undefined;
   const t = norm(text);
-  if (text) remember2(jid, 'user', text);
+  if (text) remember2(jid, 'user', who.kind === 'customer' && payState(jid)?.codeSent && otpIn(text) ? '[رمز التحقق]' : text);
   // "typing…" while the answer is prepared.
   if (state.sock && !transport) state.sock.sendPresenceUpdate?.('composing', jid)?.catch?.(() => {});
   try {
@@ -636,9 +636,63 @@ async function customerSays(jid, t, raw, phone = '') {
   if (!shop.enabled) return say(jid, `${cfg.welcome || `أهلين فيك بـ ${shop.shopName}`}\nالمتجر مسكّر هلأ، ومنرد عليك بأقرب وقت.`);
   // Every message goes to the assistant: it talks with the customer and asks the shop (the code) for what it needs.
   // There are no fixed replies: when it cannot answer, the customer gets none, and the manager is told to answer.
+  if (await payHere(jid, raw, phone)) return undefined;
   const r = await customerAgent(jid, raw, phone, shop);
   if (r !== true) await unanswered(jid, phone, raw, r);
   return undefined;
+}
+
+// ---------- paying the order here, straight from the customer's Jawwal Pay wallet (MaalCards corporate API) ----------
+// The whole payment happens in the chat, by the code (not the assistant): the customer sends the Jawwal Pay number to pay
+// from (or «نفس الرقم»), a verification code is texted to it, and the code sent back here takes the payment — the same
+// checks and limits as the order page (routes/shop.js jcSendCode / jcConfirmCode). The code is never kept nor given to
+// Gemini; the order is carried out only once its invoice is confirmed.
+function payState(jid) {
+  if (!getSettings().jcReady) return null;
+  const o = openOrder(jid);
+  if (!o || o.status !== 'awaiting_payment' || o.proof_at) return null;
+  return { o, codeSent: Boolean((o.jc_invoice_id && Number(o.jc_expires_at) > Date.now()) || o.jc_unsure) };
+}
+// A verification code: a short message with one number of 4 to 8 digits (not a phone number).
+function otpIn(text) {
+  const t = westernDigits(text).trim();
+  if (t.length > 40) return '';
+  const nums = t.match(/\d+/g) || [];
+  return nums.length === 1 && /^\d{4,8}$/.test(nums[0]) ? nums[0] : '';
+}
+// The Jawwal Pay number to pay from: one in the message, or the chat's own («نفس الرقم»).
+function payMobileIn(text, phone) {
+  const n = phoneIn(westernDigits(text));
+  if (n) return n;
+  return /نفس\s*(ال)?رقم|رقمي\s*(هاد|هذا)|(هاد|هذا)\s*رقمي|من\s*رقمي|نفسه/.test(text) && /^05\d{8}$/.test(phone || '') ? phone : '';
+}
+const clock = (t) => new Intl.DateTimeFormat('ar', { timeZone: 'Asia/Jerusalem', hour: '2-digit', minute: '2-digit' }).format(new Date(Number(t)));
+async function payHere(jid, raw, phone) {
+  const st = payState(jid);
+  if (!st) return false;
+  const S = require('./routes/shop');
+  const shopErr = async (e) => { if (!(e && e.status)) throw e; await say(jid, `⚠️ ${String(e.message).slice(0, 300)}`); return true; };
+  const otp = st.codeSent ? otpIn(raw) : '';
+  if (otp) {
+    let v;
+    try { v = await S.jcConfirmCode(S.directOrderByCode(st.o.code), otp); } catch (e) { return shopErr(e); }
+    follow(jid, st.o, v.stage); // said here: the order's next change is what the chat hears of next
+    if (v.status === 'paid') {
+      await say(jid, `✅ تم الدفع لطلبك *${st.o.code}* (${round(st.o.amount)} ₪) من محفظة جوال باي.\nعم نفعّل الـ eSIM هلأ، وبيوصلك رمز QR هون خلال دقايق.`);
+    } else if (v.jawwal?.checking) {
+      await say(jid, '⏳ عم نتأكد من دفعتك عند جوال باي — لا تدفع مرة تانية، وبيوصلك الرد هون.');
+    } else {
+      await say(jid, '⚠️ ما اكتمل الدفع. جرّب الرمز مرة تانية، أو ابعتلي رقم جوال باي لنبعتلك رمز جديد.');
+    }
+    return true;
+  }
+  const mobile = payMobileIn(raw, phone);
+  if (!mobile) return false;
+  let v;
+  try { v = await S.jcSendCode(S.directOrderByCode(st.o.code), mobile); } catch (e) { return shopErr(e); }
+  const until = v.jawwal?.expiresAt ? ` (صالح لحد ${clock(v.jawwal.expiresAt)})` : '';
+  await say(jid, `📲 بعتنالك رمز تحقق برسالة على *${v.jawwal?.mobile || mobile}* لدفع *${round(st.o.amount)} ₪*.\nابعتلي الرمز هون أول ما يوصلك${until}.`);
+  return true;
 }
 
 // A customer's message the assistant could not answer: the manager is told on WhatsApp (once in a while per chat).
@@ -938,8 +992,8 @@ function shopSheet(shop) {
     }
   }
   return `الباقات المتوفرة هلأ بالمتجر (رقم الباقة، الاسم، الخدمة، السعر):${lines.join('\n')}
-${shop.manualPay === false
-    ? `الدفع: مباشرة من محفظة جوال باي برمز تحقق بيوصل الزبون، من صفحة طلبه بالمتجر، خلال ${minutes} دقايق من الطلب. *ما في تحويل يدوي*: لا تطلب منه يحوّل ولا يبعت اسم المحوِّل. التفعيل بيصير لحاله بعد الدفع، وبيوصل الزبون هون (وللـ eSIM رمز QR).`
+${shop.jawwalDirect
+    ? `الدفع: هون بالمحادثة، مباشرة من محفظة جوال باي، خلال ${minutes} دقايق من الطلب: الزبون بيبعت رقم جوال باي اللي بدّه يدفع منه، بيوصله رمز تحقق برسالة، وبيبعته هون — والنظام بياخد الرقم والرمز ويكمّل الدفع لحاله (مش إنت). لا تبعته عالموقع، ولا تطلب الرمز إنت ولا تكتبه.${shop.manualPay === false ? ' *ما في تحويل يدوي*: لا تطلب منه يحوّل ولا يبعت اسم المحوِّل.' : ''} التفعيل بيصير لحاله بعد الدفع، وبيوصل الزبون هون (وللـ eSIM رمز QR).`
     : `الدفع: بجوال باي${shop.jawwalpay?.number ? ` على ${shop.jawwalpay.number}${shop.jawwalpay.name ? ` (${shop.jawwalpay.name})` : ''}` : ''} خلال ${minutes} دقايق من الطلب. التفعيل بيصير لحاله بعد ما المتجر يتأكد من التحويل، وبيوصل الزبون هون (وللـ eSIM رمز QR).`}`;
 }
 
@@ -1022,10 +1076,10 @@ function orderFacts(o, shop) {
   const minutes = Math.max(1, Math.round(require('./shop').RESERVE_MS / 60_000));
   const where = shop.jawwalpay?.number ? ` على *${shop.jawwalpay.number}*${shop.jawwalpay.name ? ` (${shop.jawwalpay.name})` : ''}` : '';
   const head = [`✅ انحجز طلبك رقم *${o.code}*`, ...(reservedNumber(o) ? [`📞 رقمك الجديد: *${reservedNumber(o)}* (محجوزلك لحد ما تدفع)`] : [])];
-  if (shop.manualPay === false) {
-    const base = config().shopUrl;
-    return [...head, `💳 ادفع *${round(o.amount)} ₪* مباشرة من محفظتك بجوال باي خلال ${minutes} دقايق${base ? ` من صفحة طلبك:\n${base}#/order/${o.code}` : ' من صفحة طلبك بالمتجر'}`,
-      'بتكتب رقم جوال باي وبيوصلك رمز تحقق، وبعدها بيتفعّل طلبك لحاله.'].join('\n');
+  if (shop.jawwalDirect) {
+    return [...head, `💳 ادفع *${round(o.amount)} ₪* هون مباشرة من محفظة جوال باي خلال ${minutes} دقايق:`,
+      'ابعتلي *رقم جوال باي* اللي بدك تدفع منه (أو اكتب «نفس الرقم»)، وبيوصلك رمز تحقق تبعتلي ياه هون.',
+      ...(shop.manualPay !== false ? [`أو حوّل بجوال باي${where} وابعتلي *اسم اللي حوّل*.`] : [])].join('\n');
   }
   return [...head, `💳 حوّل *${round(o.amount)} ₪* بجوال باي${where} خلال ${minutes} دقايق.`,
     'وبعد ما تحوّل ابعتلي هون *اسم اللي حوّل* أو *رقم تلفونه* أو *الرقم المرجعي*.'].join('\n');
@@ -1398,5 +1452,5 @@ if (linked()) setTimeout(() => start().catch((e) => console.error('whatsapp star
 
 module.exports = {
   start, logout, status, config, configView, saveConfig, sendTo, taskResolved, handle, tellAdmins, jidOf, askModel,
-  _test: { phoneIn, drafts, agentTool, saidBefore, seenMessages, unansweredAt, checkReply, waFormat, askModel, vertexAuth, spendToday, priceOf, safeReply, AGENT_TOOLS, agentSystem, vertexAccess, vertexUrl, aiCallsByChat, askedAbout, setTransport: (fn) => { transport = fn; }, setDownloader: (fn) => { downloader = fn; }, sessions, recent, norm, onRaw, jidOf, watchShop, history },
+  _test: { phoneIn, drafts, agentTool, saidBefore, seenMessages, payHere, payState, otpIn, payMobileIn, orderFacts, unansweredAt, checkReply, waFormat, askModel, vertexAuth, spendToday, priceOf, safeReply, AGENT_TOOLS, agentSystem, vertexAccess, vertexUrl, aiCallsByChat, askedAbout, setTransport: (fn) => { transport = fn; }, setDownloader: (fn) => { downloader = fn; }, sessions, recent, norm, onRaw, jidOf, watchShop, history },
 };

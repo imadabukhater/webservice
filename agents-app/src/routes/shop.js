@@ -567,7 +567,7 @@ function tellManager(code, body) {
 function jcFail(e) {
   if (!(e instanceof jc.JawwalCorpError)) throw e;
   console.error('jawwal', e.status, e.code, e.message);
-  const manual = ' يمكنك الدفع بالتحويل اليدوي أدناه.';
+  const manual = getSettings().mailPay ? ' يمكنك الدفع بالتحويل اليدوي أدناه.' : '';
   if (e.code === 'corporate_blocked') {
     tellManager(e.code, 'الحساب ممنوع مؤقتاً 15 دقيقة بعد محاولات دخول متكررة (corporate_blocked). تأكد أن الحساب لا يُستخدم من خادم أو برنامج آخر في نفس الوقت.');
   } else if (['invalid_credentials', 'account_disabled', 'corporate_api_disabled', 'not_configured'].includes(e.code)) {
@@ -590,11 +590,14 @@ function directOrder(code, ip) {
 // last can be confirmed), a few per order, not more often than every 45 seconds.
 route('POST', '/api/shop/orders/:code/jawwal/otp', null, async ({ params, body, ip }) => {
   throttle(ip, 'jc_otp', 15);
-  const o = directOrder(params.code, ip);
+  return jcSendCode(directOrder(params.code, ip), body.mobile);
+});
+// Shared by the order page and the WhatsApp chat: every check and limit is the same.
+async function jcSendCode(o, mobileInput) {
   if (o.status === 'cancelled') fail(400, 'انتهت مهلة حجز الرقم وتم إلغاء الطلب. اطلب من جديد.');
   if (o.status !== 'awaiting_payment' || o.proof_at) fail(400, 'تم التعامل مع هذا الطلب');
   if (o.jc_unsure) fail(409, 'جارٍ التأكد من دفعتك السابقة لدى جوال باي — انتظر لحظة.');
-  const mobile = normalizePhone(toLatinDigits(String(body.mobile || '')));
+  const mobile = normalizePhone(toLatinDigits(String(mobileInput || '')));
   if (!/^05\d{8}$/.test(mobile)) fail(400, 'اكتب رقم جوالك المسجّل في جوال باي (10 أرقام يبدأ بـ 05)');
   if ((o.jc_sends || 0) >= JC_SENDS_MAX) fail(429, 'وصلت إلى الحد الأقصى لرموز التحقق لهذا الطلب. ادفع بالتحويل اليدوي أو تواصل معنا.');
   if (o.jc_sent_at && now() < o.jc_sent_at + JC_RESEND_MS) fail(429, `انتظر ${Math.ceil((o.jc_sent_at + JC_RESEND_MS - now()) / 1000)} ثانية قبل طلب رمز جديد`);
@@ -624,17 +627,20 @@ route('POST', '/api/shop/orders/:code/jawwal/otp', null, async ({ params, body, 
     jcBusy.delete(o.id);
   }
   return orderView(byCode(o.code));
-});
+}
 
 // The code the customer received: the payment is taken and the order carried out. A refused code can be tried again
 // (a few times) while it lasts; no clear answer (timeout, 5xx) means the invoice is looked up before anything else,
 // so a payment that went through is never lost nor taken twice.
 route('POST', '/api/shop/orders/:code/jawwal/confirm', null, async ({ params, body, ip }) => {
   throttle(ip, 'jc_confirm', 40);
-  let o = directOrder(params.code, ip);
+  return jcConfirmCode(directOrder(params.code, ip), body.otp);
+});
+async function jcConfirmCode(order, otpInput) {
+  let o = order;
   if (o.status === 'paid') return orderView(o);
   if (o.status !== 'awaiting_payment' || !o.jc_invoice_id) fail(400, o.status === 'cancelled' ? 'انتهت مهلة حجز الرقم وتم إلغاء الطلب.' : 'اطلب رمز التحقق أولاً');
-  const otp = toLatinDigits(String(body.otp || '')).replace(/\D/g, '');
+  const otp = toLatinDigits(String(otpInput || '')).replace(/\D/g, '');
   if (!/^\d{4,8}$/.test(otp)) fail(400, 'اكتب رمز التحقق كما وصلك في الرسالة');
   if (!jcPending(o) && !o.jc_unsure) fail(410, 'انتهت صلاحية رمز التحقق — اطلب رمزاً جديداً');
   if ((o.jc_tries || 0) >= JC_TRIES_MAX) fail(429, 'محاولات كثيرة بهذا الرمز — اطلب رمزاً جديداً');
@@ -688,7 +694,7 @@ route('POST', '/api/shop/orders/:code/jawwal/confirm', null, async ({ params, bo
   }
   o = byCode(o.code);
   return orderView(o);
-});
+}
 
 route('POST', '/api/shop/orders/:code/cancel', null, ({ params, ip }) => {
   throttle(ip, 'cancel', 30);
@@ -820,4 +826,7 @@ route('GET', '/api/shop/admin/summary', ADMIN, () => ({
   agentId: shop.shopAgent().id,
 }));
 
-module.exports = { shopCatalogResponse, shopCatalog, ensureStock, submitProof, orderView, byCode, createOrder, cancelOrder, refreshStock, _resetThrottle: () => hits.clear() };
+// The WhatsApp chat pays an order directly too: the order as the page would find it (direct payment on, holds expired).
+const directOrderByCode = (code) => directOrder(code);
+module.exports = { shopCatalogResponse, shopCatalog, ensureStock, submitProof, orderView, byCode, createOrder, cancelOrder, refreshStock,
+  jcSendCode, jcConfirmCode, directOrderByCode, _resetThrottle: () => hits.clear() };
