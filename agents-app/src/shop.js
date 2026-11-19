@@ -16,7 +16,7 @@ const ql = require('./quickline');
 const qr = require('./qr');
 const { createLine } = require('./routes/lines');
 
-const RESERVE_MS = Number(process.env.SHOP_RESERVE_MS) || 5 * 60_000; // 5 minutes to confirm sending payment or order is cancelled
+const RESERVE_MS = Number(process.env.SHOP_RESERVE_MS) || 10 * 60_000; // 10 minutes to confirm sending payment or order is cancelled
 const FIRST_WINDOW_MS = Number(process.env.SHOP_FIRST_WINDOW_MS) || 5 * 60_000; // 1st check: search emails in last 5 minutes
 const RETRY_WINDOW_MS = Number(process.env.SHOP_RETRY_WINDOW_MS) || 8 * 60_000; // 2nd check (after 3m retry): search last 8 minutes
 const VERIFY_MS = Number(process.env.SHOP_VERIFY_MS) || 3 * 60_000; // 3-minute second chance window before escalating to manager
@@ -523,13 +523,13 @@ function saveMail(uidValidity, uid, raw, settings) {
       f.senderPhone || '', (f.senderName || '').slice(0, 80), p.text.slice(0, 8000), now()).lastInsertRowid) || null;
 }
 
-// Orders that stay in awaiting_payment beyond the 5-minute reservation window (RESERVE_MS) without confirming transfer are cancelled automatically.
+// Orders that stay in awaiting_payment beyond the 10-minute reservation window (RESERVE_MS) without confirming transfer are cancelled automatically.
 // One with a direct Jawwal Pay code still valid (or a confirmation without a clear answer yet) is kept until then.
 function expireUnconfirmed() {
   const cutoff = now() - RESERVE_MS;
   return q(`UPDATE shop_orders
                SET status = 'cancelled',
-                   response = CASE WHEN response = '' THEN 'انتهت مهلة حجز الرقم (5 دقائق) دون تأكيد الإرسال وتم إلغاء الطلبية تلقائياً' ELSE response END,
+                   response = CASE WHEN response = '' THEN 'انتهت مهلة حجز الرقم (10 دقائق) دون تأكيد الإرسال وتم إلغاء الطلبية تلقائياً' ELSE response END,
                    updated_at = ?
              WHERE status = 'awaiting_payment' AND created_at <= ? AND COALESCE(jc_expires_at, 0) <= ? AND jc_unsure = 0`).run(now(), cutoff, now()).changes;
 }

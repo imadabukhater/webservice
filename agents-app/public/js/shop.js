@@ -743,7 +743,7 @@ function renderLegalSectionMarkup(tab = 'terms') {
     <div class="esim-legal-panel">
       <h4>٢. التفعيل وحجز الأرقام</h4>
       <ul class="esim-legal-list">
-        <li><b>طلبات eSIM:</b> يُحجز الرقم للطلب لمدة 5 دقائق بانتظار تأكيد الإرسال، وفي حال عدم التأكيد خلال 5 دقائق تُلغى الطلبية تلقائياً.</li>
+        <li><b>طلبات eSIM:</b> يُحجز الرقم للطلب لمدة 10 دقائق بانتظار تأكيد الإرسال، وفي حال عدم التأكيد خلال 10 دقائق تُلغى الطلبية تلقائياً.</li>
       </ul>
     </div>
   `;
@@ -2106,7 +2106,7 @@ function renderOrder() {
       <div class="row between" style="flex-wrap:wrap;gap:8px">
         <span class="pill ${statusPillCls}">${esc(statusPillLabel)}</span>
         ${o.reservedUntil && o.status === 'awaiting_payment' ? `
-          <span class="shop-reserve-pill" title="مهلة حجز الرقم (5 دقائق)">
+          <span class="shop-reserve-pill" title="مهلة حجز الرقم (10 دقائق)">
             ${icon('clock')}
             <span>حجز الرقم: <b id="reserve-countdown" class="ltr mono">${fmtRemaining(o.reservedUntil)}</b></span>
           </span>

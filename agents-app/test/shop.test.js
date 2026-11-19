@@ -385,7 +385,7 @@ test('the company eSIM fee, no unpaid activation, an eSIM with no supplier numbe
   assert.equal(delRes.affected, 2);
 });
 
-test('5-minute reservation auto-cancel, 5-minute 1st check, and 3-minute retry (8-minute 2nd check)', async () => {
+test('10-minute reservation auto-cancel, 5-minute 1st check, and 3-minute retry (8-minute 2nd check)', async () => {
   const { q } = require('../src/db');
   const admin = (await ok(call(null, 'POST', '/api/login', { username: 'admin', password: 'admin-pass' }))).token;
   await ok(call(admin, 'PUT', '/api/settings', { shopEnabled: true, shopInstant: false }));
@@ -395,11 +395,11 @@ test('5-minute reservation auto-cancel, 5-minute 1st check, and 3-minute retry (
   const mail = (uid, ago, amount, ref, name) => q(`INSERT INTO payment_mails (uid_validity, uid, message_id, trusted, from_addr, subject, received_at, amount, reference, sender_phone, sender_name, body, created_at)
      VALUES (1, ?, ?, 1, 'noreply@jawwalpay.ps', 'Jawwal Pay', ?, ?, ?, '', ?, 'incoming', ?)`).run(uid, `<m${uid}@jp>`, Date.now() - ago, amount, ref, name, Date.now() - ago);
 
-  // 1) Unconfirmed order older than 5 minutes is cancelled automatically
+  // 1) Unconfirmed order older than 10 minutes is cancelled automatically
   const expiredOrd = await order('زبون منتهي');
-  q('UPDATE shop_orders SET created_at = ? WHERE code = ?').run(Date.now() - 5 * 60_000 - 1000, expiredOrd.code);
+  q('UPDATE shop_orders SET created_at = ? WHERE code = ?').run(Date.now() - 10 * 60_000 - 1000, expiredOrd.code);
   const afterExpire = await ok(call(null, 'GET', `/api/shop/orders/${expiredOrd.code}`));
-  assert.equal(afterExpire.status, 'cancelled', 'unconfirmed order auto-cancelled after 5 minutes');
+  assert.equal(afterExpire.status, 'cancelled', 'unconfirmed order auto-cancelled after 10 minutes');
   assert.equal((await call(null, 'POST', `/api/shop/orders/${expiredOrd.code}/proof`, { payName: 'محمد احمد' })).status, 400);
 
   // 2) Email received 6 minutes ago is outside the 5-minute 1st check, then matched by the 8-minute 2nd check (retry)

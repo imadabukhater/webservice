@@ -10,7 +10,7 @@ const { MailError, toLatinDigits } = require('../mail');
 const { validAddress } = require('../smtp');
 const { route, ADMIN } = require('../router');
 
-// An eSIM number picked by a customer is held for them this long while they transfer (5 minutes), and for as long as their
+// An eSIM number picked by a customer is held for them this long while they transfer (10 minutes), and for as long as their
 // transfer is being checked or their paid order waits.
 const RESERVE_MS = shop.RESERVE_MS;
 const heldNumbers = () => {
@@ -498,7 +498,7 @@ async function submitProof(order, body) {
   shop.expireUnconfirmed();
   shop.escalate();
   const o = q('SELECT * FROM shop_orders WHERE id = ?').get(order.id);
-  if (o.status === 'cancelled') fail(400, 'انتهت مهلة حجز الرقم (5 دقائق) دون تأكيد الإرسال وتم إلغاء الطلبية تلقائياً');
+  if (o.status === 'cancelled') fail(400, 'انتهت مهلة حجز الرقم (10 دقائق) دون تأكيد الإرسال وتم إلغاء الطلبية تلقائياً');
   if (!['awaiting_payment', 'verifying', 'review'].includes(o.status)) fail(400, 'تم التعامل مع هذا الطلب');
   const prevTries = Number(o.proof_tries) || 0;
   if (prevTries >= 2) fail(400, 'لقد استنفدت فرصة تصحيح البيانات — الطلب الآن قيد المراجعة');

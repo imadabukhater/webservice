@@ -52,12 +52,15 @@ test('a transfer already sent: the order is not cancelled from the chat, and sti
   assert.equal((await wa._test.agentTool('create_order', { package_id: 1, customer_name: 'عماد' }, ctx())).open_order, undefined);
 });
 
-test('another chat\'s order neither blocks nor is cancelled here; an order past its 5 minutes no longer counts', async () => {
+test('another chat\'s order neither blocks nor is cancelled here; an order past its 10 minutes no longer counts', async () => {
   const other = order('awaiting_payment', '972500000222@s.whatsapp.net');
   assert.equal((await wa._test.agentTool('create_order', { package_id: 1, customer_name: 'عماد' }, ctx())).open_order, undefined);
   assert.equal((await wa._test.agentTool('cancel_order', { order_code: other.code }, ctx())).ok, false);
   assert.equal(q('SELECT status FROM shop_orders WHERE id = ?').get(other.id).status, 'awaiting_payment');
-  const old = order('awaiting_payment', JID, 6 * 60_000);
+  const old = order('awaiting_payment', JID, 11 * 60_000);
+  const recent = order('awaiting_payment', JID, 9 * 60_000);
+  assert.equal((await wa._test.agentTool('create_order', { package_id: 1, customer_name: 'عماد' }, ctx())).open_order, recent.code, 'still held at 9 minutes');
+  q("UPDATE shop_orders SET status = 'cancelled' WHERE id = ?").run(recent.id);
   assert.equal((await wa._test.agentTool('create_order', { package_id: 1, customer_name: 'عماد' }, ctx())).open_order, undefined);
   assert.equal(q('SELECT status FROM shop_orders WHERE id = ?').get(old.id).status, 'cancelled', 'its hold ran out');
 });
