@@ -15,8 +15,8 @@ const { route, ADMIN } = require('../router');
 const RESERVE_MS = shop.RESERVE_MS;
 const heldNumbers = () => {
   shop.expireUnconfirmed();
-  return q(`SELECT number, number_id FROM shop_orders WHERE (esim = 1 OR number_id LIKE 'ayl:%') AND ((status = 'awaiting_payment' AND created_at > ?)
-    OR status IN ('verifying','review') OR (status = 'paid' AND line_id IS NULL))`).all(now() - RESERVE_MS);
+  return q(`SELECT number, number_id FROM shop_orders WHERE (esim = 1 OR number_id LIKE 'ayl:%') AND ((status = 'awaiting_payment' AND (created_at > ?
+    OR jc_expires_at > ? OR jc_unsure = 1)) OR status IN ('verifying','review') OR (status = 'paid' AND line_id IS NULL))`).all(now() - RESERVE_MS, now());
 };
 // A package sold as an eSIM: a new line whose number (with its eSIM and QR code) comes from the supplier's free
 // eSIM numbers, activated automatically.
@@ -34,9 +34,24 @@ function esimPackage(id) {
   const aylol = /^ay:esim:/.test(art);
   const hasRef = p && (isEsimRef(art, p.company_name) || aylol);
   const ref = !hasRef ? null : aylol ? { system: 'ay', art } : /^qln:/.test(art) ? ql.parseRef(art) : /^lyn:/.test(art) ? ly.parseRef(art) : tc.parseRef(art);
-  if (!p || (!ref && !p.esim_enabled)) fail(404, 'الباقة غير متوفرة');
-  return { p, ref, aylol, layan: /^lyn:/.test(art), telecom: /^tcn:/.test(art) && p.company_name === TC_ESIM_COMPANY, direct: !!p.esim_enabled };
+  // Only an eSIM whose number comes from a supplier: none without one (no "direct" eSIM the manager fills in by hand).
+  if (!p || !ref) fail(404, 'الباقة غير متوفرة');
+  return { p, ref, aylol, layan: /^lyn:/.test(art), telecom: /^tcn:/.test(art) && p.company_name === TC_ESIM_COMPANY };
 }
+
+// The shop sells eSIMs only, each on a number its supplier has free: 'esim' for a supplier's eSIM (QuickLine, Layan,
+// telecom's ALOHA, Aylol's eSIMs), 'line' for an Aylol new line sold as an eSIM. Nothing else is sold: no line on a
+// SIM card, no recharge of an existing number, no eSIM without a supplier's number.
+function shopKind(p) {
+  const art = p?.art_card_id || '';
+  if (/^ay:bill:/.test(art)) {
+    return require('../aylol').billShop(art, p.supplier_company) && require('./aylol').shopLineModes(p).includes('esim') ? 'line' : null;
+  }
+  return isEsimRef(art, p?.company_name) || /^ay:esim:/.test(art) ? 'esim' : null;
+}
+// The packages the shop may sell (with a customer price), before their stock is looked at.
+const shopRows = () => q(`SELECT p.*, c.name AS company_name, c.esim_fee AS company_esim_fee FROM packages p JOIN companies c ON c.id = p.company_id
+    WHERE p.active = 1 AND p.shop_price > 0 ORDER BY c.sort, c.id, p.sort, p.id`).all().filter((p) => shopKind(p));
 // Layan's numbers have no id of their own: the number is the id.
 const phoneId = (phone) => Number(String(phone).replace(/\D/g, ''));
 
@@ -65,6 +80,15 @@ const newCode = () => {
     if (code.length === 8 && !q('SELECT 1 FROM shop_orders WHERE code = ?').get(code)) return code;
   }
 };
+
+// Direct Jawwal Pay: codes a customer may ask for one order, confirmations per code, the wait before another code,
+// and how long a number stays held for a code (never longer than the code itself lasts).
+const JC_SENDS_MAX = 3;
+const JC_TRIES_MAX = 5;
+const JC_RESEND_MS = 45_000;
+const JC_HOLD_MS = 10 * 60_000;
+const jcPending = (o) => !!(o.jc_invoice_id && o.jc_expires_at && o.jc_expires_at > now());
+const maskMobile = (m) => (m && m.length >= 7 ? `${m.slice(0, 3)}${'•'.repeat(m.length - 6)}${m.slice(-3)}` : m || '');
 
 // What the customer sees: one stage that combines payment and activation.
 function stage(o, line) {
@@ -99,7 +123,17 @@ function orderView(o, { admin = false } = {}) {
     createdAt: o.created_at, paidAt: o.paid_at, expiresAt: line?.expires_at ?? null,
     // eSIM: the number is held while the customer transfers; the QR code to install it shows once the line is active.
     esim: !!o.esim, email: o.email, qrMailed: !!o.qr_mailed_at,
-    reservedUntil: o.status === 'awaiting_payment' ? o.created_at + RESERVE_MS : null,
+    reservedUntil: o.status === 'awaiting_payment' ? Math.max(o.created_at + RESERVE_MS, jcPending(o) ? o.jc_expires_at : 0) : null,
+    // Direct Jawwal Pay: a code sent to the customer's mobile (shown partly hidden) and until when it can be confirmed.
+    jawwal: o.jc_invoice_id || o.jc_sends ? {
+      mobile: admin ? o.jc_mobile : maskMobile(o.jc_mobile),
+      otpSent: jcPending(o), expiresAt: o.jc_expires_at || null,
+      resendAt: o.jc_sent_at ? o.jc_sent_at + JC_RESEND_MS : null,
+      sendsLeft: Math.max(0, JC_SENDS_MAX - (o.jc_sends || 0)),
+      triesLeft: Math.max(0, JC_TRIES_MAX - (o.jc_tries || 0)),
+      checking: !!o.jc_unsure,
+      ...(admin ? { invoiceId: o.jc_invoice_id } : {}),
+    } : null,
     esimQr: o.esim && qr ? qr : null,
     esimCode: o.esim && (admin || o.status === 'paid') ? esimCode : null,
     ...(admin ? {
@@ -129,75 +163,82 @@ function byCode(code, ip) {
   return o;
 }
 
-// ---------- in stock: only what has a number free now ----------
-// Every hour the shop asks each supplier which numbers it has free for each package sold with a number from
-// it (its eSIMs, and Aylol's new lines on a SIM card or as an eSIM). A package with none, or a way of its line with
-// none, is not shown, on the site or in WhatsApp; the numbers other customers' orders hold count as taken. A supplier
-// not answering counts as none. Not asked yet (just started): shown (the order itself asks). A Pelephone line on a SIM card
-// is not asked: its numbers depend on the customer's SIM.
-const STOCK_MS = Number(process.env.SHOP_STOCK_MS) || 60 * 60_000; // checked every hour
-const stock = new Map(); // `${packageId}:${'sim'|'esim'}` -> { phones, at }
-const stockKey = (id, mode) => `${id}:${mode}`;
-function inStock(id, mode, held) {
-  const v = stock.get(stockKey(id, mode));
-  if (!v || now() - v.at > 3 * STOCK_MS) return true;
-  return v.phones.some((ph) => !held.has(ph));
+// ---------- in stock: only what a supplier has a number free for now ----------
+// The shop asks each supplier which eSIM numbers it has free for each package it sells: when it starts, every 10
+// minutes, and whenever its catalog is asked for after that. A package is shown (on the site and in WhatsApp) only
+// while its supplier's last answer, not older than half an hour, has a number no other customer's order holds. Not
+// asked yet, an answer too old, a supplier not set up or not answering: not shown. Ordering asks the supplier again.
+const STOCK_MS = Number(process.env.SHOP_STOCK_MS) || 10 * 60_000; // asked again after 10 minutes
+const STOCK_STALE_MS = 3 * STOCK_MS; // an answer older than this counts as none
+const STOCK_WAIT_MS = Number(process.env.SHOP_STOCK_WAIT_MS) || 15_000; // how long a catalog waits for a first answer
+const stock = new Map(); // packageId -> { phones, at }
+// A number of the last answer is free now when no customer's order holds it and no line was sold on it since.
+function inStock(id, held) {
+  const v = stock.get(Number(id));
+  if (!v || now() - v.at > STOCK_STALE_MS) return false;
+  return v.phones.some((ph) => !held.has(ph) && !q("SELECT 1 FROM lines WHERE number = ? AND status != 'disconnected'").get(ph));
 }
-const setStock = (id, mode, phones) => stock.set(stockKey(id, mode), { phones: phones.filter(Boolean), at: now() });
-const needsNumber = (p) => isEsimRef(p.art_card_id, p.company_name) || /^ay:esim:/.test(p.art_card_id || '');
-// What a package is asked for: [mode, () => free numbers [{ phone }]].
-function stockJobs(s, p) {
-  const art = p.art_card_id || '';
-  if (/^ay:bill:/.test(art)) {
-    const AY = require('./aylol');
-    if (!require('../aylol').billShop(art, p.supplier_company)) return [];
-    return AY.shopLineModes(p)
-      .filter((mode) => mode === 'esim' || require('../aylol').billAuto(art, p.supplier_company))
-      .map((mode) => [mode, () => AY.billFreeNumbers(art, '', mode === 'esim')]);
-  }
-  if (needsNumber(p)) return [['esim', () => freeEsimNumbers(s, esimPackage(p.id))]];
-  return [];
+// The supplier's free numbers, with the ones this package's orders hold (the supplier leaves those out of its answer):
+// an order that ends gives its number back to the shop at once, not at the next look.
+const setStock = (id, phones) => {
+  const held = q(`SELECT number FROM shop_orders WHERE package_id = ? AND ((status = 'awaiting_payment' AND (created_at > ? OR jc_expires_at > ? OR jc_unsure = 1))
+    OR status IN ('verifying','review') OR (status = 'paid' AND line_id IS NULL))`).all(Number(id), now() - RESERVE_MS, now()).map((r) => r.number);
+  stock.set(Number(id), { phones: [...new Set([...phones, ...held])].filter(Boolean), at: now() });
+};
+// How a package's free eSIM numbers are asked: () => [{ phone }].
+function stockJob(s, p) {
+  const kind = shopKind(p);
+  if (kind === 'line') return () => require('./aylol').billFreeNumbers(p.art_card_id, '', true);
+  if (kind === 'esim') return () => freeEsimNumbers(s, esimPackage(p.id));
+  return null;
 }
 let refreshing = null;
-let refreshedAt = 0;
 function refreshStock() {
   if (!refreshing) {
     refreshing = (async () => {
       const s = getSettings();
       if (!s.shopEnabled) return;
-      const rows = q(`SELECT p.*, c.name AS company_name, c.esim_fee AS company_esim_fee FROM packages p JOIN companies c ON c.id = p.company_id
-                      WHERE p.active = 1 AND p.shop_price > 0`).all();
-      for (const p of rows) {
-        for (const [mode, ask] of stockJobs(s, p)) {
-          try {
-            setStock(p.id, mode, (await ask()).map((n) => n.phone));
-          } catch (e) {
-            // The supplier not set up, or not giving its numbers: nothing can be sold there now (an order would fail the
-            // same way), so not shown until it answers again.
-            setStock(p.id, mode, []);
-            if (e.status !== 503) console.error('shop stock', p.id, mode, e.message);
-          }
+      for (const p of shopRows()) {
+        const ask = stockJob(s, p);
+        if (!ask) continue;
+        try {
+          setStock(p.id, (await ask()).map((n) => n.phone));
+        } catch (e) {
+          // The supplier not set up, or not giving its numbers: nothing can be sold there now (an order would fail the
+          // same way), so not shown until it answers again.
+          setStock(p.id, []);
+          if (e.status !== 503) console.error('shop stock', p.id, e.message);
         }
       }
-      refreshedAt = now();
     })().finally(() => { refreshing = null; });
   }
   return refreshing;
 }
+// Before the catalog is shown: a package never asked yet is asked now (waited for, a few seconds at most); answers
+// older than 10 minutes are asked again in the background (the catalog does not wait for those).
+async function ensureStock() {
+  if (!getSettings().shopEnabled) return;
+  const ages = shopRows().map((p) => stock.get(Number(p.id))?.at);
+  if (ages.some((at) => !at || now() - at > STOCK_STALE_MS)) {
+    let timer;
+    await Promise.race([refreshStock(), new Promise((r) => { timer = setTimeout(r, STOCK_WAIT_MS); timer.unref?.(); })])
+      .catch((e) => console.error('shop stock', e.message));
+    clearTimeout(timer);
+  } else if (ages.some((at) => now() - at > STOCK_MS)) {
+    refreshStock().catch((e) => console.error('shop stock', e.message));
+  }
+}
 if (process.env.NODE_ENV === 'production' || process.env.SHOP_STOCK === '1') {
-  setTimeout(() => refreshStock().catch((e) => console.error('shop stock', e.message)), 20_000).unref();
+  setTimeout(() => refreshStock().catch((e) => console.error('shop stock', e.message)), 3_000).unref();
   setInterval(() => refreshStock().catch((e) => console.error('shop stock', e.message)), STOCK_MS).unref();
 }
 
 // ---------- public ----------
+// The catalog as last known (ensureStock first, for fresh numbers): eSIMs with a number free now.
 function shopCatalogResponse() {
   const s = getSettings();
   const held = new Set(heldNumbers().map((h) => h.number));
-  const lineModes = (p) => require('./aylol').shopLineModes(p).filter((m) => inStock(p.id, m, held));
-  const packages = s.shopEnabled ? q(`SELECT p.*, c.name AS company_name, c.esim_fee AS company_esim_fee FROM packages p JOIN companies c ON c.id = p.company_id
-      WHERE p.active = 1 AND p.shop_price > 0 ORDER BY c.sort, c.id, p.sort, p.id`).all()
-      .filter((p) => (!/^ay:bill:/.test(p.art_card_id || '') || (require('../aylol').billShop(p.art_card_id, p.supplier_company) && lineModes(p).length))
-        && (!needsNumber(p) || inStock(p.id, 'esim', held))) : [];
+  const packages = s.shopEnabled ? shopRows().filter((p) => inStock(p.id, held)) : [];
   const ids = new Set(packages.map((p) => p.company_id));
   return {
     // Every order is paid and verified before it is carried out: there is no instant (unpaid) activation.
@@ -206,6 +247,8 @@ function shopCatalogResponse() {
     shopTitle: s.shopTitle || '', shopSubtitle: s.shopSubtitle || '',
     supportWhatsapp: s.supportWhatsapp, esimFee: s.esimFee,
     payPhone: s.jawwalpayNumber || s.palpayNumber || '',
+    // Paying straight from the customer's Jawwal Pay wallet with a code texted to them (corporate API).
+    jawwalDirect: s.jcReady,
     jawwalpay: { number: s.jawwalpayNumber, name: s.jawwalpayName },
     palpay: { number: s.palpayNumber || s.jawwalpayNumber, name: s.palpayName || s.jawwalpayName },
     companies: q('SELECT id, name, color, logo, esim_fee FROM companies ORDER BY sort, id').all().filter((c) => ids.has(c.id)).map((c) => ({
@@ -215,21 +258,20 @@ function shopCatalogResponse() {
     packages: packages.map((p) => ({
       id: p.id, companyId: p.company_id, companyName: p.company_name, name: p.name, price: round(p.shop_price),
       oldPrice: p.old_price ? round(p.old_price) : null, popular: !!p.popular, featured: !!p.popular,
-      kind: p.kind === 'card' ? 'card' : 'invoice',
+      kind: 'esim', esim: true,
       dataGb: p.data_gb, gb: p.data_gb, minutes: p.minutes, sms: p.sms, tag: p.tag, description: p.description, days: p.days || null,
-      esim: isEsimRef(p.art_card_id, p.company_name) || !!p.esim_enabled,
-      // A new line on the customer's own SIM card, its number given by the supplier (Aylol): the SIM's number and the
-      // customer's full name are asked, never a phone number.
-      simLine: /^ay:bill:/.test(p.art_card_id || ''),
-      // How that line can be had: on the customer's SIM card ('sim': its ICCID asked) and/or as an eSIM ('esim': its QR
-      // code given after payment, with the eSIM fee).
-      ...(/^ay:bill:/.test(p.art_card_id || '') ? { lineModes: lineModes(p) } : {}),
+      // An Aylol line registers the customer's first and family names.
+      fullName: shopKind(p) === 'line',
       esimFee: p.company_esim_fee === null || p.company_esim_fee === undefined ? s.esimFee : round(p.company_esim_fee),
     })),
   };
 }
-route('GET', '/api/shop', null, shopCatalogResponse);
-route('GET', '/api/shop/catalog', null, shopCatalogResponse);
+async function shopCatalog() {
+  await ensureStock();
+  return shopCatalogResponse();
+}
+route('GET', '/api/shop', null, shopCatalog);
+route('GET', '/api/shop/catalog', null, shopCatalog);
 
 // The free eSIM numbers of a package at its supplier (remembered there, so a sale can use one), without the ones other
 // customers hold: [{ id, phone, sim, qr }]. QuickLine's come with their eSIM and QR code; Layan's get theirs when
@@ -271,10 +313,16 @@ async function freeEsimNumbers(s, { ref, layan, telecom, aylol }) {
 route('GET', '/api/shop/available', null, async ({ query, ip }) => {
   const s = enabled();
   throttle(ip, 'numbers', 120);
-  const pk = esimPackage(query.packageId);
-  if (!pk.ref) return { available: false };
+  const p = q(`SELECT p.*, c.name AS company_name FROM packages p JOIN companies c ON c.id = p.company_id
+               WHERE p.id = ? AND p.active = 1 AND p.shop_price > 0`).get(Number(query.packageId));
+  const kind = p && shopKind(p);
+  if (!kind) fail(404, 'الباقة غير متوفرة');
   try {
-    const list = await freeEsimNumbers(s, pk);
+    const held = new Set(heldNumbers().map((h) => h.number));
+    const list = kind === 'line'
+      ? (await require('./aylol').billFreeNumbers(p.art_card_id, '', true)).filter((n) => !held.has(n.phone))
+      : await freeEsimNumbers(s, esimPackage(p.id));
+    setStock(p.id, list.map((n) => n.phone));
     return { available: list.length > 0 };
   } catch (e) {
     // The supplier not set up (or its registration details missing): simply none to sell now.
@@ -289,7 +337,7 @@ route('POST', '/api/shop/orders', null, ({ body, ip, req }) => {
 });
 
 // A new order, with every check the web page's orders get (also made over WhatsApp, where ip and clientId name the chat).
-function createOrder(body, { ip, clientId = '' }) {
+async function createOrder(body, { ip, clientId = '' }) {
   // At most so many orders an hour from one customer (their browser or chat, or their contact phone).
   const perHour = getSettings().shopHourLimit;
   if (perHour > 0) {
@@ -334,59 +382,43 @@ function createOrder(body, { ip, clientId = '' }) {
     fail(429, 'تم الوصول للحد الأقصى لعدد الحجوزات المعلقة المتزامنة من هذه الشبكة. يرجى إتمام الدفع أو الانتظار حتى انتهاء مهلة الحجز.');
   }
 
-  if (body.kind === 'esim' || body.esim) return esimOrder(body, ip, clientId);
+  // eSIMs only (whatever the request asks for): a supplier's eSIM, or an Aylol new line as an eSIM.
   const p = q(`SELECT p.*, c.name AS company_name, c.esim_fee AS company_esim_fee FROM packages p JOIN companies c ON c.id = p.company_id
                WHERE p.id = ? AND p.active = 1 AND p.shop_price > 0`).get(Number(body.packageId));
-  if (!p) fail(404, 'الباقة غير متوفرة');
-  if (/^ay:bill:/.test(p.art_card_id || '')) {
-    if (!require('../aylol').billShop(p.art_card_id, p.supplier_company)) fail(404, 'الباقة غير متوفرة');
-    return aylolLineOrder(body, ip, clientId, p);
-  }
-  require('./aylol').ensureBalanceFor(p);
-  const kind = body.kind === 'new' ? 'new' : 'recharge';
-  const number = validPhone(normalizePhone(body.number));
-  const sim = kind === 'new' ? validIccid(normalizeIccid(body.sim)) : '';
-  const contact = body.contactPhone ? validPhone(normalizePhone(body.contactPhone)) : number;
-  const t = now();
-  const code = newCode();
-  const row = q(`INSERT INTO shop_orders (code, package_id, package_label, kind, number, sim, customer_name, contact_phone, amount, ip, client_id, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-    .run(code, p.id, D.packageLabel(p), kind, number, sim, str(body.customerName, 80), contact, round(p.shop_price), ip, clientId, t, t);
-  return orderView(byCode(code));
+  const kind = p && shopKind(p);
+  if (!kind) fail(404, 'الباقة غير متوفرة — المتجر يبيع شرائح eSIM فقط');
+  if (kind === 'line') return aylolLineOrder(body, ip, clientId, p);
+  return esimOrder(body, ip, clientId);
 }
 
-// A new line at Aylol (as its site sells it): one of the numbers Aylol offers for the package, picked at random and
-// held for this order (no other customer gets it), with the customer's full name, either on the customer's own SIM
-// card (its number given) or as an eSIM (lineEsim: no SIM; the eSIM and its QR code come with the activation, and the
-// eSIM fee is added). Nothing is bought before the payment is verified; then the line is activated at Aylol.
+// A new line at Aylol (as its site sells it), as an eSIM: one of the eSIM numbers Aylol offers for the package, picked
+// at random and held for this order (no other customer gets it), with the customer's full name; the eSIM and its QR
+// code come with the activation, and the eSIM fee is added. Nothing is bought before the payment is verified; then
+// the line is activated at Aylol.
 async function aylolLineOrder(body, ip, clientId, p) {
   const AY = require('./aylol');
   AY.ensureBalanceFor(p);
-  const wantEsim = !!body.lineEsim;
   const customerName = str(body.customerName, 80);
   if (customerName.split(/\s+/).filter(Boolean).length < 2 || /\d/.test(customerName)) fail(400, 'اكتب اسمك الكامل (الاسم والعائلة) — مطلوب لتسجيل الخط');
-  // What the package's line can be on, as the site says (asked the first time): an eSIM-only package is never sold on
-  // a SIM card, nor the other way round.
+  const email = str(body.email, 120).toLowerCase();
+  if (email && !validAddress(email)) fail(400, 'البريد الإلكتروني غير صحيح');
+  // What the package's line can be on, as the site says (asked the first time): sold only when it can be an eSIM.
   await AY.learnSimType(p);
-  const modes = AY.shopLineModes(p);
-  if (!modes.length) fail(404, 'الباقة غير متوفرة');
-  if (!modes.includes(wantEsim ? 'esim' : 'sim')) fail(400, wantEsim ? 'هذه الباقة على شريحة عادية بس: اكتب رقم الشريحة' : 'هذه الباقة eSIM بس: اختر eSIM');
-  const sim = wantEsim ? '' : validIccid(normalizeIccid(body.sim));
-  if (sim && q("SELECT 1 FROM lines WHERE sim = ? AND status != 'disconnected'").get(sim)) fail(409, 'هذه الشريحة مرتبطة برقم آخر');
+  if (!AY.shopLineModes(p).includes('esim')) fail(404, 'الباقة غير متوفرة — المتجر يبيع شرائح eSIM فقط');
   const contact = body.contactPhone ? validPhone(normalizePhone(body.contactPhone)) : '';
-  const list = await AY.billFreeNumbers(p.art_card_id, sim, wantEsim);
+  const list = await AY.billFreeNumbers(p.art_card_id, '', true);
   const held = new Set(heldNumbers().map((h) => h.number));
   const free = list.filter((n) => !held.has(n.phone) && !q("SELECT 1 FROM lines WHERE number = ? AND status != 'disconnected'").get(n.phone));
-  if (wantEsim) setStock(p.id, 'esim', free.map((n) => n.phone));
-  if (!free.length) fail(409, 'ما في أرقام متاحة لهذه الباقة الآن. جرّب بعد قليل أو باقة أخرى.');
+  setStock(p.id, free.map((n) => n.phone));
+  if (!free.length) fail(409, 'نفدت أرقام eSIM لهذه الباقة الآن. جرّب باقة أخرى أو عد لاحقاً.');
   const picked = free[crypto.randomInt(free.length)];
   const s = getSettings();
-  const esimFee = wantEsim ? round(p.company_esim_fee === null || p.company_esim_fee === undefined ? s.esimFee : p.company_esim_fee) : 0;
+  const esimFee = round(p.company_esim_fee === null || p.company_esim_fee === undefined ? s.esimFee : p.company_esim_fee);
   const t = now();
   const code = newCode();
-  q(`INSERT INTO shop_orders (code, package_id, package_label, kind, number, sim, customer_name, contact_phone, amount, esim_fee, ip, client_id, created_at, updated_at, esim, number_id)
-     VALUES (?, ?, ?, 'new', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-    .run(code, p.id, D.packageLabel(p), picked.phone, sim, customerName, contact, round(p.shop_price + esimFee), esimFee, ip, clientId, t, t, wantEsim ? 1 : 0, `ayl:${picked.phone}`);
+  q(`INSERT INTO shop_orders (code, package_id, package_label, kind, number, sim, customer_name, contact_phone, amount, esim_fee, ip, client_id, created_at, updated_at, esim, number_id, email)
+     VALUES (?, ?, ?, 'new', ?, '', ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`)
+    .run(code, p.id, D.packageLabel(p), picked.phone, customerName, contact, round(p.shop_price + esimFee), esimFee, ip, clientId, t, t, `ayl:${picked.phone}`, email);
   return orderView(byCode(code));
 }
 
@@ -395,25 +427,18 @@ async function aylolLineOrder(body, ip, clientId, p) {
 async function esimOrder(body, ip, clientId = '') {
   const s = getSettings();
   const pk = esimPackage(body.packageId);
-  require('./aylol').ensureBalanceFor(pk);
+  require('./aylol').ensureBalanceFor(pk.p);
   const customerName = str(body.customerName, 80);
   if (customerName.length < 2) fail(400, 'اكتب اسمك — مطلوب لتسجيل الخط');
   const email = str(body.email, 120).toLowerCase();
   if (email && !validAddress(email)) fail(400, 'البريد الإلكتروني غير صحيح');
   const contact = body.contactPhone ? validPhone(normalizePhone(body.contactPhone)) : '';
-  let picked = null;
-  if (pk.ref) {
-    const list = await freeEsimNumbers(s, pk);
-    const held = new Set(heldNumbers().map((h) => h.number));
-    const free = list.filter((n) => !held.has(n.phone) && !q("SELECT 1 FROM lines WHERE number = ? AND status != 'disconnected'").get(n.phone));
-    setStock(pk.p.id, 'esim', free.map((n) => n.phone));
-    if (!free.length) fail(409, 'نفدت أرقام eSIM لهذه الباقة الآن. جرّب باقة أخرى أو عد لاحقاً.');
-    picked = free[crypto.randomInt(free.length)];
-  } else {
-    if (!pk.direct || !body.number) fail(409, 'نفدت أرقام eSIM لهذه الباقة الآن. جرّب باقة أخرى أو عد لاحقاً.');
-    const customPhone = validPhone(normalizePhone(body.number));
-    picked = { id: phoneId(customPhone), phone: customPhone, sim: '', qr: '' };
-  }
+  const list = await freeEsimNumbers(s, pk);
+  const held = new Set(heldNumbers().map((h) => h.number));
+  const free = list.filter((n) => !held.has(n.phone) && !q("SELECT 1 FROM lines WHERE number = ? AND status != 'disconnected'").get(n.phone));
+  setStock(pk.p.id, free.map((n) => n.phone));
+  if (!free.length) fail(409, 'نفدت أرقام eSIM لهذه الباقة الآن. جرّب باقة أخرى أو عد لاحقاً.');
+  const picked = free[crypto.randomInt(free.length)];
   const t = now();
   const code = newCode();
   const hasCompanyFee = pk.p.company_esim_fee !== null && pk.p.company_esim_fee !== undefined;
@@ -449,6 +474,11 @@ route('GET', '/api/shop/orders/:code', null, async ({ params, query, ip }) => {
     if (!shop.tryMatch(o.id) && (query.check === '1' || Number(o.proof_tries) >= 2)) {
       try { await shop.checkMail(); } catch (e) { console.error('shop mail', e.message); }
     }
+    o = byCode(params.code);
+  }
+  // A direct Jawwal Pay confirmation without a clear answer: its invoice is looked up (at most once a minute).
+  if (o.jc_unsure && ['awaiting_payment', 'cancelled'].includes(o.status)) {
+    try { await shop.reconcileDirect(); } catch (e) { console.error('jawwal reconcile', e.message); }
     o = byCode(params.code);
   }
   return orderView(o);
@@ -508,10 +538,140 @@ async function submitProof(order, body) {
   return orderView(byCode(o.code));
 }
 
+// ---------- direct Jawwal Pay: a code to the customer's mobile, the payment confirmed with it ----------
+// Through the MaalCards corporate API (src/jawwalcorp.js). The money is taken from the customer's wallet only when
+// they confirm with the code they received; the order is then paid and carried out as any paid order.
+const jc = require('../jawwalcorp');
+const { jcCredentials } = require('../db');
+const jcBusy = new Set(); // orders with a code being sent or a payment being confirmed now
+
+// The manager hears about a problem with the corporate account once in a while, not on every customer's try.
+const jcTold = new Map();
+function tellManager(code, body) {
+  if (now() - (jcTold.get(code) || 0) < 30 * 60_000) return;
+  jcTold.set(code, now());
+  D.notify({ role: 'admin', kind: 'task', title: 'الدفع المباشر عبر جوال باي متوقف', body, link: '#/shop' });
+}
+
+// The corporate API's refusal as the customer should read it (the manager is told when the account itself is at fault).
+function jcFail(e) {
+  if (!(e instanceof jc.JawwalCorpError)) throw e;
+  console.error('jawwal', e.status, e.code, e.message);
+  const manual = ' يمكنك الدفع بالتحويل اليدوي أدناه.';
+  if (e.code === 'corporate_blocked') {
+    tellManager(e.code, 'الحساب ممنوع مؤقتاً 15 دقيقة بعد محاولات دخول متكررة (corporate_blocked). تأكد أن الحساب لا يُستخدم من خادم أو برنامج آخر في نفس الوقت.');
+  } else if (['invalid_credentials', 'account_disabled', 'corporate_api_disabled', 'not_configured'].includes(e.code)) {
+    tellManager(e.code, `رفضت واجهة الشركات الدخول (${e.code}). راجع رقم المشترك واسم المستخدم وكلمة المرور في إعدادات المتجر.`);
+  }
+  if (e.status === 429 || e.status === 401 || e.status === 403 || e.code === 'not_configured') fail(503, `الدفع المباشر غير متاح الآن — حاول بعد دقيقة.${manual}`);
+  if (e.code === 'jawwal_send_otp_failed') fail(422, 'تعذّر إرسال رمز التحقق لهذا الرقم. تأكد أنه رقم جوال مفعّل عليه جوال باي.');
+  if (e.status === 400) fail(400, 'بيانات الدفع غير مكتملة. تأكد من الرقم وحاول مرة أخرى.');
+  fail(502, `تعذّر الوصول إلى جوال باي الآن — حاول بعد قليل.${manual}`);
+}
+
+function directOrder(code, ip) {
+  const s = enabled();
+  if (!s.jcReady) fail(403, 'الدفع المباشر عبر جوال باي غير متاح حالياً');
+  shop.expireUnconfirmed();
+  return byCode(code, ip);
+}
+
+// A code for the order's amount to the customer's Jawwal Pay mobile. A new code replaces the earlier one (only the
+// last can be confirmed), a few per order, not more often than every 45 seconds.
+route('POST', '/api/shop/orders/:code/jawwal/otp', null, async ({ params, body, ip }) => {
+  throttle(ip, 'jc_otp', 15);
+  const o = directOrder(params.code, ip);
+  if (o.status === 'cancelled') fail(400, 'انتهت مهلة حجز الرقم وتم إلغاء الطلب. اطلب من جديد.');
+  if (o.status !== 'awaiting_payment' || o.proof_at) fail(400, 'تم التعامل مع هذا الطلب');
+  if (o.jc_unsure) fail(409, 'جارٍ التأكد من دفعتك السابقة لدى جوال باي — انتظر لحظة.');
+  const mobile = normalizePhone(toLatinDigits(String(body.mobile || '')));
+  if (!/^05\d{8}$/.test(mobile)) fail(400, 'اكتب رقم جوالك المسجّل في جوال باي (10 أرقام يبدأ بـ 05)');
+  if ((o.jc_sends || 0) >= JC_SENDS_MAX) fail(429, 'وصلت إلى الحد الأقصى لرموز التحقق لهذا الطلب. ادفع بالتحويل اليدوي أو تواصل معنا.');
+  if (o.jc_sent_at && now() < o.jc_sent_at + JC_RESEND_MS) fail(429, `انتظر ${Math.ceil((o.jc_sent_at + JC_RESEND_MS - now()) / 1000)} ثانية قبل طلب رمز جديد`);
+  if (jcBusy.has(o.id)) fail(409, 'جارٍ إرسال الرمز…');
+  jcBusy.add(o.id);
+  try {
+    let r;
+    try {
+      r = await jc.sendOtp(jcCredentials(), { mobile, amount: o.amount });
+    } catch (e) {
+      // Counted even when refused: a number that cannot take codes is not tried forever.
+      q('UPDATE shop_orders SET jc_sends = jc_sends + 1, jc_sent_at = ?, updated_at = ? WHERE id = ?').run(now(), now(), o.id);
+      jcFail(e);
+    }
+    // The invoice must be for exactly the order's amount, or it is not used.
+    if (r.amount !== null && Math.abs(r.amount - Number(o.amount)) > 0.005) {
+      console.error('jawwal amount mismatch', o.code, o.amount, r.amount);
+      fail(502, 'رد جوال باي بمبلغ مختلف عن الطلب. تواصل مع الدعم.');
+    }
+    const until = Math.min(r.expiresAt && r.expiresAt > now() ? r.expiresAt : now() + JC_HOLD_MS, now() + JC_HOLD_MS);
+    q(`UPDATE shop_orders SET jc_invoice_id = ?, jc_mobile = ?, jc_expires_at = ?, jc_sent_at = ?, jc_sends = jc_sends + 1, jc_tries = 0,
+         updated_at = ? WHERE id = ? AND status = 'awaiting_payment'`).run(r.invoiceId, mobile, until, now(), now(), o.id);
+  } finally {
+    jcBusy.delete(o.id);
+  }
+  return orderView(byCode(o.code));
+});
+
+// The code the customer received: the payment is taken and the order carried out. A refused code can be tried again
+// (a few times) while it lasts; no clear answer (timeout, 5xx) means the invoice is looked up before anything else,
+// so a payment that went through is never lost nor taken twice.
+route('POST', '/api/shop/orders/:code/jawwal/confirm', null, async ({ params, body, ip }) => {
+  throttle(ip, 'jc_confirm', 40);
+  let o = directOrder(params.code, ip);
+  if (o.status === 'paid') return orderView(o);
+  if (o.status !== 'awaiting_payment' || !o.jc_invoice_id) fail(400, o.status === 'cancelled' ? 'انتهت مهلة حجز الرقم وتم إلغاء الطلب.' : 'اطلب رمز التحقق أولاً');
+  const otp = toLatinDigits(String(body.otp || '')).replace(/\D/g, '');
+  if (!/^\d{4,8}$/.test(otp)) fail(400, 'اكتب رمز التحقق كما وصلك في الرسالة');
+  if (!jcPending(o) && !o.jc_unsure) fail(410, 'انتهت صلاحية رمز التحقق — اطلب رمزاً جديداً');
+  if ((o.jc_tries || 0) >= JC_TRIES_MAX) fail(429, 'محاولات كثيرة بهذا الرمز — اطلب رمزاً جديداً');
+  if (jcBusy.has(o.id)) fail(409, 'جارٍ تأكيد الدفع…');
+  jcBusy.add(o.id);
+  const creds = jcCredentials();
+  let paid = false;
+  try {
+    q('UPDATE shop_orders SET jc_tries = jc_tries + 1, updated_at = ? WHERE id = ?').run(now(), o.id);
+    try {
+      await jc.confirmPayment(creds, { invoiceId: o.jc_invoice_id, otp });
+      paid = true;
+    } catch (e) {
+      if (!(e instanceof jc.JawwalCorpError)) throw e;
+      if (e.code === 'invoice_confirmed') paid = true; // an earlier confirmation that got no answer went through
+      else if (e.code === 'invoice_expired' || e.code === 'invoice_not_found') {
+        q('UPDATE shop_orders SET jc_expires_at = ?, jc_unsure = 0, updated_at = ? WHERE id = ?').run(now(), now(), o.id);
+        fail(410, 'انتهت صلاحية رمز التحقق — اطلب رمزاً جديداً');
+      } else if (e.code === 'jawwal_confirm_failed') {
+        const canRetry = !!(e.data && (e.data.can_retry === true || e.data.can_retry === 1 || e.data.can_retry === '1'));
+        console.error('jawwal confirm refused', o.code, e.data?.failure_code, e.message);
+        if (!canRetry) q('UPDATE shop_orders SET jc_expires_at = ?, updated_at = ? WHERE id = ?').run(now(), now(), o.id);
+        fail(402, canRetry
+          ? 'رمز التحقق غير صحيح أو رُفض الدفع — تأكد من الرمز وحاول مرة أخرى.'
+          : 'رفض جوال باي الدفع (قد يكون الرصيد غير كافٍ). اشحن محفظتك ثم اطلب رمزاً جديداً، أو ادفع بالتحويل اليدوي.');
+      } else if (e.unsure) {
+        // The payment may have gone through: its invoice says.
+        let inv = null;
+        try { inv = await jc.invoice(creds, o.jc_invoice_id); } catch (e2) { console.error('jawwal invoice', e2.message); }
+        if (inv?.status === 'confirmed') paid = true;
+        else if (inv && inv.status === 'pending') fail(502, 'لم يكتمل تأكيد الدفع — أعد إدخال الرمز. لن يُخصم المبلغ مرتين.');
+        else if (!inv) {
+          q('UPDATE shop_orders SET jc_unsure = 1, updated_at = ? WHERE id = ?').run(now(), o.id);
+          fail(502, 'لم يصلنا رد جوال باي بعد. سنتحقق من دفعتك تلقائياً خلال دقائق — لا تدفع مرة أخرى، وتابع صفحة الطلب.');
+        } else jcFail(e);
+      } else jcFail(e);
+    }
+    if (paid) shop.settleDirect(o.id);
+  } finally {
+    jcBusy.delete(o.id);
+  }
+  o = byCode(o.code);
+  return orderView(o);
+});
+
 route('POST', '/api/shop/orders/:code/cancel', null, ({ params, ip }) => {
   throttle(ip, 'cancel', 30);
   const o = byCode(params.code, ip);
   if (o.status !== 'awaiting_payment') fail(400, 'لا يمكن إلغاء الطلب بعد إرسال بيانات التحويل. تواصل مع الدعم.');
+  if (jcBusy.has(o.id) || o.jc_unsure) fail(409, 'جارٍ تأكيد الدفع من جوال باي — انتظر لحظة.');
   q("UPDATE shop_orders SET status = 'cancelled', updated_at = ? WHERE id = ?").run(now(), o.id);
   return orderView(byCode(o.code));
 });
@@ -588,9 +748,23 @@ route('POST', '/api/shop/admin/check-mail', ADMIN, async () => {
   }
 });
 
+// The corporate account works: it signs in only if no token is held (reusing the one held otherwise) and lists one invoice.
+route('POST', '/api/shop/admin/jawwal/test', ADMIN, async () => {
+  if (!getSettings().jcConfigured) fail(400, 'أدخل رقم المشترك واسم المستخدم وكلمة المرور أولاً');
+  try {
+    const list = await jc.invoices(jcCredentials(), { limit: 1 });
+    return { ok: true, invoices: list.length, ...jc.status() };
+  } catch (e) {
+    if (!(e instanceof jc.JawwalCorpError)) throw e;
+    const wait = e.retryAfter ? ` — أعد المحاولة بعد ${Math.ceil(e.retryAfter / 60)} دقيقة` : '';
+    fail(502, `${e.code || e.status || 'خطأ'}: ${e.message}${wait}`);
+  }
+});
+route('GET', '/api/shop/admin/jawwal/status', ADMIN, () => jc.status());
+
 route('GET', '/api/shop/admin/summary', ADMIN, () => ({
   open: q("SELECT COUNT(*) AS n FROM shop_orders WHERE status IN ('verifying','review') OR (status = 'paid' AND line_id IS NULL)").get().n,
   agentId: shop.shopAgent().id,
 }));
 
-module.exports = { shopCatalogResponse, submitProof, orderView, byCode, createOrder, refreshStock };
+module.exports = { shopCatalogResponse, shopCatalog, ensureStock, submitProof, orderView, byCode, createOrder, refreshStock };

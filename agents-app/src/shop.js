@@ -251,6 +251,60 @@ function claim(orderId, mailId, verifiedBy) {
   });
 }
 
+// ---------- direct Jawwal Pay (corporate API) ----------
+// The customer's wallet was charged through the corporate API (jawwalcorp.js): the order is paid. Also an order whose
+// number hold ran out while the payment was being confirmed — the money was taken, so the order goes on (the
+// manager is told if its number went to someone else). Above the automatic cap the order waits for the manager,
+// already paid (it shows as paid with the reason, and the manager carries it out with «إعادة التنفيذ»).
+function settleDirect(orderId) {
+  const o = q('SELECT * FROM shop_orders WHERE id = ?').get(orderId);
+  if (!o || !o.jc_invoice_id) return false;
+  const done = tx(() => {
+    const cur = q("SELECT * FROM shop_orders WHERE id = ? AND status IN ('awaiting_payment','cancelled')").get(orderId);
+    if (!cur) return false;
+    q("UPDATE shop_orders SET status = 'paid', paid_at = ?, verified_by = ?, jc_unsure = 0, response = '', updated_at = ? WHERE id = ?")
+      .run(now(), `جوال باي مباشر: ${cur.jc_invoice_id}`, now(), orderId);
+    return true;
+  });
+  if (!done) return false;
+  const cap = getSettings().shopAutoMax;
+  if (cap > 0 && Number(o.amount) > cap) {
+    q('UPDATE shop_orders SET error = ?, updated_at = ? WHERE id = ?').run(`مدفوع مباشرة، فوق حد التنفيذ التلقائي (${cap} ₪): راجع ثم «إعادة التنفيذ»`, now(), orderId);
+    D.notify({ role: 'admin', kind: 'task', title: `طلب زبون مدفوع فوق حد التنفيذ التلقائي ${o.code}`,
+      body: `${o.package_label} — ${o.amount} ₪ (الحد ${cap} ₪). الدفع مؤكد من جوال باي: راجعه ونفّذه.`, link: '#/shop' });
+    return true;
+  }
+  fulfil(orderId);
+  return true;
+}
+
+// Confirmations that got no clear answer (timeout, connection lost, 5xx): their invoices are looked up until they
+// are confirmed (the order is paid) or are no longer pending. One request for all of them, at most once a minute.
+let reconciling = null;
+let reconciledAt = 0;
+function reconcileDirect({ force = false } = {}) {
+  if (reconciling) return reconciling;
+  if (!force && now() - reconciledAt < LOOP_MS - 1000) return Promise.resolve(0);
+  const rows = q(`SELECT id, jc_invoice_id FROM shop_orders WHERE jc_unsure = 1 AND jc_invoice_id != ''
+                  AND status IN ('awaiting_payment','cancelled') AND created_at > ?`).all(now() - 2 * 864e5);
+  if (!rows.length || !getSettings().jcConfigured) return Promise.resolve(0);
+  reconciledAt = now();
+  const jc = require('./jawwalcorp');
+  reconciling = (async () => {
+    const creds = require('./db').jcCredentials();
+    let settled = 0;
+    for (const r of rows) {
+      let inv;
+      try { inv = await jc.invoice(creds, r.jc_invoice_id); } catch (e) { console.error('jawwal reconcile', e.message); break; }
+      if (inv?.status === 'confirmed') { if (settleDirect(r.id)) settled++; } else if (inv && inv.status !== 'pending') {
+        q('UPDATE shop_orders SET jc_unsure = 0, updated_at = ? WHERE id = ?').run(now(), r.id);
+      }
+    }
+    return settled;
+  })().finally(() => { reconciling = null; });
+  return reconciling;
+}
+
 function tryMatch(orderId) {
   const o = q("SELECT * FROM shop_orders WHERE id = ? AND status IN ('verifying','review')").get(orderId);
   if (!o) return false;
@@ -432,13 +486,14 @@ function saveMail(uidValidity, uid, raw, settings) {
 }
 
 // Orders that stay in awaiting_payment beyond the 5-minute reservation window (RESERVE_MS) without confirming transfer are cancelled automatically.
+// One with a direct Jawwal Pay code still valid (or a confirmation without a clear answer yet) is kept until then.
 function expireUnconfirmed() {
   const cutoff = now() - RESERVE_MS;
   return q(`UPDATE shop_orders
                SET status = 'cancelled',
                    response = CASE WHEN response = '' THEN 'انتهت مهلة حجز الرقم (5 دقائق) دون تأكيد الإرسال وتم إلغاء الطلبية تلقائياً' ELSE response END,
                    updated_at = ?
-             WHERE status = 'awaiting_payment' AND created_at <= ?`).run(now(), cutoff).changes;
+             WHERE status = 'awaiting_payment' AND created_at <= ? AND COALESCE(jc_expires_at, 0) <= ? AND jc_unsure = 0`).run(now(), cutoff, now()).changes;
 }
 
 // Proofs nobody could match in time go to the manager.
@@ -495,6 +550,7 @@ async function run(force) {
   const escalated = escalate();
   let mailed = 0;
   try { mailed = await deliverQr(); } catch (e) { console.error('shop qr mail', e.message); }
+  try { await reconcileDirect(); } catch (e) { console.error('jawwal reconcile', e.message); }
   return { fetched, matched, escalated, mailed };
 }
 
@@ -503,5 +559,5 @@ timer.unref();
 
 module.exports = {
   RESERVE_MS, FIRST_WINDOW_MS, RETRY_WINDOW_MS, VERIFY_MS, WAIT_REVIEW_MS, CHECK_COOLDOWN_MS,
-  shopAgent, namesMatch, matchReason, findMail, claim, tryMatch, fulfil, checkMail, escalate, expireUnconfirmed, saveMail, deliverQr, makeEsimQr, isMadeUpCode, isMadeUpQr, realCode, realQr,
+  shopAgent, namesMatch, matchReason, findMail, claim, tryMatch, fulfil, settleDirect, reconcileDirect, checkMail, escalate, expireUnconfirmed, saveMail, deliverQr, makeEsimQr, isMadeUpCode, isMadeUpQr, realCode, realQr,
 };

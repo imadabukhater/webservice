@@ -159,6 +159,15 @@ route('PUT', '/api/settings', ADMIN, ({ body }) => {
   if (body.gmailUser !== undefined) setSetting('gmail_user', str(body.gmailUser, 120));
   if (body.gmailPass) setSetting('gmail_pass', String(body.gmailPass).replace(/\s+/g, '').slice(0, 64));
   if (body.mailFrom !== undefined) setSetting('mail_from', str(body.mailFrom, 80));
+  // Direct Jawwal Pay (MaalCards corporate API). The password is kept as typed (it may contain spaces or symbols).
+  if (body.jcEnabled !== undefined) setSetting('jc_enabled', body.jcEnabled ? '1' : '0');
+  if (body.jcManagerId !== undefined) {
+    const id = String(body.jcManagerId).trim();
+    if (id && !/^\d{1,9}$/.test(id)) fail(400, 'رقم المشترك (manager_id) يجب أن يكون رقماً');
+    setSetting('jc_manager_id', id);
+  }
+  if (body.jcUser !== undefined) setSetting('jc_user', str(body.jcUser, 120));
+  if (body.jcPass) setSetting('jc_pass', String(body.jcPass).slice(0, 200));
   if (body.supportWhatsapp !== undefined) {
     // International format without + or leading zeros, as wa.me expects: 972567725080.
     const wa = String(body.supportWhatsapp).replace(/\D/g, '').replace(/^00/, '');

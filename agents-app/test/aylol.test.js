@@ -290,43 +290,21 @@ test('Aylol: credentials only from the settings, real supplier catalog, eSIM num
     packageId: billPkg.id, number: '0512000001', sim: '8997210000000000778', customerName: 'Moataz Abukhater' }));
   assert.notEqual(own.line.status, 'active');
 
-  // A customer buys a new line on their own SIM in the shop: the SIM's number and their full name; a number Aylol offers,
-  // held for the order; nothing at Aylol before the payment is verified; then the line is activated there, as above.
+  // The shop sells eSIMs only: a new line on the customer's own SIM card is never on sale there, nor ordered — Aylol's
+  // lines reach the shop only as eSIMs (below), while eSIM lines are off here.
   const { q: dbq } = require('../src/db');
   await ok(call(admin, 'PUT', '/api/settings', { shopEnabled: true, jawwalpayNumber: '0599000000', jawwalpayName: 'المتجر' }));
   dbq('UPDATE packages SET shop_price = 39 WHERE id = ?').run(billPkg.id);
-  const shopPkg = (await ok(call(null, 'GET', '/api/shop'))).packages.find((p) => p.id === billPkg.id);
-  assert.equal(shopPkg?.simLine, true, 'on sale in the shop, as a new line on the customer SIM');
-  const SIM2 = '8997210000000000779';
-  assert.equal((await call(null, 'POST', '/api/shop/orders', { packageId: billPkg.id, kind: 'new', sim: SIM2, customerName: 'Sami' })).status, 400, 'the full name');
-  assert.equal((await call(null, 'POST', '/api/shop/orders', { packageId: billPkg.id, kind: 'new', sim: '123', customerName: 'Sami Khaled' })).status, 400, 'a real SIM number');
-  const shopOrder = await ok(call(null, 'POST', '/api/shop/orders', { packageId: billPkg.id, kind: 'new', sim: SIM2, customerName: 'Sami Khaled' }));
-  const heldOrder = dbq('SELECT * FROM shop_orders WHERE code = ?').get(shopOrder.code);
-  assert.deepEqual([heldOrder.number, heldOrder.sim, heldOrder.esim, heldOrder.amount], ['0512000003', SIM2, 0, 39], 'the one number not sold yet, held for the order');
-  assert.equal(site.subscribes.some((x) => x.phone === '0512000003'), false, 'nothing at Aylol before the payment');
-  dbq(`INSERT INTO payment_mails (uid_validity, uid, message_id, trusted, from_addr, subject, received_at, amount, reference, sender_phone, sender_name, body, created_at)
-       VALUES (1, 8001, '<ayline@jp>', 1, 'noreply@jawwalpay.ps', 'Jawwal Pay', ?, 39, 'REF3939', '', '', 'incoming', ?)`).run(Date.now(), Date.now());
-  await ok(call(null, 'POST', `/api/shop/orders/${shopOrder.code}/proof`, { payReference: 'REF3939' }));
-  const lineOrder = await until(() => site.subscribes.find((x) => x.phone === '0512000003'));
-  assert.deepEqual([lineOrder.action, lineOrder.phone, lineOrder.company7_available_number_id, lineOrder.sim_number, lineOrder.first_name, lineOrder.last_name],
-    ['subscription', '0512000003', 'k-3', SIM2, 'Sami', 'Khaled']);
-  await until(async () => (await ok(call(null, 'GET', `/api/shop/orders/${shopOrder.code}`))).stage === 'done');
-
-  // A Pelephone line (Aylol's company 5, Sky5G): its numbers depend on the customer's SIM, so it is sold in the shop
-  // (where the SIM's number comes with the order) and sent as its page sends it, with the package's one-month period.
   const pelePkg = (await ok(call(admin, 'GET', '/api/catalog'))).packages.find((p) => p.supplier === 'ay' && p.cost === 30);
   dbq('UPDATE packages SET shop_price = 45 WHERE id = ?').run(pelePkg.id);
-  assert.equal((await ok(call(null, 'GET', '/api/shop'))).packages.find((p) => p.id === pelePkg.id)?.simLine, true);
-  const SIM3 = '8997250000000000001';
-  const peleOrder = await ok(call(null, 'POST', '/api/shop/orders', { packageId: pelePkg.id, kind: 'new', sim: SIM3, customerName: 'Rami Saleh' }));
-  assert.equal(dbq('SELECT number FROM shop_orders WHERE code = ?').get(peleOrder.code).number, '0555037832', 'a number Aylol offers for this SIM');
-  dbq(`INSERT INTO payment_mails (uid_validity, uid, message_id, trusted, from_addr, subject, received_at, amount, reference, sender_phone, sender_name, body, created_at)
-       VALUES (1, 8002, '<pele@jp>', 1, 'noreply@jawwalpay.ps', 'Jawwal Pay', ?, 45, 'REF4545', '', '', 'incoming', ?)`).run(Date.now(), Date.now());
-  await ok(call(null, 'POST', `/api/shop/orders/${peleOrder.code}/proof`, { payReference: 'REF4545' }));
-  const sky = await until(() => site.subscribes.find((x) => x.phone === '0555037832'));
-  assert.equal(sky.json, true, 'sent as JSON, as the page does');
-  assert.deepEqual([sky.action, sky.package_id, sky.company_id, sky.subscriber_id, sky.sim_number, sky.first_name, sky.last_name, sky.period_id, sky.duration, sky.esim],
-    ['subscription', '88', '5', '760026', SIM3, 'Rami', 'Saleh', '9', '1', 0]);
+  const onSale = (await ok(call(null, 'GET', '/api/shop'))).packages;
+  assert.equal(onSale.some((p) => p.id === billPkg.id || p.id === pelePkg.id), false, 'not on sale on a SIM card');
+  const subsBefore = site.subscribes.length;
+  for (const id of [billPkg.id, pelePkg.id]) {
+    assert.equal((await call(null, 'POST', '/api/shop/orders', { packageId: id, kind: 'new', sim: '8997210000000000779', customerName: 'Sami Khaled' })).status, 404);
+  }
+  assert.equal(site.subscribes.length, subsBefore, 'nothing at Aylol');
+
   // An agent's Pelephone sale (no SIM known before the number) stays a request for the manager.
   const peleSeen = (await ok(call(agent, 'GET', '/api/catalog'))).packages.find((p) => p.id === pelePkg.id);
   assert.equal(peleSeen ? peleSeen.pool : false, false);
@@ -334,14 +312,14 @@ test('Aylol: credentials only from the settings, real supplier catalog, eSIM num
   // The password, the tokens and the customers' details never appear on curl's command line.
   const argv = fs.readFileSync(path.join(dataDir, 'argv.log'), 'utf8');
   assert.ok(argv.includes('/login'), 'the wrapper saw the requests');
-  for (const secret of ['right-pass', 'wrong-pass', 'CSRF-LOGIN', '0529998877', 'زبون', 'Abukhater', 'Khaled', 'Saleh', SIM, SIM2, SIM3]) assert.equal(argv.includes(secret), false, `${secret} on the command line`);
+  for (const secret of ['right-pass', 'wrong-pass', 'CSRF-LOGIN', '0529998877', 'زبون', 'Abukhater', SIM]) assert.equal(argv.includes(secret), false, `${secret} on the command line`);
 });
 
-// A new line in the shop on Aylol's company 7, as its page sells it: on the customer's SIM card, or (once the owner turns
-// it on, after a real purchase) as an eSIM: one of the eSIM numbers the site offers, picked at random; the eSIM for it
-// (an empty one, asked as the page asks it) goes with the order, and its QR code comes back to the customer as an image.
-// A package the site sells as eSIM only (Hot's) is never sold on a SIM card, and not at all while eSIM lines are off.
-test('Aylol lines in the shop: on the customer SIM or as an eSIM with its QR, eSIM-only packages never on a SIM', async () => {
+// A new line in the shop on Aylol's company 7, as its page sells it — as an eSIM only (the shop sells eSIMs only), once
+// the owner turns eSIM lines on after a real purchase: one of the eSIM numbers the site offers, picked at random; the
+// eSIM for it (an empty one, asked as the page asks it) goes with the order, and its QR code comes back to the customer
+// as an image. While eSIM lines are off, none of these lines is on sale.
+test('Aylol lines in the shop: as an eSIM only, with its QR; not on sale while eSIM lines are off', async () => {
   const { q: dbq } = require('../src/db');
   const admin = (await ok(call(null, 'POST', '/api/login', { username: 'admin', password: 'admin-pass' }))).token;
   site.hotEsim = true;
@@ -353,18 +331,17 @@ test('Aylol lines in the shop: on the customer SIM or as an eSIM with its QR, eS
   assert.equal(dbq('SELECT supplier_sim_type FROM packages WHERE id = ?').get(hotPkg.id).supplier_sim_type, 'esim', 'kept as the site says');
   dbq('UPDATE packages SET shop_price = 40 WHERE id = ?').run(hotPkg.id);
 
-  // eSIM lines off (until a real purchase): on the customer's SIM card only; the eSIM-only package is not on sale.
+  // eSIM lines off (until a real purchase): none of these lines is on sale (never on a SIM card).
   let shopCat = await ok(call(null, 'GET', '/api/shop'));
-  assert.deepEqual(shopCat.packages.find((p) => p.id === billPkg.id).lineModes, ['sim']);
-  assert.equal(shopCat.packages.some((p) => p.id === hotPkg.id), false);
-  assert.equal((await call(null, 'POST', '/api/shop/orders', { packageId: billPkg.id, kind: 'new', lineEsim: true, customerName: 'Lina Haddad' })).status, 400);
+  assert.equal(shopCat.packages.some((p) => p.id === billPkg.id || p.id === hotPkg.id), false);
+  assert.equal((await call(null, 'POST', '/api/shop/orders', { packageId: billPkg.id, kind: 'new', lineEsim: true, customerName: 'Lina Haddad' })).status, 404);
 
   dbq("INSERT INTO settings (key, value) VALUES ('aylol_line_esim', '1') ON CONFLICT(key) DO UPDATE SET value = excluded.value").run();
   shopCat = await ok(call(null, 'GET', '/api/shop'));
   const shopBill = shopCat.packages.find((p) => p.id === billPkg.id);
-  assert.deepEqual(shopBill.lineModes, ['sim', 'esim']);
-  assert.deepEqual(shopCat.packages.find((p) => p.id === hotPkg.id)?.lineModes, ['esim']);
-  assert.equal((await call(null, 'POST', '/api/shop/orders', { packageId: hotPkg.id, kind: 'new', sim: '8997210000000000790', customerName: 'Lina Haddad' })).status, 400, 'never on a SIM card');
+  assert.deepEqual([shopBill.esim, shopBill.fullName, shopBill.lineModes], [true, true, undefined], 'an eSIM, registered with the full name');
+  assert.equal(shopCat.packages.find((p) => p.id === hotPkg.id)?.esim, true);
+  assert.equal((await call(null, 'POST', '/api/shop/orders', { packageId: billPkg.id, kind: 'esim', customerName: 'Lina' })).status, 400, 'first and family names');
   // An agent still sells these lines on a SIM card only.
   const agent = (await ok(call(null, 'POST', '/api/login', { username: 'agent-ay', password: 'secret1' }))).token;
   assert.equal((await call(agent, 'POST', '/api/lines', { kind: 'new', esim: true, packageId: billPkg.id, number: '0513000001', customerName: 'Lina Haddad' })).status, 400);
@@ -393,14 +370,15 @@ test('Aylol lines in the shop: on the customer SIM or as an eSIM with its QR, eS
   const line = dbq('SELECT l.* FROM lines l JOIN shop_orders o ON o.line_id = l.id WHERE o.code = ?').get(o.code);
   assert.deepEqual([line.status, line.esim, line.number, line.sim], ['active', 1, row.number, `8997200000000${row.number.slice(-6)}`]);
 
-  // Over WhatsApp, the assistant's order takes the way of the line, and asks it when the package has both.
+  // Over WhatsApp, the assistant's order is an eSIM too: the full name asked, never a SIM card.
   const wa = require('../src/whatsapp');
   const jid = '970599777666@s.whatsapp.net';
-  const ctx = () => ({ jid, phone: '0599777666', shop: require('../src/routes/shop').shopCatalogResponse(), startedAt: Date.now(), facts: [], after: [], prices: new Set(), phones: new Set() });
-  const asked = await wa._test.agentTool('create_order', { package_id: billPkg.id, customer_name: 'Omar Nasser' }, ctx());
-  assert.deepEqual(asked.need, ['line_type']);
+  const shopNow = await require('../src/routes/shop').shopCatalog();
+  const ctx = () => ({ jid, phone: '0599777666', shop: shopNow, startedAt: Date.now(), facts: [], after: [], prices: new Set(), phones: new Set() });
+  const asked = await wa._test.agentTool('create_order', { package_id: billPkg.id, customer_name: 'Omar' }, ctx());
+  assert.deepEqual(asked.need, ['customer_name']);
   const c1 = ctx();
-  const shown = await wa._test.agentTool('create_order', { line_type: 'esim' }, c1);
+  const shown = await wa._test.agentTool('create_order', { customer_name: 'Omar Nasser' }, c1);
   assert.equal(shown.awaiting_confirmation, true);
   assert.match(c1.facts.join('\n'), new RegExp(`${39 + fee} ₪[\\s\\S]*eSIM`));
   assert.doesNotMatch(c1.facts.join('\n'), /رقم الشريحة/);
@@ -409,16 +387,12 @@ test('Aylol lines in the shop: on the customer SIM or as an eSIM with its QR, eS
   assert.equal(made.ok, true, JSON.stringify(made));
   const waRow = dbq('SELECT * FROM shop_orders WHERE code = ?').get(made.order_code);
   assert.deepEqual([waRow.esim, waRow.sim, waRow.amount, waRow.customer_name], [1, '', 39 + fee, 'Omar Nasser']);
-  // An eSIM-only package over WhatsApp: no way to ask, and never a SIM card.
-  const wrong = await wa._test.agentTool('create_order', { package_id: hotPkg.id, customer_name: 'Omar Nasser', line_type: 'sim' }, ctx());
-  assert.equal(wrong.ok, false);
-  assert.deepEqual(wrong.line_types, ['esim']);
 
   // Pelephone (company 5, Sky5G) as an eSIM: one of the site's eSIMs, sent as its page sends it (JSON, esim 1, the
   // eSIM's own SIM number, key and period); the QR asked as the page asks it, and kept as an image.
   const pelePkg = (await ok(call(admin, 'GET', '/api/catalog'))).packages.find((p) => p.supplier === 'ay' && p.cost === 30);
   const peleShop = (await ok(call(null, 'GET', '/api/shop'))).packages.find((p) => p.id === pelePkg.id);
-  assert.deepEqual(peleShop.lineModes, ['sim', 'esim']);
+  assert.equal(peleShop.esim, true);
   const po = await ok(call(null, 'POST', '/api/shop/orders', { packageId: pelePkg.id, kind: 'new', lineEsim: true, customerName: 'Rana Saleh' }));
   const prow = dbq('SELECT * FROM shop_orders WHERE code = ?').get(po.code);
   assert.deepEqual([prow.esim, prow.sim, prow.number, prow.amount], [1, '', '0555000780', 45 + fee]);
@@ -433,19 +407,21 @@ test('Aylol lines in the shop: on the customer SIM or as an eSIM with its QR, eS
   assert.equal(pdone.esimQr, `data:image/png;base64,${PNG.toString('base64')}`);
 
   // Only what has a number free is shown (on the site and in WhatsApp): the site out of eSIM numbers for these packages,
-  // their eSIM way goes (an eSIM-only package goes altogether); back once it has them again.
+  // they go; back once it has them again.
   const S = require('../src/routes/shop');
   site.noEsim = true;
   await S.refreshStock();
   let inShop = (await ok(call(null, 'GET', '/api/shop'))).packages;
-  assert.deepEqual(inShop.find((p) => p.id === billPkg.id).lineModes, ['sim']);
-  assert.equal(inShop.some((p) => p.id === hotPkg.id), false);
-  assert.ok(inShop.find((p) => p.id === pelePkg.id), 'others stay');
+  assert.equal(inShop.some((p) => p.id === billPkg.id || p.id === hotPkg.id), false);
   assert.doesNotMatch(wa._test.agentSystem(S.shopCatalogResponse(), require('../src/waconfig').config()), new RegExp(`#${hotPkg.id} `));
   site.noEsim = false;
   await S.refreshStock();
+  // The site offers its two eSIM numbers again, but one was sold here (a line) and the other is held by the WhatsApp
+  // order: still none free. That order ends, and its number is on sale again at once.
+  assert.equal((await ok(call(null, 'GET', '/api/shop'))).packages.some((p) => p.id === hotPkg.id), false, 'a sold or held number is not free');
+  await ok(call(null, 'POST', `/api/shop/orders/${made.order_code}/cancel`));
   inShop = (await ok(call(null, 'GET', '/api/shop'))).packages;
-  assert.deepEqual(inShop.find((p) => p.id === billPkg.id).lineModes, ['sim', 'esim']);
+  assert.ok(inShop.find((p) => p.id === billPkg.id));
   assert.ok(inShop.find((p) => p.id === hotPkg.id));
 
   // The customer's new number never on curl's command line (the eSIM is asked with it in the request's body).

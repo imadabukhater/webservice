@@ -91,7 +91,17 @@ function openSettings() {
         <input class="input ltr" id="st-gp" name="gmailPass" type="password" autocomplete="new-password" placeholder="xxxx xxxx xxxx xxxx"></div>
       <div class="field"><label for="st-mf">نطاق مرسل الإشعارات</label><input class="input ltr" id="st-mf" name="mailFrom" value="${esc(s.mailFrom)}">
         <span class="hint">نطاق المرسل، مثل jawwalpay.ps. كما يعتمد النظام تلقائياً إشعارات بال باي («الدفع لصديق» / SMSForwarder) المرسلة من نفس بريد Gmail المربوط أعلاه.</span></div>
-      <button type="button" class="btn btn-soft btn-block" id="st-check">${icon('refresh')}فحص البريد الآن</button>`,
+      <button type="button" class="btn btn-soft btn-block" id="st-check">${icon('refresh')}فحص البريد الآن</button>
+      <div class="divider"></div>
+      <h3>الدفع المباشر عبر جوال باي (واجهة الشركات)</h3>
+      <p class="small muted">يكتب الزبون رقم جوال باي فيصله رمز تحقق، ويُخصم المبلغ من محفظته عند تأكيد الرمز ويُفعَّل طلبه فوراً — بلا تحويل يدوي ولا إشعار. يبقى التحويل اليدوي متاحاً كبديل.
+        لا تستخدم نفس الحساب من خادم أو برنامج آخر في نفس الوقت: تسجيل الدخول المتكرر يمنع الحساب 15 دقيقة.</p>
+      <label class="switch-row"><span class="grow"><b>تفعيل الدفع المباشر في المتجر</b><small>${s.jcConfigured ? 'بيانات الحساب محفوظة' : 'أدخل بيانات الحساب أولاً'}</small></span><input class="switch" type="checkbox" name="jcEnabled" ${s.jcEnabled ? 'checked' : ''}></label>
+      <div class="row2"><div class="field"><label for="st-jcm">رقم المشترك (manager_id)</label><input class="input ltr" id="st-jcm" name="jcManagerId" value="${esc(s.jcManagerId || '')}" inputmode="numeric" autocomplete="off"></div>
+        <div class="field"><label for="st-jcu">اسم مستخدم الشركة</label><input class="input ltr" id="st-jcu" name="jcUser" value="${esc(s.jcUser || '')}" autocomplete="off" placeholder="corp-…"></div></div>
+      <div class="field"><label for="st-jcp">كلمة المرور ${s.jcConfigured ? '<span class="opt">(محفوظة — اتركها فارغة للإبقاء عليها)</span>' : ''}</label>
+        <input class="input ltr" id="st-jcp" name="jcPass" type="password" autocomplete="new-password"></div>
+      <button type="button" class="btn btn-soft btn-block" id="st-jctest">${icon('refresh')}اختبار الاتصال بواجهة الشركات</button>`,
     submit: 'حفظ',
     onMount(form) {
       form.querySelector('#st-check').addEventListener('click', async (e) => {
@@ -102,9 +112,19 @@ function openSettings() {
           changed();
         } catch (ex) { toast(ex.message, { error: true }); } finally { e.target.disabled = false; }
       });
+      // Tests what is saved (save first): reuses the token held, signs in only when none is.
+      form.querySelector('#st-jctest').addEventListener('click', async (e) => {
+        const btn = e.currentTarget;
+        btn.disabled = true;
+        try {
+          const r = await api.post('/api/shop/admin/jawwal/test');
+          toast(`الاتصال يعمل${r.tokenExpiresAt ? ` — الرمز صالح حتى ${new Date(r.tokenExpiresAt).toLocaleTimeString('ar')}` : ''}`);
+        } catch (ex) { toast(ex.message, { error: true }); } finally { btn.disabled = false; }
+      });
     },
     async onSubmit(form) {
       V.settings = await api.put('/api/settings', {
+        jcEnabled: form.elements.jcEnabled.checked, jcManagerId: field(form, 'jcManagerId'), jcUser: field(form, 'jcUser'), jcPass: field(form, 'jcPass'),
         shopEnabled: form.elements.shopEnabled.checked,
         shopInstant: form.elements.shopInstant.checked,
         shopAutoMax: field(form, 'shopAutoMax'), shopHourLimit: field(form, 'shopHourLimit'),
@@ -133,6 +153,7 @@ async function openOrder(id) {
         ${kv('رقم التواصل', o.contactPhone && o.contactPhone !== o.number ? phone(o.contactPhone) : '')}${kv('أُنشئ', fmtDateTime(o.createdAt))}${kv('أرسل التحويل', o.proofAt ? fmtDateTime(o.proofAt) : '')}
         ${kv('الرقم المرجعي', o.payReference ? `<span class="ltr">${esc(o.payReference)}</span>` : '')}${kv('رقم المحوِّل', o.payPhone ? phone(o.payPhone) : '')}${kv('اسم المحوِّل', esc(o.payName))}
         ${kv('التحقق', esc(o.verifiedBy))}${kv('البريد', o.email ? `<span class="ltr">${esc(o.email)}</span>` : '')}
+        ${o.jawwal ? kv('جوال باي مباشر', `${o.jawwal.mobile ? phone(o.jawwal.mobile) : ''} ${o.jawwal.invoiceId ? `<span class="ltr small">${esc(o.jawwal.invoiceId)}</span>` : ''}${o.jawwal.checking ? ' · <b>بانتظار رد جوال باي</b>' : ''}`) : ''}
         ${o.esim ? kv('رسوم QR', fmtMoney(o.esimFee || 0)) : ''}
         ${o.esim ? kv('رمز QR', o.qrMailedAt ? `أُرسل بالبريد ${fmtDateTime(o.qrMailedAt)}` : o.email ? 'يُرسل بالبريد بعد التفعيل' : 'يظهر للزبون في صفحة الطلب') : ''}
         ${o.esimCode ? kv('كود التفعيل اليدوي', `<code class="ltr small">${esc(o.esimCode)}</code>`) : ''}</div>

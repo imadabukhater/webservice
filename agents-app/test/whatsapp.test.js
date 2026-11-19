@@ -298,7 +298,13 @@ test('WhatsApp: agents sell as in the portal; customers buy in the chat, their t
   // token, its own project), which asks the shop — the code — for what it needs: packages and prices, a new order, an
   // order's state, a payment check. The code alone decides them, and writes an order's details under the reply.
   wa.saveConfig({ aiDailyUsd: 0.6 });
+  // The shop sells eSIMs only: a recharge package with a customer price is still not on sale. The site gets more
+  // eSIM numbers, and the shop sees them at its next look.
   q('UPDATE packages SET shop_price = 50 WHERE id = ?').run(cardPkg.id);
+  STOCKS.push({ id: 902, phone: '0533334444', sim_number: '8997210000000000902' }, { id: 903, phone: '0534445555', sim_number: '8997210000000000903' });
+  await require('../src/routes/shop').refreshStock();
+  const esimFee = require('../src/routes/shop').shopCatalogResponse().packages.find((p) => p.id === esimPkg.id).esimFee;
+  const esimTotal = 55 + esimFee;
   const C5 = '972548887766@s.whatsapp.net';
   const ADM = '970599000111@s.whatsapp.net';
   const ask = async (text, script) => {
@@ -312,14 +318,15 @@ test('WhatsApp: agents sell as in the portal; customers buy in the chat, their t
   const toolAnswer = (call) => call.body.contents.at(-1).parts[0].functionResponse;
 
   // The whole shop is in front of it from the first message (packages, prices, eSIM fees, how to pay): it answers at once.
-  let r = await ask('شو عندكم لهوت؟', [{ text: 'أهلين فيك! عنا شحن هوت 50 ₪ وeSIM هوت 55 ₪، شو بتحب؟' }]);
-  assert.match(r.got, /أهلين فيك! عنا شحن هوت 50 ₪/);
+  let r = await ask('شو عندكم لهوت؟', [{ text: 'أهلين فيك! عنا eSIM هوت 55 ₪، شو بتحب؟' }]);
+  assert.match(r.got, /أهلين فيك! عنا eSIM هوت 55 ₪/);
   assert.equal(r.calls.length, 1, 'one question: nothing to ask the shop for the packages');
   assert.match(r.calls[0].url, /^\/v1\/projects\/agents-portal-test\/locations\/global\/publishers\/google\/models\/gemini-3\.1-flash-lite:generateContent$/);
   assert.equal(r.calls[0].auth, 'Bearer server-token');
   assert.deepEqual(r.calls[0].body.tools[0].functionDeclarations.map((f) => f.name).sort(), ['create_order', 'order_status', 'submit_payment']);
   const sheet = r.calls[0].body.systemInstruction.parts[0].text;
-  assert.match(sheet, new RegExp(`#${cardPkg.id} .*— 50 ₪`));
+  assert.equal(sheet.includes(`#${cardPkg.id} `), false, 'no recharge');
+  assert.match(sheet, /eSIM بس/);
   assert.match(sheet, new RegExp(`#${esimPkg.id} .*55 ₪ \\+ رسوم eSIM \\d+ ₪ = \\d+ ₪`));
   assert.match(sheet, /0599000000/, 'how to pay');
   assert.match(r.calls[0].body.systemInstruction.parts[0].text, /العامية الفلسطينية/);
@@ -328,29 +335,34 @@ test('WhatsApp: agents sell as in the portal; customers buy in the chat, their t
 
   // The customer picks one: what is missing is asked first; then the shop makes the order, and its number, amount and
   // how to pay are written under the reply by the code.
-  r = await ask('بدي الشحن', [{ call: 'create_order', args: { package_id: cardPkg.id } }, { text: 'تكرم، شو الرقم اللي بدك تشحنه؟' }]);
-  assert.match(r.got, /شو الرقم اللي بدك تشحنه/);
-  assert.deepEqual(toolAnswer(r.calls[1]).response.need, ['phone_number']);
+  // A recharge is not sold: there is no such package to order.
+  r = await ask('بدي شحن لرقمي', [{ call: 'create_order', args: { package_id: cardPkg.id } }, { text: 'عنا eSIM بس، بتحب أعرضلك؟' }]);
+  assert.equal(toolAnswer(r.calls[1]).response.ok, false);
+  r = await ask('بدي eSIM هوت', [{ call: 'create_order', args: { package_id: esimPkg.id } }, { text: 'تكرم، شو اسمك الكامل؟' }]);
+  assert.match(r.got, /شو اسمك الكامل/);
+  assert.deepEqual(toolAnswer(r.calls[1]).response.need, ['customer_name']);
   const ordersBefore = q('SELECT COUNT(*) AS n FROM shop_orders').get().n;
   // With everything given, the code shows the order's summary and waits for the customer's yes: nothing is ordered in
   // the same message, even if the model tries to confirm it at once. The package given before is not asked again.
-  r = await ask('0598887766', [{ call: 'create_order', args: { phone_number: '0598887766' } }, { call: 'create_order', args: { confirmed: true } },
+  r = await ask('سامي خالد', [{ call: 'create_order', args: { customer_name: 'سامي خالد' } }, { call: 'create_order', args: { confirmed: true } },
     { text: 'تمام، هاي تفاصيل طلبك، بتأكدلي؟' }]);
   assert.match(r.got, /تأكيد الطلب/);
-  assert.match(r.got, new RegExp(`${cardPkg.name}[\\s\\S]*50 ₪[\\s\\S]*0598887766`));
+  assert.match(r.got, new RegExp(`${esimPkg.name}[\\s\\S]*${esimTotal} ₪[\\s\\S]*سامي خالد`));
+  assert.doesNotMatch(r.got, /رقم الشريحة|رقم الهاتف/);
   assert.equal(r.got.split('تأكيد الطلب').length, 2, 'the summary once');
   assert.equal(q('SELECT COUNT(*) AS n FROM shop_orders').get().n, ordersBefore, 'not before the customer says yes');
   assert.equal(toolAnswer(r.calls[2]).response.awaiting_confirmation, true);
-  // The customer says yes: the order is made, with what was given before (here, the number).
-  r = await ask('نعم', [{ call: 'create_order', args: { confirmed: true } }, { text: 'تمام، حجزتلك الشحن 👍' }]);
-  assert.match(r.got, /تمام، حجزتلك الشحن/);
+  // The customer says yes: the order is made, with what was given before (here, the name).
+  r = await ask('نعم', [{ call: 'create_order', args: { confirmed: true } }, { text: 'تمام، حجزتلك الشريحة 👍' }]);
+  assert.match(r.got, /تمام، حجزتلك الشريحة/);
   const aiCode = /رقم \*([A-Z0-9]{8})\*/.exec(r.got)?.[1];
   assert.ok(aiCode, r.got);
-  assert.match(r.got, /50 ₪/);
+  assert.match(r.got, new RegExp(`${esimTotal} ₪`));
   assert.match(r.got, /0599000000/, 'the shop\'s payment number, from the code');
   assert.equal(q('SELECT COUNT(*) AS n FROM shop_orders').get().n, ordersBefore + 1);
   const aiOrder = q('SELECT * FROM shop_orders WHERE code = ?').get(aiCode);
-  assert.deepEqual([aiOrder.number, aiOrder.amount, aiOrder.status], ['0598887766', 50, 'awaiting_payment']);
+  assert.deepEqual([aiOrder.esim, aiOrder.customer_name, aiOrder.amount, aiOrder.status], [1, 'سامي خالد', esimTotal, 'awaiting_payment'], 'the eSIM fee shown is charged');
+  assert.ok(['0533334444', '0534445555'].includes(aiOrder.number), aiOrder.number);
   assert.equal(toolAnswer(r.calls[1]).response.order_code, aiCode);
 
   // "I paid": the shop checks the transfer, and the order's state is written under the reply.
@@ -420,10 +432,11 @@ test('WhatsApp: agents sell as in the portal; customers buy in the chat, their t
   r = await ask('امتى بتردوا؟', [{ text: 'منرد من 9 الصبح لـ 10 بالليل 👍' }]);
   assert.match(r.calls[0].body.systemInstruction.parts[0].text, /الدعم من 9 صباحاً حتى 10 مساءً/);
   assert.match(r.got, /منرد من 9 الصبح/);
-  // A top-up ordered in the chat, paid with a receipt photo: the photo is kept with the order for the manager; when
+  // An eSIM ordered in the chat, paid with a receipt photo: the photo is kept with the order for the manager; when
   // the payment goes to review, the manager is told on WhatsApp.
   const C2 = '972541112233@s.whatsapp.net';
-  assert.match(await cSay(C2, '0541112233', 'بدي شحن 0529998877', [{ call: 'create_order', args: { package_id: cardPkg.id, phone_number: '0529998877' } }, { text: 'تكرم 👍' }]), /تأكيد الطلب/);
+  const boughtBefore = site.purchases.length;
+  assert.match(await cSay(C2, '0541112233', 'بدي eSIM هوت، اسمي رامي سالم', [{ call: 'create_order', args: { package_id: esimPkg.id, customer_name: 'رامي سالم' } }, { text: 'تكرم 👍' }]), /تأكيد الطلب/);
   const top = await cSay(C2, '0541112233', 'نعم', [{ call: 'create_order', args: { confirmed: true } }, { text: 'حجزتلك 👍' }]);
   site.agentScript = null;
   wa.saveConfig({ aiDailyUsd: 0 }); // the rest: agents, as without the assistant
@@ -439,7 +452,7 @@ test('WhatsApp: agents sell as in the portal; customers buy in the chat, their t
   q("UPDATE shop_orders SET status = 'review' WHERE code = ?").run(topCode);
   await wa._test.watchShop();
   assert.ok(sent.find((m) => m.jid === ADM && m.text && m.text.includes(topCode) && m.text.includes('مراجعتك')), 'the manager is told');
-  assert.equal(site.subscribes.filter((x) => x.phone === '0529998877').length, 1, 'the top-up waits for the payment');
+  assert.equal(site.purchases.length, boughtBefore, 'the eSIM waits for the payment');
 
   // What WhatsApp delivers: private chats only, a LID chat with its phone, and old messages are not answered.
   const n = sent.length;

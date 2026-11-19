@@ -15,40 +15,46 @@ const ayRoutes = require('../src/routes/aylol');
 
 const t0 = Date.now();
 const co = q("INSERT INTO companies (name, sort) VALUES ('شركة', 1)").run().lastInsertRowid;
-const pkg = (name, shopPrice, ref = '', extra = {}) => q(`INSERT INTO packages (company_id, name, cost, price, shop_price, active, sort, kind, art_card_id, art_price, supplier_cost)
-  VALUES (?, ?, ?, ?, ?, 1, 1, 'card', ?, ?, ?)`).run(co, name, extra.cost ?? shopPrice, shopPrice, shopPrice, ref, extra.artPrice ?? null, extra.supplierCost ?? null).lastInsertRowid;
-setSetting('shop_enabled', '1');
+// The shop sells eSIMs only, each on a number its supplier has free: QuickLine's (qln:) and Aylol's (ay:esim:) here,
+// their free numbers given by stand-ins for the suppliers.
+const pkg = (name, shopPrice, ref = 'qln:2564:30', extra = {}) => q(`INSERT INTO packages (company_id, name, cost, price, shop_price, active, sort, kind, art_card_id, art_price, supplier_cost)
+  VALUES (?, ?, ?, ?, ?, 1, 1, 'invoice', ?, ?, ?)`).run(co, name, extra.cost ?? shopPrice, shopPrice, shopPrice, ref, extra.artPrice ?? null, extra.supplierCost ?? null).lastInsertRowid;
+let free = 0;
+const freePhone = () => `0582${String(++free).padStart(6, '0')}`;
+require('../src/quickline').freeNumbers = async () => Array.from({ length: 3 }, () => ({ id: free + 1, phone: freePhone(), sim: '', qr: '' }));
+ayRoutes.freeNumbers = async () => [{ phone: freePhone() }];
+for (const [k, v] of [['shop_enabled', '1'], ['ql_user', 'dealer'], ['ql_pass', 'x'], ['aylol_user', 'dealer'], ['aylol_pass', 'x']]) setSetting(k, v);
 const notices = () => q("SELECT title, body FROM notifications WHERE ts >= ? ORDER BY id").all(t0);
 
-test('at most so many orders an hour from one customer; another customer is not held back', () => {
-  const p = pkg('كرت 20', 20);
+test('at most so many orders an hour from one customer; another customer is not held back', async () => {
+  const p = pkg('eSIM 20', 20);
   setSetting('shop_hour_limit', '2');
-  const order = (number, clientId) => S.createOrder({ packageId: p, kind: 'recharge', number }, { ip: 'net-1', clientId });
-  order('0591111111', 'browser-a');
+  const order = (contactPhone, clientId) => S.createOrder({ packageId: p, kind: 'esim', customerName: 'زبون', contactPhone }, { ip: 'net-1', clientId });
+  await order('0591111111', 'browser-a');
   // Its first order paid or not, the same browser makes a second one for another number…
   q("UPDATE shop_orders SET status = 'cancelled'").run();
-  order('0592222222', 'browser-a');
+  await order('0592222222', 'browser-a');
   q("UPDATE shop_orders SET status = 'cancelled'").run();
   // …but not a third within the hour, whatever the number.
-  assert.throws(() => order('0593333333', 'browser-a'), /2 طلبات في الساعة/);
+  await assert.rejects(() => order('0593333333', 'browser-a'), /2 طلبات في الساعة/);
   // The same contact phone from other browsers counts too: a second order for it is made, a third is not.
-  assert.ok(order('0591111111', 'browser-b').code);
+  assert.ok((await order('0591111111', 'browser-b')).code);
   q("UPDATE shop_orders SET status = 'cancelled'").run();
-  assert.throws(() => order('0591111111', 'browser-e'), /طلبات في الساعة/);
+  await assert.rejects(() => order('0591111111', 'browser-e'), /طلبات في الساعة/);
   // Someone else on the same network is not held back.
-  assert.ok(order('0594444444', 'browser-c').code);
+  assert.ok((await order('0594444444', 'browser-c')).code);
   // 0: no limit.
   q("UPDATE shop_orders SET status = 'cancelled'").run();
   setSetting('shop_hour_limit', '0');
-  assert.ok(order('0593333333', 'browser-a').code);
+  assert.ok((await order('0593333333', 'browser-a')).code);
   q("UPDATE shop_orders SET status = 'cancelled'").run();
   setSetting('shop_hour_limit', '3');
 });
 
-test('a paid order above the cap waits for the manager, with the payment found; below it, it goes on by itself', () => {
+test('a paid order above the cap waits for the manager, with the payment found; below it, it goes on by itself', async () => {
   setSetting('shop_auto_max', '100');
   const big = pkg('باقة كبيرة', 150);
-  const o = S.createOrder({ packageId: big, kind: 'recharge', number: '0595555555' }, { ip: 'net-2', clientId: 'browser-d' });
+  const o = await S.createOrder({ packageId: big, kind: 'esim', customerName: 'زبون كبير' }, { ip: 'net-2', clientId: 'browser-d' });
   const row = S.byCode(o.code);
   q("UPDATE shop_orders SET status = 'verifying', proof_at = ?, pay_reference = 'REF777' WHERE id = ?").run(Date.now(), row.id);
   q(`INSERT INTO payment_mails (uid_validity, uid, message_id, trusted, from_addr, subject, received_at, amount, reference, sender_phone, sender_name, body, created_at)
@@ -67,27 +73,27 @@ test('a paid order above the cap waits for the manager, with the payment found; 
   setSetting('shop_auto_max', '0');
 });
 
-test("an Aylol sale the account cannot pay for is refused before the customer pays; the manager is told when it is low", () => {
-  const ayPkg = pkg('أيلول 70', 80, 'ay:credit:1:22', { cost: 70, artPrice: 70, supplierCost: 63.7 });
-  const order = () => S.createOrder({ packageId: ayPkg, kind: 'recharge', number: '0596666666' }, { ip: 'net-3', clientId: `browser-${Math.random()}` });
+test("an Aylol sale the account cannot pay for is refused before the customer pays; the manager is told when it is low", async () => {
+  const ayPkg = pkg('أيلول eSIM 70', 80, 'ay:esim:10:loaded:501', { cost: 70, artPrice: 70, supplierCost: 63.7 });
+  const order = () => S.createOrder({ packageId: ayPkg, kind: 'esim', customerName: 'زبون أيلول' }, { ip: 'net-3', clientId: `browser-${Math.random()}` });
   setSetting('shop_hour_limit', '0'); // not what is tested here
   // The balance not known yet: nothing is refused here (the site's own check stops a sale it cannot pay).
   ay._state.balance = null;
-  assert.ok(order().code);
+  assert.ok((await order()).code);
   q("UPDATE shop_orders SET status = 'cancelled'").run();
   // Known, and enough for what the site takes (its own cost, 63.7): the order is made.
   setSetting('aylol_low_balance', '50');
   Object.assign(ay._state, { balance: 64, balanceAt: Date.now() });
-  assert.ok(order().code);
+  assert.ok((await order()).code);
   q("UPDATE shop_orders SET status = 'cancelled'").run();
   // Not enough: refused before anything is paid, and the manager is told (once an hour).
   Object.assign(ay._state, { balance: 60, balanceAt: Date.now() });
-  assert.throws(order, /غير متوفرة الآن/);
-  assert.throws(order, /غير متوفرة الآن/);
+  await assert.rejects(order, /غير متوفرة الآن/);
+  await assert.rejects(order, /غير متوفرة الآن/);
   assert.equal(notices().filter((n) => n.title === 'رصيد أيلول لا يكفي').length, 1);
   // A balance seen long ago is not trusted to refuse.
   Object.assign(ay._state, { balance: 1, balanceAt: Date.now() - 7 * 60 * 60_000 });
-  assert.ok(order().code);
+  assert.ok((await order()).code);
   q("UPDATE shop_orders SET status = 'cancelled'").run();
   // Under the alert line: told once, not at every look.
   ayRoutes.balanceSeen(40);
@@ -96,8 +102,8 @@ test("an Aylol sale the account cannot pay for is refused before the customer pa
   assert.match(notices().find((n) => n.title === 'رصيد أيلول منخفض').body, /40 ₪، أقل من 50 ₪/);
   // Packages of other suppliers are never held back by Aylol's balance.
   Object.assign(ay._state, { balance: 0, balanceAt: Date.now() });
-  const other = pkg('مورد آخر', 80, 'ic:5:7');
-  assert.ok(S.createOrder({ packageId: other, kind: 'recharge', number: '0597777777' }, { ip: 'net-4', clientId: 'browser-x' }).code);
+  const other = pkg('مورد آخر', 80);
+  assert.ok((await S.createOrder({ packageId: other, kind: 'esim', customerName: 'زبون آخر' }, { ip: 'net-4', clientId: 'browser-x' })).code);
 });
 
 test("Aylol's balance is read from what the page shows, never from its styles or scripts", () => {

@@ -5,10 +5,19 @@ process.env.ADMIN_PASSWORD = 'admin-pass';
 process.env.IMAP_HOST = '127.0.0.1';
 process.env.IMAP_SECURE = '0';
 process.env.SHOP_VERIFY_MS = '1500';
+process.env.ART_CHECK_MS = '50';
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const net = require('node:net');
+const { fakeQuickLine } = require('./fake-quickline');
+
+// The supplier the shop's eSIMs come from.
+const QL = fakeQuickLine();
+const until = async (fn, ms = 5000) => {
+  const end = Date.now() + ms;
+  for (;;) { const v = await fn(); if (v) return v; if (Date.now() > end) throw new Error('timed out'); await new Promise((r) => setTimeout(r, 60)); }
+};
 
 // ---------- a small IMAP server holding test emails ----------
 const inbox = [];
@@ -73,10 +82,11 @@ const PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJA
 test.before(async () => {
   await new Promise((r) => imap.listen(0, '127.0.0.1', r));
   process.env.IMAP_PORT = String(imap.address().port);
+  process.env.QL_BASE = await QL.listen();
   ({ server } = require('../server'));
   await new Promise((r) => server.listen(0, () => { base = `http://127.0.0.1:${server.address().port}`; r(); }));
 });
-test.after(() => { server.close(); imap.close(); });
+test.after(() => { server.close(); imap.close(); QL.close(); });
 
 test('email parsing: MIME, encoded headers, Arabic digits and sender authentication', () => {
   const mail = require('../src/mail');
@@ -124,19 +134,19 @@ test('email parsing: MIME, encoded headers, Arabic digits and sender authenticat
   assert.equal(matchReason({ pay_reference: '85749' }, { reference: '2922947585749', trusted: 1 }), 'الرقم المرجعي', 'last 5+ digits of long reference match');
 });
 
-test('customer shop: order, JawwalPay proof, automatic match from Gmail, fulfilment and manual review', async () => {
+test('customer shop: eSIMs only, JawwalPay proof, automatic match from Gmail, fulfilment and manual review', async () => {
   const admin = (await ok(call(null, 'POST', '/api/login', { username: 'admin', password: 'admin-pass' }))).token;
 
   // Closed until the manager opens it.
   assert.equal((await ok(call(null, 'GET', '/api/shop'))).enabled, false);
-  assert.equal((await call(null, 'POST', '/api/shop/orders', { packageId: 1, number: '0521234567' })).status, 403);
+  assert.equal((await call(null, 'POST', '/api/shop/orders', { kind: 'esim', packageId: 1, customerName: 'زبون' })).status, 403);
 
+  // Packages on a SIM card (here a direct company's) are the agents' only: never in the shop.
   const cat = await ok(call(admin, 'GET', '/api/catalog'));
   const cellcom = cat.companies.find((c) => c.name === 'سلكوم');
-  const partner = cat.companies.find((c) => c.name === 'بارتنر');
   await ok(call(admin, 'PUT', `/api/companies/${cellcom.id}`, { activation: 'direct' }));
   const p500 = cat.packages.find((p) => p.name === '500 جيجا');
-  const pPartner = cat.packages.find((p) => p.companyId === partner.id);
+  const pPartner = cat.packages.find((p) => p.companyId === cat.companies.find((c) => c.name === 'بارتنر').id);
   await ok(call(admin, 'PUT', `/api/packages/${p500.id}`, { cost: 60, price: 80, shopPrice: 95 }));
   await ok(call(admin, 'PUT', `/api/packages/${pPartner.id}`, { cost: 20, price: 30, shopPrice: 40 }));
   assert.equal((await ok(call(admin, 'GET', '/api/catalog'))).packages.find((p) => p.id === p500.id).shopPrice, 95);
@@ -148,17 +158,25 @@ test('customer shop: order, JawwalPay proof, automatic match from Gmail, fulfilm
   assert.equal(settings.gmailConfigured, true);
   assert.equal(settings.gmailPass, undefined, 'the app password never leaves the server');
 
+  // On sale: the supplier's eSIM with numbers free, and nothing else.
+  const esim = await QL.esimPackage(call, ok, admin, 95);
   const pub = await ok(call(null, 'GET', '/api/shop'));
   assert.equal(pub.enabled, true);
   assert.deepEqual(pub.jawwalpay, { number: '0599000000', name: 'متجر الاتصالات' });
-  assert.deepEqual(pub.packages.map((p) => [p.id, p.price]), [[p500.id, 95], [pPartner.id, 40]]);
+  assert.deepEqual(pub.packages.map((p) => [p.id, p.price, p.esim, p.kind]), [[esim.id, 95, true, 'esim']]);
   assert.equal(pub.packages[0].cost, undefined, 'customers never see costs');
+  assert.equal((await call(null, 'POST', '/api/shop/orders', { packageId: p500.id, kind: 'recharge', number: '0521234567' })).status, 404, 'no recharge');
+  assert.equal((await call(null, 'POST', '/api/shop/orders', { packageId: p500.id, kind: 'new', number: '0521234567', sim: '8997202123456789012' })).status, 404, 'no SIM card');
+
+  const order = (customerName, extra = {}) => ok(call(null, 'POST', '/api/shop/orders', { kind: 'esim', packageId: esim.id, customerName, ...extra }));
+  const done = (code) => until(async () => (await ok(call(null, 'GET', `/api/shop/orders/${code}`))).stage === 'done');
 
   // ----- 1: reference number matches an authenticated email -----
-  const o1 = await ok(call(null, 'POST', '/api/shop/orders', { packageId: p500.id, number: '+972 52-123-4567', customerName: 'زبون أول' }));
+  const o1 = await order('زبون أول');
   assert.equal(o1.status, 'awaiting_payment');
   assert.equal(o1.amount, 95);
-  assert.equal(o1.number, '0521234567');
+  assert.equal(o1.esim, true);
+  assert.match(o1.number, /^0581/, 'a number of the supplier');
   assert.match(o1.code, /^[A-Z0-9]{8}$/);
   assert.equal((await call(null, 'POST', `/api/shop/orders/${o1.code}/proof`, {})).status, 400, 'something to verify is required');
   let v = await ok(call(null, 'POST', `/api/shop/orders/${o1.code}/proof`, { payReference: 'tx-1001' }));
@@ -169,21 +187,19 @@ test('customer shop: order, JawwalPay proof, automatic match from Gmail, fulfilm
   assert.equal(check.matched, 1);
   v = await ok(call(null, 'GET', `/api/shop/orders/${o1.code.toLowerCase()}`));
   assert.equal(v.status, 'paid');
-  assert.equal(v.stage, 'done', 'direct company: active at once');
-  assert.ok(v.expiresAt > Date.now());
+  await done(o1.code);
   assert.ok(imapLog.some((c) => /^UID FETCH \d+ BODY\.PEEK\[\]$/.test(c)), 'emails stay unread');
 
   const summary = await ok(call(admin, 'GET', '/api/shop/admin/summary'));
   const shopAgent = (await ok(call(admin, 'GET', '/api/agents'))).find((a) => a.id === summary.agentId);
   assert.equal(shopAgent.name, 'متجر الزبائن');
-  assert.equal(shopAgent.balance, 15, 'paid 95, charged the agent price 80');
   const lines = await ok(call(admin, 'GET', `/api/lines?agentId=${shopAgent.id}`));
-  assert.equal(lines[0].number, '0521234567');
+  assert.equal(lines[0].number, o1.number);
   assert.equal(lines[0].customerPrice, 95);
 
   // ----- 2: a forged email (no Gmail authentication) is never trusted -----
   addMail('استلمت حوالة بمبلغ 95 ₪ من الرقم 0597777777', { from: 'JawwalPay <notify@jawwal.ps>', auth: '' });
-  const o2 = await ok(call(null, 'POST', '/api/shop/orders', { packageId: p500.id, number: '0527654321' }));
+  const o2 = await order('زبون ثانٍ');
   v = await ok(call(null, 'POST', `/api/shop/orders/${o2.code}/proof`, { payPhone: '0597777777', receipt: PNG }));
   assert.equal(v.status, 'verifying');
   await new Promise((r) => setTimeout(r, 1600));
@@ -199,17 +215,18 @@ test('customer shop: order, JawwalPay proof, automatic match from Gmail, fulfilm
   assert.equal(forged.trusted, false);
   // The manager checked JawwalPay and confirms by hand, linking the email.
   const ap = await ok(call(admin, 'POST', `/api/shop/admin/orders/${a2.id}/approve`, { mailId: forged.id }));
-  assert.equal(ap.stage, 'done');
+  assert.equal(ap.status, 'paid');
   assert.match(ap.verifiedBy, /يدوي/);
+  await done(o2.code);
 
   // ----- 3: the email arrives before the proof; sender name matches -----
   addMail('استلمت 95 ILS\nالمرسل: مُحمّد أحمد خليل\nرقم العملية 55667788');
-  const o3 = await ok(call(null, 'POST', '/api/shop/orders', { packageId: p500.id, number: '0531112222' }));
+  const o3 = await order('محمد أحمد');
   v = await ok(call(null, 'POST', `/api/shop/orders/${o3.code}/proof`, { payName: 'محمد احمد' }));
-  assert.equal(v.stage, 'done', 'proof triggers an immediate mailbox check');
+  assert.equal(v.status, 'paid', 'proof triggers an immediate mailbox check');
 
   // The same email cannot pay a second order.
-  const o4 = await ok(call(null, 'POST', '/api/shop/orders', { packageId: p500.id, number: '0531113333' }));
+  const o4 = await order('زبون رابع');
   v = await ok(call(null, 'POST', `/api/shop/orders/${o4.code}/proof`, { payName: 'محمد احمد', payReference: '55667788' }));
   assert.notEqual(v.status, 'paid');
   const a4 = (await ok(call(admin, 'GET', '/api/shop/admin/orders'))).find((o) => o.code === o4.code);
@@ -217,41 +234,31 @@ test('customer shop: order, JawwalPay proof, automatic match from Gmail, fulfilm
   assert.equal(v.status, 'rejected');
   assert.equal((await ok(call(null, 'GET', `/api/shop/orders/${o4.code}`))).response, 'لم يصل التحويل');
 
-  // ----- 4: paid, but the number belongs to another agent: the manager fixes the number and retries -----
-  const ag = await ok(call(admin, 'POST', '/api/agents', { name: 'وكيل', username: 'ag1', password: 'secret1', balance: 500 }));
+  // ----- 4: paid, but the number was taken meanwhile: the manager frees it and carries the order out -----
+  const o5 = await order('زبون خامس');
+  await ok(call(admin, 'POST', '/api/agents', { name: 'وكيل', username: 'ag1', password: 'secret1', balance: 500 }));
   const agTok = (await ok(call(null, 'POST', '/api/login', { username: 'ag1', password: 'secret1' }))).token;
-  await ok(call(agTok, 'POST', '/api/lines', { kind: 'external', number: '0539999999', packageId: p500.id }));
+  const taken = await ok(call(agTok, 'POST', '/api/lines', { kind: 'external', number: o5.number, packageId: p500.id }));
   addMail('استلمت حوالة 95 شيكل Reference: RR-5');
-  const o5 = await ok(call(null, 'POST', '/api/shop/orders', { packageId: p500.id, number: '0539999999' }));
   v = await ok(call(null, 'POST', `/api/shop/orders/${o5.code}/proof`, { payReference: 'RR-5' }));
   assert.equal(v.status, 'paid');
   assert.equal(v.stage, 'paid_issue');
   const a5 = (await ok(call(admin, 'GET', '/api/shop/admin/orders?filter=open'))).find((o) => o.code === o5.code);
-  assert.match(a5.error, /وكيل آخر/);
-  assert.equal((await ok(call(admin, 'GET', '/api/agents'))).find((a) => a.id === shopAgent.id).balance, 45, 'a refused sale leaves no money moved');
-  v = await ok(call(admin, 'POST', `/api/shop/admin/orders/${a5.id}/retry`, { number: '0539990000' }));
-  assert.equal(v.stage, 'done');
-
-  // ----- 5: manual company: paid orders become the manager's tasks -----
-  addMail('استلمت حوالة 40.00 ₪ Ref: PP-9');
-  const o6 = await ok(call(null, 'POST', '/api/shop/orders', { packageId: pPartner.id, number: '0541234567', customerName: 'زبون بارتنر' }));
-  v = await ok(call(null, 'POST', `/api/shop/orders/${o6.code}/proof`, { payReference: 'pp-9' }));
-  assert.equal(v.stage, 'processing');
-  const tasks = await ok(call(admin, 'GET', '/api/tasks?status=open'));
-  const task = tasks.find((t) => t.lineNumber === '0541234567');
-  assert.equal(task.type, 'recharge');
-  await ok(call(admin, 'POST', `/api/tasks/${task.id}/resolve`, { status: 'done' }));
-  assert.equal((await ok(call(null, 'GET', `/api/shop/orders/${o6.code}`))).stage, 'done');
+  assert.match(a5.error, /مفعّل مسبقاً/);
+  const { q } = require('../src/db');
+  q("UPDATE lines SET status = 'disconnected' WHERE id = ?").run(taken.line.id);
+  v = await ok(call(admin, 'POST', `/api/shop/admin/orders/${a5.id}/retry`, {}));
+  assert.ok(v.lineId);
+  await done(o5.code);
 
   // Cancelling is only possible before paying; unknown codes are 404.
-  const o7 = await ok(call(null, 'POST', '/api/shop/orders', { packageId: p500.id, kind: 'new', number: '0551234567', sim: '8997202123456789012' }));
+  const o7 = await order('زبون سابع');
   assert.equal((await ok(call(null, 'POST', `/api/shop/orders/${o7.code}/cancel`))).status, 'cancelled');
   assert.equal((await call(null, 'GET', '/api/shop/orders/NOPE1234')).status, 404);
-  assert.equal((await call(null, 'POST', '/api/shop/orders', { packageId: p500.id, kind: 'new', number: '0551234567', sim: '12' })).status, 400);
 
   // The mailbox list for the manager.
   const mails = await ok(call(admin, 'GET', '/api/shop/admin/mails'));
-  assert.equal(mails.length, 5);
+  assert.equal(mails.length, 4);
   assert.ok(mails.every((m) => m.amount !== null));
 
   // Wrong app password: a clear error.
@@ -320,65 +327,47 @@ test('connected sites: catalog, orders and balance with an API key; invoices', a
   assert.equal(paid.amount, 160);
 });
 
-test('custom company eSIM QR fee, direct eSIM: paid first, real QR from the manager, and bulk package operations', async () => {
+test('the company eSIM fee, no unpaid activation, an eSIM with no supplier number never sold, and bulk package operations', async () => {
   const admin = (await ok(call(null, 'POST', '/api/login', { username: 'admin', password: 'admin-pass' }))).token;
   await ok(call(admin, 'PUT', '/api/settings', { shopEnabled: true, shopInstant: true, esimFee: 10 }));
+  const esim = (await ok(call(admin, 'GET', '/api/catalog'))).packages.find((p) => p.supplier === 'ql' && p.kind === 'invoice');
 
+  // The company's own eSIM fee.
+  await ok(call(admin, 'PUT', `/api/companies/${esim.companyId}`, { esimFee: 25 }));
+  let shop = await ok(call(null, 'GET', '/api/shop'));
+  assert.equal(shop.companies.find((c) => c.id === esim.companyId).esimFee, 25);
+  assert.equal(shop.packages.find((p) => p.id === esim.id).esimFee, 25);
+
+  // An eSIM the manager would fill in by hand (no supplier, no numbers): not on sale, and not ordered.
   const co = await ok(call(admin, 'POST', '/api/companies', { name: 'ليان eSIM', color: '#0ea5e9', esimFee: 25 }));
   const p1 = await ok(call(admin, 'POST', '/api/packages', {
     companyId: co.id, name: 'باقة ليان 100GB', dataGb: 100, price: 45, shopPrice: 60, oldPrice: 75, popular: true, esimEnabled: true,
   }));
-  const p2 = await ok(call(admin, 'POST', '/api/packages', {
-    companyId: co.id, name: 'باقة ليان 200GB', dataGb: 200, price: 65, shopPrice: 80,
-  }));
-
-  const shop = await ok(call(null, 'GET', '/api/shop'));
-  assert.equal(shop.companies.find((c) => c.id === co.id).esimFee, 25);
-  const sp1 = shop.packages.find((p) => p.id === p1.id);
-  assert.equal(sp1.esimFee, 25);
-  assert.equal(sp1.oldPrice, 75);
-  assert.equal(sp1.popular, true);
-  assert.equal(sp1.esim, true);
+  const p2 = await ok(call(admin, 'POST', '/api/packages', { companyId: co.id, name: 'باقة ليان 200GB', dataGb: 200, price: 65, shopPrice: 80 }));
+  shop = await ok(call(null, 'GET', '/api/shop'));
+  assert.equal(shop.packages.some((p) => p.id === p1.id || p.id === p2.id), false);
+  assert.equal(shop.companies.some((c) => c.id === co.id), false, 'a company with nothing on sale is not shown');
+  assert.equal((await call(null, 'POST', '/api/shop/orders', { packageId: p1.id, kind: 'new', esim: true, number: '0591112222', customerName: 'محاولة' })).status, 404);
 
   // When shopInstant is off (default), client-supplied instant:true cannot bypass payment
   await ok(call(admin, 'PUT', '/api/settings', { shopInstant: false }));
-  const unpaidAttempt = await ok(call(null, 'POST', '/api/shop/orders', {
-    packageId: p1.id, kind: 'new', esim: true, instant: true, number: '0591112222', customerName: 'محاولة', contactPhone: '0591112222',
-  }));
+  const unpaidAttempt = await ok(call(null, 'POST', '/api/shop/orders', { packageId: esim.id, kind: 'esim', esim: true, instant: true, customerName: 'محاولة' }));
   assert.equal(unpaidAttempt.status, 'awaiting_payment');
   assert.equal(unpaidAttempt.esimQr, null);
   assert.equal((await call(null, 'POST', `/api/shop/orders/${unpaidAttempt.code}/instant`, {})).status, 403);
 
-  // Even with the old "instant" setting on, nothing skips payment and no QR or code is made up.
+  // Even with the old "instant" setting on, nothing skips payment, and the company fee is charged.
   await ok(call(admin, 'PUT', '/api/settings', { shopInstant: true }));
   assert.equal((await ok(call(null, 'GET', '/api/shop'))).instant, false);
-  const ord = await ok(call(null, 'POST', '/api/shop/orders', {
-    packageId: p1.id, kind: 'new', esim: true, instant: true, number: '0591234567', customerName: 'أحمد', contactPhone: '0591234567',
-  }));
-  assert.equal(ord.amount, 85);
+  const ord = await ok(call(null, 'POST', '/api/shop/orders', { packageId: esim.id, kind: 'esim', esim: true, instant: true, customerName: 'أحمد' }));
+  assert.equal(ord.amount, 95 + 25);
   assert.equal(ord.esimFee, 25);
   assert.equal(ord.status, 'awaiting_payment');
   assert.equal(ord.esimQr, null);
   assert.equal((await call(null, 'POST', `/api/shop/orders/${ord.code}/instant`, {})).status, 403);
-
-  // Paid and verified from the JawwalPay e-mail: the line waits for the manager, still without a QR.
-  const { q } = require('../src/db');
-  q(`INSERT INTO payment_mails (uid_validity, uid, message_id, trusted, from_addr, subject, received_at, amount, reference, sender_phone, sender_name, body, created_at)
-     VALUES (1, 9981, '<direct@jp>', 1, 'noreply@jawwalpay.ps', 'Jawwal Pay', ?, 85, '2922940000001', '', 'احمد محمود يوسف', 'incoming', ?)`).run(Date.now(), Date.now());
-  const paid = await ok(call(null, 'POST', `/api/shop/orders/${ord.code}/proof`, { payReference: '2922940000001' }));
-  assert.equal(paid.status, 'paid');
-  assert.equal(paid.esimQr, null);
-  assert.equal(paid.esimCode, '');
-
-  // The manager carries it out with the supplier's real code: the customer then sees that QR and code.
-  const realCode = 'LPA:1$smdp.example$DIRECT-REAL-1';
-  const realQr = require('../src/qr').dataUrl(realCode);
-  const task = (await ok(call(admin, 'GET', '/api/tasks'))).find((t) => t.lineNumber === '0591234567' && t.status === 'open');
-  await ok(call(admin, 'POST', `/api/tasks/${task.id}/resolve`, { status: 'done', attachment: realQr, esimCode: realCode }));
-  const done = await ok(call(null, 'GET', `/api/shop/orders/${ord.code}`));
-  assert.equal(done.stage, 'done');
-  assert.equal(done.esimQr, realQr);
-  assert.equal(done.esimCode, realCode);
+  await ok(call(null, 'POST', `/api/shop/orders/${unpaidAttempt.code}/cancel`));
+  await ok(call(null, 'POST', `/api/shop/orders/${ord.code}/cancel`));
+  await ok(call(admin, 'PUT', `/api/companies/${esim.companyId}`, { esimFee: '' }));
 
   // Bulk hide, show, esim-enable, and delete
   await ok(call(admin, 'POST', '/api/packages/bulk', { action: 'hide', ids: [p1.id, p2.id] }));
@@ -398,25 +387,23 @@ test('5-minute reservation auto-cancel, 5-minute 1st check, and 3-minute retry (
   const { q } = require('../src/db');
   const admin = (await ok(call(null, 'POST', '/api/login', { username: 'admin', password: 'admin-pass' }))).token;
   await ok(call(admin, 'PUT', '/api/settings', { shopEnabled: true, shopInstant: false }));
-  const cat = await ok(call(admin, 'GET', '/api/catalog'));
-  const co = cat.companies[0];
-  await ok(call(admin, 'PUT', `/api/companies/${co.id}`, { activation: 'direct' }));
-  const pkg = await ok(call(admin, 'POST', '/api/packages', {
-    companyId: co.id, name: 'باقة التحقق', kind: 'card', cost: 20, price: 25, shopPrice: 33, days: 30,
-  }));
+  const pkg = (await ok(call(admin, 'GET', '/api/catalog'))).packages.find((p) => p.supplier === 'ql' && p.kind === 'invoice');
+  await ok(call(admin, 'PUT', `/api/packages/${pkg.id}`, { shopPrice: 33 }));
+  const order = (customerName) => ok(call(null, 'POST', '/api/shop/orders', { kind: 'esim', packageId: pkg.id, customerName }));
+  const mail = (uid, ago, amount, ref, name) => q(`INSERT INTO payment_mails (uid_validity, uid, message_id, trusted, from_addr, subject, received_at, amount, reference, sender_phone, sender_name, body, created_at)
+     VALUES (1, ?, ?, 1, 'noreply@jawwalpay.ps', 'Jawwal Pay', ?, ?, ?, '', ?, 'incoming', ?)`).run(uid, `<m${uid}@jp>`, Date.now() - ago, amount, ref, name, Date.now() - ago);
 
   // 1) Unconfirmed order older than 5 minutes is cancelled automatically
-  const expiredOrd = await ok(call(null, 'POST', '/api/shop/orders', { packageId: pkg.id, number: '0591112233' }));
+  const expiredOrd = await order('زبون منتهي');
   q('UPDATE shop_orders SET created_at = ? WHERE code = ?').run(Date.now() - 5 * 60_000 - 1000, expiredOrd.code);
   const afterExpire = await ok(call(null, 'GET', `/api/shop/orders/${expiredOrd.code}`));
   assert.equal(afterExpire.status, 'cancelled', 'unconfirmed order auto-cancelled after 5 minutes');
   assert.equal((await call(null, 'POST', `/api/shop/orders/${expiredOrd.code}/proof`, { payName: 'محمد احمد' })).status, 400);
 
   // 2) Email received 6 minutes ago is outside the 5-minute 1st check, then matched by the 8-minute 2nd check (retry)
-  const retryOrd = await ok(call(null, 'POST', '/api/shop/orders', { packageId: pkg.id, number: '0592223344' }));
-  const sixMinAgo = Date.now() - 6 * 60_000;
-  q(`INSERT INTO payment_mails (uid_validity, uid, message_id, trusted, from_addr, subject, received_at, amount, reference, sender_phone, sender_name, body, created_at)
-     VALUES (1, 9991, '<retry@jp>', 1, 'noreply@jawwalpay.ps', 'Jawwal Pay', ?, 33, '2922949999999', '', 'mohammed Hussein ali skaek', 'incoming', ?)`).run(sixMinAgo, sixMinAgo);
+  const retryOrd = await order('زبون التحقق');
+  const A = retryOrd.amount;
+  mail(9991, 6 * 60_000, A, '2922949999999', 'mohammed Hussein ali skaek');
 
   // Attempt 1: wrong/typo name or 6-min old email -> searches only last 5 minutes -> stays verifying with canRetryProof = true
   const try1 = await ok(call(null, 'POST', `/api/shop/orders/${retryOrd.code}/proof`, { payName: 'محمد حسين' }));
@@ -427,10 +414,9 @@ test('5-minute reservation auto-cancel, 5-minute 1st check, and 3-minute retry (
   // Attempt 2 (correction within retry window): searches last 8 minutes and matches Arabic/English name!
   const try2 = await ok(call(null, 'POST', `/api/shop/orders/${retryOrd.code}/proof`, { payName: 'محمد حسين علي سكيك' }));
   assert.equal(try2.status, 'paid', '2nd attempt searches last 8 minutes and matches');
-  assert.equal(try2.stage, 'done');
 
   // 3) After 2nd attempt fails, waitUntil is 15 minutes; visiting Orders page (GET /api/shop/orders/:code?check=1) re-verifies automatically; after 15m needsSupport is true
-  const waitOrd = await ok(call(null, 'POST', '/api/shop/orders', { packageId: pkg.id, number: '0593334455' }));
+  const waitOrd = await order('زبون الانتظار');
   await ok(call(null, 'POST', `/api/shop/orders/${waitOrd.code}/proof`, { payName: 'خالد وليد سعيد' }));
   const wTry2 = await ok(call(null, 'POST', `/api/shop/orders/${waitOrd.code}/proof`, { payName: 'خالد وليد سعيد' }));
   assert.equal(wTry2.proofTries, 2);
@@ -444,32 +430,24 @@ test('5-minute reservation auto-cancel, 5-minute 1st check, and 3-minute retry (
   assert.equal(after15m.needsSupport, true, 'prompts customer to contact support after 15 minutes');
 
   // If the delayed email arrives and customer visits Orders page, GET /api/shop/orders/:code?check=1 matches it automatically
-  const nowTs = Date.now();
-  q(`INSERT INTO payment_mails (uid_validity, uid, message_id, trusted, from_addr, subject, received_at, amount, reference, sender_phone, sender_name, body, created_at)
-     VALUES (1, 9992, '<delayed@jp>', 1, 'noreply@jawwalpay.ps', 'Jawwal Pay', ?, 33, '2922948888888', '', 'Khaled Waleed Saeed', 'incoming', ?)`).run(nowTs, nowTs);
+  mail(9992, 0, A, '2922948888888', 'Khaled Waleed Saeed');
   const autoVerified = await ok(call(null, 'GET', `/api/shop/orders/${waitOrd.code}?check=1`));
   assert.equal(autoVerified.status, 'paid', 'visiting Orders page automatically re-verifies and activates the order');
-  assert.equal(autoVerified.stage, 'done');
 
   // 4) Amount check: sending less than the order amount is rejected; sending more is accepted
-  const amtOrd = await ok(call(null, 'POST', '/api/shop/orders', { packageId: pkg.id, number: '0594445566' }));
-  const tNow = Date.now();
-  q(`INSERT INTO payment_mails (uid_validity, uid, message_id, trusted, from_addr, subject, received_at, amount, reference, sender_phone, sender_name, body, created_at)
-     VALUES (1, 9993, '<less@jp>', 1, 'noreply@jawwalpay.ps', 'Jawwal Pay', ?, 30, '2922947777777', '', 'Sami Tareq', 'incoming', ?)`).run(tNow, tNow);
+  const amtOrd = await order('زبون المبلغ');
+  mail(9993, 0, A - 3, '2922947777777', 'Sami Tareq');
   const lessTry = await ok(call(null, 'POST', `/api/shop/orders/${amtOrd.code}/proof`, { payName: 'سامي طارق' }));
-  assert.equal(lessTry.status, 'verifying', 'less than required amount (30 < 33) is not accepted');
-
-  q(`INSERT INTO payment_mails (uid_validity, uid, message_id, trusted, from_addr, subject, received_at, amount, reference, sender_phone, sender_name, body, created_at)
-     VALUES (1, 9994, '<more@jp>', 1, 'noreply@jawwalpay.ps', 'Jawwal Pay', ?, 35, '2922946666666', '', 'Sami Tareq', 'incoming', ?)`).run(tNow, tNow);
+  assert.equal(lessTry.status, 'verifying', 'less than required amount is not accepted');
+  mail(9994, 0, A + 2, '2922946666666', 'Sami Tareq');
   const moreTry = await ok(call(null, 'POST', `/api/shop/orders/${amtOrd.code}/proof`, { payName: 'سامي طارق' }));
-  assert.equal(moreTry.status, 'paid', 'more than required amount (35 >= 33) is accepted');
-  assert.equal(moreTry.stage, 'done');
+  assert.equal(moreTry.status, 'paid', 'more than required amount is accepted');
 
   // 5) PalPay ("الدفع لصديق") notification via SMSForwarder from the shop's own Gmail
-  const mail = require('../src/mail');
+  const mailLib = require('../src/mail');
   const { namesMatch, saveMail } = require('../src/shop');
   const { getSettings } = require('../src/db');
-  const palpayParsed = mail.parseJawwalPay({
+  const palpayParsed = mailLib.parseJawwalPay({
     subject: '[SMSForwarder] New message from الدفع لصديق - ١٠/٢٢، ١١:٢٠ ص',
     text: 'الدفع لصديق\nتحويل دفع لصديق: Almotazbellah Atef Mohammed Abukhater, بمبلغ 5.00 ILS',
   });
@@ -485,6 +463,7 @@ test('5-minute reservation auto-cancel, 5-minute 1st check, and 3-minute retry (
 
   await ok(call(admin, 'PUT', '/api/settings', { gmailUser: 'moatazbll@gmail.com', mailFrom: 'jawwalpay.ps' }));
   const curSettings = getSettings();
+  const palpayText = `الدفع لصديق\nتحويل دفع لصديق: Almotazbellah Atef Mohammed Abukhater, بمبلغ ${A.toFixed(2)} ILS`;
 
   // Spoofed display name from another Gmail address must be rejected
   const spoofedRaw = [
@@ -495,7 +474,7 @@ test('5-minute reservation auto-cancel, 5-minute 1st check, and 3-minute retry (
     `Date: ${new Date().toUTCString()}`,
     'Content-Type: text/plain; charset=utf-8',
     '',
-    'الدفع لصديق\nتحويل دفع لصديق: Almotazbellah Atef Mohammed Abukhater, بمبلغ 33.00 ILS',
+    palpayText,
   ].join('\r\n');
   assert.equal(saveMail(1, 9995, spoofedRaw, curSettings), null, 'spoofed display name from external gmail is rejected');
 
@@ -509,14 +488,11 @@ test('5-minute reservation auto-cancel, 5-minute 1st check, and 3-minute retry (
     'Content-Type: text/plain; charset=utf-8',
     'Content-Transfer-Encoding: base64',
     '',
-    Buffer.from('الدفع لصديق\nتحويل دفع لصديق: Almotazbellah Atef Mohammed Abukhater, بمبلغ 33.00 ILS').toString('base64'),
+    Buffer.from(palpayText).toString('base64'),
   ].join('\r\n');
   const savedId = saveMail(1, 9996, validPalpayRaw, curSettings);
   assert.ok(savedId > 0, 'SMSForwarder PalPay email from own Gmail is saved');
-  const palpayOrd = await ok(call(null, 'POST', '/api/shop/orders', { packageId: pkg.id, number: '0595556677' }));
+  const palpayOrd = await order('زبون بال باي');
   const palpayProof = await ok(call(null, 'POST', `/api/shop/orders/${palpayOrd.code}/proof`, { payName: 'المعتز بالله عاطف ابو خاطر' }));
   assert.equal(palpayProof.status, 'paid', 'PalPay order is verified automatically by sender name');
-  assert.equal(palpayProof.stage, 'done');
 });
-
-

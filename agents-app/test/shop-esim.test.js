@@ -344,10 +344,12 @@ test('eSIM shop with telecom (ALOHA): a free number, an eSIM taken and registere
   await ok(call(admin, 'POST', '/api/telecom/sync', { kind: 'invoice' }));
   const pkg = (await ok(call(admin, 'GET', '/api/catalog'))).packages.find((p) => p.supplier === 'tc' && p.kind === 'invoice');
   await ok(call(admin, 'PUT', `/api/packages/${pkg.id}`, { shopPrice: 55 }));
-  assert.equal((await ok(call(null, 'GET', '/api/shop'))).packages.find((p) => p.id === pkg.id).esim, true);
+  // Its numbers can be sold only once the shop's registration address is set: until then it is not on sale.
+  assert.equal((await ok(call(null, 'GET', '/api/shop'))).packages.some((p) => p.id === pkg.id), false);
   assert.deepEqual(await ok(call(null, 'GET', `/api/shop/available?packageId=${pkg.id}`)), { available: false }, 'not before the registration address is set');
   await ok(call(admin, 'PUT', '/api/settings', { tcRegAddress: 'הרחוב 1', tcRegCity: 'ירושלים', tcRegZip: '9100000' }));
   assert.deepEqual(await ok(call(null, 'GET', `/api/shop/available?packageId=${pkg.id}`)), { available: true });
+  assert.equal((await ok(call(null, 'GET', '/api/shop'))).packages.find((p) => p.id === pkg.id).esim, true, 'on sale now it has numbers');
 
   const o = await ok(call(null, 'POST', '/api/shop/orders', { kind: 'esim', packageId: pkg.id, customerName: 'منى حسب الله', email: 'mona@example.com', contactPhone: '0599123456' }));
   const num = (await ok(call(admin, 'GET', '/api/shop/admin/orders'))).find((x) => x.code === o.code).number;

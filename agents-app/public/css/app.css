@@ -976,6 +976,11 @@ body.shop {
 .shop-amount { font: 700 1.38rem var(--f-mono); color: var(--primary); }
 .shop-pay h3 { margin: 0; font: 700 1.02rem var(--f-ui); color: var(--ink); }
 .shop-pay-kvs { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; min-width: 0; }
+/* Direct Jawwal Pay (a code to the customer's mobile), offered above the manual transfer. */
+.shop-direct { border: 1.5px solid color-mix(in srgb, var(--primary) 40%, var(--line)); }
+.shop-direct #jc-otp { font-size: 1.35rem; letter-spacing: .35em; text-align: center; }
+.shop-pay-or { display: flex; align-items: center; gap: 12px; width: min(100%, 680px); justify-self: center; color: var(--muted); font-size: .85rem; }
+.shop-pay-or::before, .shop-pay-or::after { content: ""; flex: 1; border-top: 1px solid var(--line); }
 .shop-kv { display: flex; align-items: center; justify-content: space-between; gap: 8px 10px; padding: 10px 14px; border-radius: 12px; background: var(--surface-2); border: 1px solid var(--line); flex-wrap: wrap; min-width: 0; }
 .shop-kv > span { color: var(--muted); font-size: .84rem; min-width: 90px; }
 .shop-kv > b { flex: 1; font: 700 .98rem var(--f-ui); color: var(--ink); min-width: 0; word-break: break-word; }

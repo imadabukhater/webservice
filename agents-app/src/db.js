@@ -418,6 +418,16 @@ ensureColumn('shop_orders', 'esim_code', "esim_code TEXT NOT NULL DEFAULT ''");
 ensureColumn('shop_orders', 'proof_tries', 'proof_tries INTEGER NOT NULL DEFAULT 0');
 ensureColumn('shop_orders', 'first_proof_at', 'first_proof_at INTEGER');
 ensureColumn('shop_orders', 'client_id', "client_id TEXT NOT NULL DEFAULT ''");
+// Direct Jawwal Pay (MaalCards corporate API, see jawwalcorp.js): the invoice a code was sent for, the customer's
+// mobile, until when that code can be confirmed, how many codes were sent and confirmations tried, and whether a
+// confirmation got no clear answer (its invoice is looked up again until it does).
+ensureColumn('shop_orders', 'jc_invoice_id', "jc_invoice_id TEXT NOT NULL DEFAULT ''");
+ensureColumn('shop_orders', 'jc_mobile', "jc_mobile TEXT NOT NULL DEFAULT ''");
+ensureColumn('shop_orders', 'jc_expires_at', 'jc_expires_at INTEGER');
+ensureColumn('shop_orders', 'jc_sent_at', 'jc_sent_at INTEGER');
+ensureColumn('shop_orders', 'jc_sends', 'jc_sends INTEGER NOT NULL DEFAULT 0');
+ensureColumn('shop_orders', 'jc_tries', 'jc_tries INTEGER NOT NULL DEFAULT 0');
+ensureColumn('shop_orders', 'jc_unsure', 'jc_unsure INTEGER NOT NULL DEFAULT 0');
 db.exec("CREATE INDEX IF NOT EXISTS shop_orders_client_status ON shop_orders(client_id, status)");
 db.exec("CREATE INDEX IF NOT EXISTS shop_orders_ip_status ON shop_orders(ip, status)");
 // Before gone_at, a sync that briefly got an incomplete list from QuickLine hid packages for good. The manager hid
@@ -456,6 +466,8 @@ const DEFAULT_SETTINGS = {
   ly_user: '', ly_pass: '', ly_secret: '', ly_markup: '15',
   tc_user: '', tc_pass: '', tc_mail_user: '', tc_mail_pass: '', tc_markup: '15', tc_reg_address: '', tc_reg_city: '', tc_reg_zip: '',
   aylol_user: '', aylol_pass: '', aylol_markup: '15',
+  // Direct Jawwal Pay through the MaalCards corporate API: the subscriber (manager_id) and the corporate account.
+  jc_enabled: '0', jc_manager_id: '', jc_user: '', jc_pass: '',
   // Safety: a paid customer order above this amount waits for the manager (0: none); orders a customer may make in an
   // hour; Aylol's balance under which the manager is told.
   shop_auto_max: '200', shop_hour_limit: '3', aylol_low_balance: '100',
@@ -539,7 +551,17 @@ function getSettings() {
     gmailUser: out.gmail_user,
     gmailConfigured: !!(out.gmail_user && out.gmail_pass),
     mailFrom: out.mail_from,
+    // Direct Jawwal Pay (corporate API): the password never leaves the server (see jcCredentials).
+    jcEnabled: out.jc_enabled === '1',
+    jcManagerId: out.jc_manager_id,
+    jcUser: out.jc_user,
+    jcConfigured: !!(out.jc_manager_id && out.jc_user && out.jc_pass),
+    jcReady: out.jc_enabled === '1' && !!(out.jc_manager_id && out.jc_user && out.jc_pass),
   };
+}
+function jcCredentials() {
+  const get = (k) => q('SELECT value FROM settings WHERE key = ?').get(k)?.value || '';
+  return { managerId: Number(get('jc_manager_id')) || 0, user: get('jc_user'), pass: get('jc_pass') };
 }
 function gmailCredentials() {
   const get = (k) => q('SELECT value FROM settings WHERE key = ?').get(k)?.value || '';
@@ -597,4 +619,4 @@ function bootstrap() {
 }
 bootstrap();
 
-module.exports = { db, q, tx, getSettings, setSetting, artCredentials, qlCredentials, aylolCredentials, lyCredentials, tcCredentials, gmailCredentials, DB_FILE };
+module.exports = { db, q, tx, getSettings, setSetting, artCredentials, qlCredentials, aylolCredentials, lyCredentials, tcCredentials, gmailCredentials, jcCredentials, DB_FILE };
