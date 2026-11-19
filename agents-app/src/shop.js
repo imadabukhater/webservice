@@ -337,12 +337,41 @@ function settleDirect(orderId) {
 // are confirmed (the order is paid) or are no longer pending. One request for all of them, at most once a minute.
 let reconciling = null;
 let reconciledAt = 0;
+// Invoices the provider said it could not confirm (a wrong code, most often), still looked up for a day: one that turns
+// out confirmed pays its order (when it is still the order's invoice), or the manager is told (the money came in for an
+// order paid another way, or cancelled). Each is settled once (a closing entry in the log).
+function lateInvoices() {
+  return q(`SELECT l.invoice_id, l.order_id FROM jc_log l JOIN shop_orders o ON o.id = l.order_id
+             WHERE l.event = 'not_confirmed' AND l.invoice_id != '' AND l.created_at > ?
+               AND NOT EXISTS (SELECT 1 FROM jc_log c WHERE c.invoice_id = l.invoice_id AND c.event IN ('late_closed','late_confirmed','paid'))
+             GROUP BY l.invoice_id ORDER BY MAX(l.id) DESC LIMIT 10`).all(now() - 864e5);
+}
+async function checkLate(jc, creds) {
+  let settled = 0;
+  for (const l of lateInvoices()) {
+    let inv;
+    try { inv = await jc.invoice(creds, l.invoice_id); } catch (e) { console.error('jawwal late', e.message); break; }
+    const o = q('SELECT * FROM shop_orders WHERE id = ?').get(l.order_id);
+    if (!inv || inv.status === 'pending' || !o) continue;
+    if (inv.status !== 'confirmed') { jcLog({ ...o, jc_invoice_id: l.invoice_id }, 'late_closed', { status: inv.status }); continue; }
+    if (o.jc_invoice_id === l.invoice_id && ['awaiting_payment', 'cancelled'].includes(o.status)) {
+      if (settleVerified(o, inv)) settled++;
+      continue;
+    }
+    jcLog({ ...o, jc_invoice_id: l.invoice_id }, 'late_confirmed', { status: 'confirmed', detail: `${inv.amount ?? ''} ₪` });
+    D.notify({ role: 'admin', kind: 'task', title: `دفعة جوال باي متأخرة للطلب ${o.code}`,
+      body: `الفاتورة ${l.invoice_id} (${inv.amount ?? o.amount} ₪) تأكدت بعد أن قال المزوّد إنها لم تتم، والطلب ${o.status === 'paid' ? 'مدفوع بفاتورة أخرى' : 'لم يعد ينتظرها'}. راجعها وأرجع المبلغ إن لزم.`, link: '#/shop' });
+  }
+  return settled;
+}
+
 function reconcileDirect({ force = false } = {}) {
   if (reconciling) return reconciling;
   if (!force && now() - reconciledAt < LOOP_MS - 1000) return Promise.resolve(0);
   const rows = q(`SELECT * FROM shop_orders WHERE jc_unsure = 1 AND jc_invoice_id != ''
                   AND status IN ('awaiting_payment','cancelled') AND created_at > ?`).all(now() - 2 * 864e5);
-  if (!rows.length || !getSettings().jcConfigured) return Promise.resolve(0);
+  const late = lateInvoices();
+  if ((!rows.length && !late.length) || !getSettings().jcConfigured) return Promise.resolve(0);
   reconciledAt = now();
   const jc = require('./jawwalcorp');
   reconciling = (async () => {
@@ -354,6 +383,7 @@ function reconcileDirect({ force = false } = {}) {
       // Not listed (yet): looked up again next time; listed: its state decides (settleVerified).
       if (inv && settleVerified(r, inv)) settled++;
     }
+    settled += await checkLate(jc, creds);
     return settled;
   })().finally(() => { reconciling = null; });
   return reconciling;

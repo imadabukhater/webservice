@@ -412,22 +412,38 @@ test('MaalCards\' own link to Jawwal Pay failing (esdad_…): the provider\'s fa
   assert.match(r1.body.error, /متوقف مؤقتاً عند مزوّد الدفع/);
   assert.doesNotMatch(r1.body.error, /مفعّل عليه جوال باي/);
   assert.ok(q("SELECT 1 FROM notifications WHERE body LIKE '%esdad_not_wired%'").get(), 'the manager is told, with the provider\'s code');
-  // Confirming: 409 esdad_payment_not_confirmed — not paid on its word, looked up; the invoice later confirmed → paid once.
+  // Confirming: 409 esdad_payment_not_confirmed — what a wrong code gets. Not paid; the customer asks for a new code at
+  // once (not held back); that invoice is still looked up quietly: confirmed later → paid with it, once.
   const b = await order();
   await ok(call(null, 'POST', `/api/shop/orders/${b.code}/jawwal/otp`, { mobile: '0599400002' }));
   const inv = [...api.invoices.values()].at(-1);
   api.confirmAs = { status: 409, error: 'esdad_payment_not_confirmed', message: 'لم يصل تأكيد الدفع من بوابة سداد بعد' };
-  const r2 = await call(null, 'POST', `/api/shop/orders/${b.code}/jawwal/confirm`, { otp: '123456' });
+  const r2 = await call(null, 'POST', `/api/shop/orders/${b.code}/jawwal/confirm`, { otp: '000000' });
   api.confirmAs = null;
-  assert.equal(r2.status, 502);
-  assert.match(r2.body.error, /الدفعة غير مؤكدة.*لا تدفع مرة أخرى/);
+  assert.equal(r2.status, 402);
+  assert.match(r2.body.error, /لم يتم الدفع — رمز التحقق غير صحيح/);
   const vb = await ok(call(null, 'GET', `/api/shop/orders/${b.code}`));
   assert.equal(vb.status, 'awaiting_payment');
-  assert.equal(vb.jawwal.checking, true);
-  assert.equal((await call(null, 'POST', `/api/shop/orders/${b.code}/jawwal/otp`, { mobile: '0599400002' })).status, 409, 'no second code while it may be paid');
+  assert.equal(vb.jawwal.checking, false, 'not held back');
+  assert.equal(vb.jawwal.otpSent, false, 'that code is over: a new one');
   inv.status = 'confirmed'; // the provider took it after all
   assert.equal(await require('../src/shop').reconcileDirect({ force: true }), 1);
   assert.equal((await ok(call(null, 'GET', `/api/shop/orders/${b.code}`))).status, 'paid');
+  assert.equal(await require('../src/shop').reconcileDirect({ force: true }), 0, 'once');
+  // The same, but the customer paid again with a new code meanwhile: the late one goes to the manager, nothing twice.
+  const b2 = await order();
+  await ok(call(null, 'POST', `/api/shop/orders/${b2.code}/jawwal/otp`, { mobile: '0599400004' }));
+  const old = [...api.invoices.values()].at(-1);
+  api.confirmAs = { status: 409, error: 'esdad_payment_not_confirmed', message: 'x' };
+  assert.equal((await call(null, 'POST', `/api/shop/orders/${b2.code}/jawwal/confirm`, { otp: '000000' })).status, 402);
+  api.confirmAs = null;
+  q('UPDATE shop_orders SET jc_sent_at = NULL WHERE code = ?').run(b2.code);
+  await ok(call(null, 'POST', `/api/shop/orders/${b2.code}/jawwal/otp`, { mobile: '0599400004' }));
+  assert.equal((await ok(call(null, 'POST', `/api/shop/orders/${b2.code}/jawwal/confirm`, { otp: '123456' }))).status, 'paid');
+  old.status = 'confirmed';
+  await require('../src/shop').reconcileDirect({ force: true });
+  assert.ok(q('SELECT 1 FROM notifications WHERE title = ?').get(`دفعة جوال باي متأخرة للطلب ${b2.code}`), 'the manager is told');
+  assert.equal(q("SELECT COUNT(*) AS n FROM jc_log WHERE event = 'paid' AND order_id = (SELECT id FROM shop_orders WHERE code = ?)").get(b2.code).n, 1);
   // Confirming: 409 esdad_session_gone — a new code is needed (410).
   const c = await order();
   await ok(call(null, 'POST', `/api/shop/orders/${c.code}/jawwal/otp`, { mobile: '0599400003' }));

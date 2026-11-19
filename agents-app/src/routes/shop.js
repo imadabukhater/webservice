@@ -671,16 +671,18 @@ async function jcConfirmCode(order, otpInput) {
         shop.jcLog(o, 'session_gone', { detail: `${e.code} ${e.message}` });
         fail(410, 'انتهت جلسة الدفع عند جوال باي — اطلب رمزاً جديداً.');
       } else if (/^esdad_/.test(e.code || '')) {
-        // The provider could not say whether the payment went through (e.g. esdad_payment_not_confirmed): the
-        // invoice decides — now, then each minute — so a payment taken is never lost nor taken twice.
-        shop.jcLog(o, 'confirm_unclear', { detail: `${e.code} ${e.message}` });
+        // The provider did not get the payment confirmed (esdad_payment_not_confirmed: what a wrong code gets, and its
+        // session then ends). Its invoice is read now: confirmed → paid. Otherwise the payment did not go through: the
+        // customer asks for a new code. That invoice is still looked up quietly for a day (reconcileDirect): should it
+        // turn out confirmed, the order is paid with it, or the manager is told if another was paid meanwhile.
         console.error('jawwal confirm provider', o.code, e.code, e.message);
         let inv = null;
         try { inv = await jc.invoice(creds, o.jc_invoice_id); } catch (e2) { console.error('jawwal invoice', e2.message); }
         if (inv?.status === 'confirmed') paid = true;
         else {
-          q('UPDATE shop_orders SET jc_unsure = 1, updated_at = ? WHERE id = ?').run(now(), o.id);
-          fail(502, 'لم يصل تأكيد الدفع من جوال باي بعد — الدفعة غير مؤكدة. سنتحقق منها تلقائياً خلال دقائق؛ لا تدفع مرة أخرى.');
+          shop.jcLog(o, 'not_confirmed', { status: inv?.status || '', detail: `${e.code} ${e.message}` });
+          q('UPDATE shop_orders SET jc_expires_at = ?, updated_at = ? WHERE id = ?').run(now(), now(), o.id);
+          fail(402, 'لم يتم الدفع — رمز التحقق غير صحيح أو انتهت صلاحيته. اطلب رمزاً جديداً وأدخله كما وصلك.');
         }
       } else if (e.code === 'invoice_expired' || e.code === 'invoice_not_found') {
         q("UPDATE shop_orders SET jc_expires_at = ?, jc_unsure = 0, jc_status = 'expired', updated_at = ? WHERE id = ?").run(now(), now(), o.id);
