@@ -53,6 +53,7 @@ const fakeApi = http.createServer((req, res) => {
     const auth = String(req.headers.authorization || '').replace(/^Bearer /, '');
     if (api.revokeAlways || !api.seat || auth !== api.seat.token) return send(res, 401, { success: false, error: 'token_revoked' });
     if (url.pathname === '/api/jawwal/corporate/send_otp') {
+      if (body.mobile_number === api.notJawwalPay) return send(res, 422, { success: false, error: 'jawwal_send_otp_failed', message: 'mobile is not a jawwal pay wallet' });
       const id = `COR-${Date.now()}-${++api.n}`;
       api.invoices.set(id, { id, amount: body.amount, mobile: body.mobile_number, otp: '123456', status: 'pending', exp: Date.now() + 5 * 60_000 });
       return send(res, 200, { success: true, message: 'otp sent', data: { cor_invoice_id: id, expires_at: new Date(Date.now() + 5 * 60_000).toISOString(), amount: body.amount, mobile_number: body.mobile_number } });
@@ -63,6 +64,7 @@ const fakeApi = http.createServer((req, res) => {
       if (inv.status === 'confirmed') return send(res, 409, { success: false, error: 'invoice_confirmed' });
       if (inv.status === 'expired' || inv.exp < Date.now()) { inv.status = 'expired'; return send(res, 409, { success: false, error: 'invoice_expired' }); }
       if (api.failNoRetry) { inv.status = 'failed'; return send(res, 402, { success: false, error: 'jawwal_confirm_failed', data: { failure_code: 'insufficient_balance', can_retry: false } }); }
+      if (body.otp !== inv.otp && api.wrongOtpAs) return send(res, api.wrongOtpAs.status, { success: false, error: api.wrongOtpAs.error, message: 'otp is invalid' });
       if (body.otp !== inv.otp) return send(res, 402, { success: false, error: 'jawwal_confirm_failed', data: { failure_code: 'wrong_otp', can_retry: true } });
       inv.status = 'confirmed';
       if (api.lostAnswer) return send(res, 502, { success: false, message: 'bad gateway' });
@@ -350,16 +352,35 @@ test('WhatsApp: the whole payment in the chat — the number, the code texted, t
   const o = S.byCode(v.code);
   // After the order: what to send, to pay here (never the site).
   const facts = wa._test.orderFacts ? wa._test.orderFacts(o, S.shopCatalogResponse()) : '';
-  if (facts) { assert.match(facts, /ابعتلي \*رقم جوال باي\*/); assert.doesNotMatch(facts, /#\/order\//); }
-  // «نفس الرقم»: the code is texted to the chat's own number.
-  assert.equal(await wa._test.payHere(jid, 'نفس الرقم', '0599300001'), true);
-  assert.match(said(), /بعتنالك رمز تحقق برسالة على \*059••••001\* لدفع \*\d+ ₪\*/);
+  assert.match(facts, /1️⃣ ابعتلي \*رقم جوال باي\* تبعك[\s\S]*2️⃣[\s\S]*3️⃣/, 'the payment explained first');
+  assert.match(facts, /بندعم الدفع من \*جوال باي\* بس \(مش بنك فلسطين/);
+  assert.doesNotMatch(facts, /#\/order\/|نفس الرقم/);
+  const invoicesBefore = api.invoices.size;
+  // A number not on Jawwal Pay: asked to confirm, then the API cannot text it — said so, with what is supported.
+  assert.equal(await wa._test.payHere(jid, '0599300999', '0599300001'), true);
+  assert.match(said(), /رح نبعت رمز التحقق على رقم جوال باي: \*0599300999\*\nصح؟ ابعت \*نعم\*/);
+  assert.equal(api.invoices.size, invoicesBefore, 'nothing sent before the yes');
+  api.notJawwalPay = '0599300999';
+  assert.equal(await wa._test.payHere(jid, 'نعم', '0599300001'), true);
+  assert.match(said(), /ما قدرنا نبعت رمز على الرقم \*0599300999\* — غالباً مش مسجّل بجوال باي[\s\S]*مش بنك فلسطين/);
+  require('../src/db').q('UPDATE shop_orders SET jc_sent_at = NULL WHERE id = ?').run(o.id); // past the 45 seconds between codes
+  // The right number, confirmed: the code is texted to it.
+  await wa._test.payHere(jid, 'رقمي 0599300001', '0599300001');
+  assert.equal(await wa._test.payHere(jid, 'نعم', '0599300001'), true);
+  assert.match(said(), /✅ بعتنالك رمز تحقق برسالة على \*059••••001\* لدفع \*\d+ ₪\*[\s\S]*عشان أتمم عملية الدفع/);
   const inv = [...api.invoices.values()].at(-1);
   assert.equal(inv.mobile, '0599300001');
-  // A wrong code: the shop's reason; the right one: paid, said here.
+  // A wrong code: «wrong», how long it still lasts and the tries left; the right one: paid, said here.
   wa._test.recent.clear();
   await wa.handle({ jid, phone: '0599300001', text: '000000' });
-  assert.match(said(), /رمز التحقق غير صحيح/);
+  assert.match(said(), /❌ الرمز غلط\. ابعتلي الرمز الصحيح خلال \d+ (دقايق|ثانية) \(بقيلك 4 محاولات\)/);
+  // Refused with another code than documented (here 422 invalid_otp): still «wrong code», never «unreachable».
+  api.wrongOtpAs = { status: 422, error: 'invalid_otp' };
+  wa._test.recent.clear();
+  await wa.handle({ jid, phone: '0599300001', text: '111111' });
+  api.wrongOtpAs = null;
+  assert.match(said().split('---').at(-1), /❌ الرمز غلط.*بقيلك 3 محاولات/);
+  assert.doesNotMatch(said(), /تعذّر الوصول/);
   wa._test.recent.clear();
   await wa.handle({ jid, phone: '0599300001', text: 'الرمز ١٢٣٤٥٦' });
   assert.match(said(), /✅ تم الدفع لطلبك \*[A-Z0-9]+\*/);

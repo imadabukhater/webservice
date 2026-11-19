@@ -564,9 +564,12 @@ function tellManager(code, body) {
 }
 
 // The corporate API's refusal as the customer should read it (the manager is told when the account itself is at fault).
-function jcFail(e) {
+// step: 'send' (the code) or 'confirm' (the payment). A refusal the API gives for the request itself (4xx other than the
+// account's: 401/403/429) is the number's or the code's, not "unreachable".
+function jcFail(e, o = null, step = '') {
   if (!(e instanceof jc.JawwalCorpError)) throw e;
-  console.error('jawwal', e.status, e.code, e.message);
+  console.error('jawwal', step, e.status, e.code, e.message, e.data ? JSON.stringify(e.data).slice(0, 300) : '');
+  if (o) shop.jcLog(o, `${step || 'call'}_error`, { detail: `${e.status || ''} ${e.code || ''} ${e.message || ''}`.trim() });
   const manual = getSettings().mailPay ? ' يمكنك الدفع بالتحويل اليدوي أدناه.' : '';
   if (e.code === 'corporate_blocked') {
     tellManager(e.code, 'الحساب ممنوع مؤقتاً 15 دقيقة بعد محاولات دخول متكررة (corporate_blocked). تأكد أن الحساب لا يُستخدم من خادم أو برنامج آخر في نفس الوقت.');
@@ -574,7 +577,9 @@ function jcFail(e) {
     tellManager(e.code, `رفضت واجهة الشركات الدخول (${e.code}). راجع رقم المشترك واسم المستخدم وكلمة المرور في إعدادات المتجر.`);
   }
   if (e.status === 429 || e.status === 401 || e.status === 403 || e.code === 'not_configured') fail(503, `الدفع المباشر غير متاح الآن — حاول بعد دقيقة.${manual}`);
-  if (e.code === 'jawwal_send_otp_failed') fail(422, 'تعذّر إرسال رمز التحقق لهذا الرقم. تأكد أنه رقم جوال مفعّل عليه جوال باي.');
+  const requestRefused = e.status >= 400 && e.status < 500;
+  if (e.code === 'jawwal_send_otp_failed' || (step === 'send' && requestRefused)) fail(422, 'تعذّر إرسال رمز التحقق لهذا الرقم. تأكد أنه رقم جوال مفعّل عليه جوال باي.');
+  if (step === 'confirm' && requestRefused) fail(402, 'رمز التحقق غير صحيح أو رُفض الدفع — تأكد من الرمز وحاول مرة أخرى.');
   if (e.status === 400) fail(400, 'بيانات الدفع غير مكتملة. تأكد من الرقم وحاول مرة أخرى.');
   fail(502, `تعذّر الوصول إلى جوال باي الآن — حاول بعد قليل.${manual}`);
 }
@@ -610,8 +615,7 @@ async function jcSendCode(o, mobileInput) {
     } catch (e) {
       // Counted even when refused: a number that cannot take codes is not tried forever.
       q('UPDATE shop_orders SET jc_sends = jc_sends + 1, jc_sent_at = ?, updated_at = ? WHERE id = ?').run(now(), now(), o.id);
-      shop.jcLog(o, 'otp_failed', { detail: `${e.code || e.status || ''} ${e.message || ''}`.trim() });
-      jcFail(e);
+      jcFail(e, o, 'send');
     }
     // The invoice must be for exactly the order's amount, or it is not used.
     if (r.amount !== null && Math.abs(r.amount - Number(o.amount)) > 0.005) {
@@ -678,8 +682,8 @@ async function jcConfirmCode(order, otpInput) {
         else if (!inv) {
           q('UPDATE shop_orders SET jc_unsure = 1, updated_at = ? WHERE id = ?').run(now(), o.id);
           fail(502, 'لم يصلنا رد جوال باي بعد. سنتحقق من دفعتك تلقائياً خلال دقائق — لا تدفع مرة أخرى، وتابع صفحة الطلب.');
-        } else jcFail(e);
-      } else jcFail(e);
+        } else jcFail(e, o, 'confirm');
+      } else jcFail(e, o, 'confirm');
     }
     if (paid) {
       // Confirming said yes: the order is paid only once its invoice, read on its own from the invoice list, is

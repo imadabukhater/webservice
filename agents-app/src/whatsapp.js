@@ -660,22 +660,42 @@ function otpIn(text) {
   const nums = t.match(/\d+/g) || [];
   return nums.length === 1 && /^\d{4,8}$/.test(nums[0]) ? nums[0] : '';
 }
-// The Jawwal Pay number to pay from: one in the message, or the chat's own («نفس الرقم»).
-function payMobileIn(text, phone) {
-  const n = phoneIn(westernDigits(text));
-  if (n) return n;
-  return /نفس\s*(ال)?رقم|رقمي\s*(هاد|هذا)|(هاد|هذا)\s*رقمي|من\s*رقمي|نفسه/.test(text) && /^05\d{8}$/.test(phone || '') ? phone : '';
+// The Jawwal Pay number to pay from, as the customer writes it.
+function payMobileIn(text) {
+  return phoneIn(westernDigits(text));
 }
+// The number the customer gave, waiting for their yes before a code is sent to it (one per chat, for 10 minutes).
+const payMobiles = new Map();
+const YES = /^(نعم|اه|آه|أه|ايوه|أيوه|ايوا|اي|إي|صح|صحيح|تمام|اكيد|أكيد|اوك|أوك|ok|okay|yes|y)(?=$|[\s.!،,؟?👍])/iu; // \b does not end an Arabic word
+const left = (until) => {
+  const s = Math.max(0, Math.round((Number(until) - Date.now()) / 1000));
+  return s >= 90 ? `${Math.ceil(s / 60)} دقايق` : `${s} ثانية`;
+};
 const clock = (t) => new Intl.DateTimeFormat('ar', { timeZone: 'Asia/Jerusalem', hour: '2-digit', minute: '2-digit' }).format(new Date(Number(t)));
 async function payHere(jid, raw, phone) {
   const st = payState(jid);
-  if (!st) return false;
+  if (!st) { payMobiles.delete(jid); return false; }
   const S = require('./routes/shop');
   const shopErr = async (e) => { if (!(e && e.status)) throw e; await say(jid, `⚠️ ${String(e.message).slice(0, 300)}`); return true; };
   const otp = st.codeSent ? otpIn(raw) : '';
   if (otp) {
     let v;
-    try { v = await S.jcConfirmCode(S.directOrderByCode(st.o.code), otp); } catch (e) { return shopErr(e); }
+    try {
+      v = await S.jcConfirmCode(S.directOrderByCode(st.o.code), otp);
+    } catch (e) {
+      if (!(e && e.status)) throw e;
+      // A wrong code: said so, with how long the code still lasts and the tries left.
+      const j = S.orderView(S.byCode(st.o.code)).jawwal || {};
+      if (e.status === 402 && j.otpSent && j.triesLeft > 0) {
+        await say(jid, `❌ الرمز غلط. ابعتلي الرمز الصحيح خلال ${left(j.expiresAt)} (بقيلك ${j.triesLeft} محاولات).`);
+        return true;
+      }
+      if (e.status === 402 || e.status === 410 || (e.status === 429 && !j.triesLeft)) {
+        await say(jid, `⚠️ ${String(e.message).slice(0, 200)}\nابعتلي رقم جوال باي تبعك لنبعتلك رمز جديد.`);
+        return true;
+      }
+      return shopErr(e);
+    }
     follow(jid, st.o, v.stage); // said here: the order's next change is what the chat hears of next
     if (v.status === 'paid') {
       await say(jid, `✅ تم الدفع لطلبك *${st.o.code}* (${round(st.o.amount)} ₪) من محفظة جوال باي.\nعم نفعّل الـ eSIM هلأ، وبيوصلك رمز QR هون خلال دقايق.`);
@@ -686,12 +706,30 @@ async function payHere(jid, raw, phone) {
     }
     return true;
   }
-  const mobile = payMobileIn(raw, phone);
-  if (!mobile) return false;
+  // A number: asked to confirm first. «نعم» to a number waiting: the code is sent to it.
+  const mobile = payMobileIn(raw);
+  if (mobile) {
+    payMobiles.set(jid, { mobile, orderId: st.o.id, at: Date.now() });
+    await say(jid, `📱 رح نبعت رمز التحقق على رقم جوال باي: *${mobile}*\nصح؟ ابعت *نعم* للتأكيد، أو ابعتلي الرقم الصحيح.`);
+    return true;
+  }
+  const asked = payMobiles.get(jid);
+  if (!asked || asked.orderId !== st.o.id || Date.now() - asked.at > 10 * 60_000 || !YES.test(westernDigits(raw).trim())) return false;
   let v;
-  try { v = await S.jcSendCode(S.directOrderByCode(st.o.code), mobile); } catch (e) { return shopErr(e); }
-  const until = v.jawwal?.expiresAt ? ` (صالح لحد ${clock(v.jawwal.expiresAt)})` : '';
-  await say(jid, `📲 بعتنالك رمز تحقق برسالة على *${v.jawwal?.mobile || mobile}* لدفع *${round(st.o.amount)} ₪*.\nابعتلي الرمز هون أول ما يوصلك${until}.`);
+  try {
+    v = await S.jcSendCode(S.directOrderByCode(st.o.code), asked.mobile);
+  } catch (e) {
+    if (!(e && e.status)) throw e;
+    if (e.status === 422) {
+      payMobiles.delete(jid);
+      await say(jid, `⚠️ ما قدرنا نبعت رمز على الرقم *${asked.mobile}* — غالباً مش مسجّل بجوال باي.\nحالياً بندعم الدفع من محفظة *جوال باي* بس (مش بنك فلسطين ولا أي خدمة تانية). ابعتلي رقم جوال باي تبعك.`);
+      return true;
+    }
+    return shopErr(e);
+  }
+  payMobiles.delete(jid);
+  const until = v.jawwal?.expiresAt ? `\n(الرمز صالح لحد ${clock(v.jawwal.expiresAt)})` : '';
+  await say(jid, `✅ بعتنالك رمز تحقق برسالة على *${v.jawwal?.mobile || asked.mobile}* لدفع *${round(st.o.amount)} ₪*.\nابعتلي الرمز هون عشان أتمم عملية الدفع، وبعطيك رمز التفعيل مباشرة خلال ثواني هون بالشات.${until}`);
   return true;
 }
 
@@ -993,7 +1031,7 @@ function shopSheet(shop) {
   }
   return `الباقات المتوفرة هلأ بالمتجر (رقم الباقة، الاسم، الخدمة، السعر):${lines.join('\n')}
 ${shop.jawwalDirect
-    ? `الدفع: هون بالمحادثة، مباشرة من محفظة جوال باي، خلال ${minutes} دقايق من الطلب: الزبون بيبعت رقم جوال باي اللي بدّه يدفع منه، بيوصله رمز تحقق برسالة، وبيبعته هون — والنظام بياخد الرقم والرمز ويكمّل الدفع لحاله (مش إنت). لا تبعته عالموقع، ولا تطلب الرمز إنت ولا تكتبه.${shop.manualPay === false ? ' *ما في تحويل يدوي*: لا تطلب منه يحوّل ولا يبعت اسم المحوِّل.' : ''} التفعيل بيصير لحاله بعد الدفع، وبيوصل الزبون هون (وللـ eSIM رمز QR).`
+    ? `الدفع: هون بالمحادثة، مباشرة من محفظة جوال باي، خلال ${minutes} دقايق من الطلب: الزبون بيبعت رقم جوال باي تبعه، بيأكده بـ«نعم»، بيوصله رمز تحقق برسالة، وبيبعته هون — والنظام بياخد الرقم والرمز ويكمّل الدفع لحاله (مش إنت). لا تبعته عالموقع، ولا تطلب الرمز إنت ولا تكتبه. بندعم جوال باي بس (مش بنك فلسطين ولا غيره). إذا سأل ليش فشل الدفع: احكيله السبب المكتوب برسالة النظام بس، ولا تخترع سبب (زي ضغط أو مشكلة تقنية).${shop.manualPay === false ? ' *ما في تحويل يدوي*: لا تطلب منه يحوّل ولا يبعت اسم المحوِّل.' : ''} التفعيل بيصير لحاله بعد الدفع، وبيوصل الزبون هون (وللـ eSIM رمز QR).`
     : `الدفع: بجوال باي${shop.jawwalpay?.number ? ` على ${shop.jawwalpay.number}${shop.jawwalpay.name ? ` (${shop.jawwalpay.name})` : ''}` : ''} خلال ${minutes} دقايق من الطلب. التفعيل بيصير لحاله بعد ما المتجر يتأكد من التحويل، وبيوصل الزبون هون (وللـ eSIM رمز QR).`}`;
 }
 
@@ -1077,9 +1115,12 @@ function orderFacts(o, shop) {
   const where = shop.jawwalpay?.number ? ` على *${shop.jawwalpay.number}*${shop.jawwalpay.name ? ` (${shop.jawwalpay.name})` : ''}` : '';
   const head = [`✅ انحجز طلبك رقم *${o.code}*`, ...(reservedNumber(o) ? [`📞 رقمك الجديد: *${reservedNumber(o)}* (محجوزلك لحد ما تدفع)`] : [])];
   if (shop.jawwalDirect) {
-    return [...head, `💳 ادفع *${round(o.amount)} ₪* هون مباشرة من محفظة جوال باي خلال ${minutes} دقايق:`,
-      'ابعتلي *رقم جوال باي* اللي بدك تدفع منه (أو اكتب «نفس الرقم»)، وبيوصلك رمز تحقق تبعتلي ياه هون.',
-      ...(shop.manualPay !== false ? [`أو حوّل بجوال باي${where} وابعتلي *اسم اللي حوّل*.`] : [])].join('\n');
+    return [...head, `💳 المبلغ: *${round(o.amount)} ₪* — الدفع بيصير هون بالشات من محفظة *جوال باي* خلال ${minutes} دقايق:`,
+      '1️⃣ ابعتلي *رقم جوال باي* تبعك.',
+      '2️⃣ بنبعتلك عليه *رمز تحقق* برسالة SMS.',
+      '3️⃣ بتبعتلي الرمز هون، وبنأكد الدفع وبنبعتلك رمز التفعيل (QR) خلال ثواني هون بالشات.',
+      'ℹ️ حالياً بندعم الدفع من *جوال باي* بس (مش بنك فلسطين ولا أي خدمة تانية).',
+      ...(shop.manualPay !== false ? [`أو إذا بتحب: حوّل بجوال باي${where} وابعتلي *اسم اللي حوّل*.`] : [])].join('\n');
   }
   return [...head, `💳 حوّل *${round(o.amount)} ₪* بجوال باي${where} خلال ${minutes} دقايق.`,
     'وبعد ما تحوّل ابعتلي هون *اسم اللي حوّل* أو *رقم تلفونه* أو *الرقم المرجعي*.'].join('\n');
