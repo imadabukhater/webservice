@@ -106,7 +106,7 @@ function openSettings() {
       <h3>تأكيد الدفع بالذكاء (Gemini)</h3>
       <p class="small muted">يراجع Gemini (نفس المساعد الذكي في الواتساب، وضمن نفس حد الصرف اليومي) إشعارات جوال باي / بال باي التي وصلت في آخر ربع ساعة ولم يستعملها أي طلب، ويطابقها مع الطلبات المنتظرة حتى لو كُتب اسم المحوِّل بخطأ إملائي أو بالإنجليزي.
         النظام وحده يتحقق من المبلغ والوقت، وكل إشعار يُربط بطلب واحد فقط. الرقم المرجعي ورقم المحوِّل المطابقان تماماً يُقبلان فوراً بلا ذكاء.</p>
-      <label class="switch-row"><span class="grow"><b>تفعيل التأكيد بالذكاء</b><small>يعمل ما دام حد الصرف اليومي للمساعد أكبر من 0$ (الإعدادات ← واتساب)</small></span><input class="switch" type="checkbox" name="aiPay" ${s.aiPay ? 'checked' : ''}></label>
+      <p class="small muted">مفعّل دائماً من الخادم، ضمن حد الصرف اليومي الثابت للمساعد (نص دولار).</p>
       <button type="button" class="btn btn-soft btn-block" id="st-aitest">${icon('refresh')}اختبار Gemini</button>`,
     submit: 'حفظ',
     onMount(form) {
@@ -138,7 +138,6 @@ function openSettings() {
     },
     async onSubmit(form) {
       V.settings = await api.put('/api/settings', {
-        aiPay: form.elements.aiPay.checked,
         jcEnabled: form.elements.jcEnabled.checked, jcManagerId: field(form, 'jcManagerId'), jcUser: field(form, 'jcUser'), jcPass: field(form, 'jcPass'),
         shopEnabled: form.elements.shopEnabled.checked,
         shopInstant: form.elements.shopInstant.checked,

@@ -196,8 +196,8 @@ const say = async (jid, text) => {
   return send(jid, { text: String(text).slice(0, 4000) });
 };
 // Each chat's whole conversation, from its first message: the assistant forgets nothing said (a name, a number, the
-// package chosen). A conversation ends after 10 minutes without a message; the next one starts afresh.
-const CONVERSATION_IDLE_MS = Number(process.env.WA_CONVERSATION_IDLE_MS) || 10 * 60_000;
+// package chosen). A conversation ends after 15 minutes without a message; the next one starts afresh.
+const CONVERSATION_IDLE_MS = Number(process.env.WA_CONVERSATION_IDLE_MS) || 15 * 60_000;
 const CONVERSATION_MAX = 120; // messages kept in one conversation (a very long one keeps its last ones)
 const history = new Map();
 // The order being put together in each chat (the package, name, phone, SIM given so far) and the summary the customer
@@ -270,9 +270,9 @@ function tooMany(jid) {
   return list.length > 15;
 }
 
-// What someone is in the middle of (picking a number, typing the customer's name, confirming), for 10 minutes.
+// What someone is in the middle of (picking a number, typing the customer's name, confirming), for 15 minutes.
 const sessions = new Map();
-const SESSION_MS = 10 * 60_000;
+const SESSION_MS = CONVERSATION_IDLE_MS;
 const session = (jid) => {
   const s = sessions.get(jid);
   return s && Date.now() - s.at < SESSION_MS ? s : null;
@@ -883,6 +883,8 @@ const AGENT_TOOLS = [{ functionDeclarations: [
       package_id: { type: 'INTEGER', description: 'رقم الباقة من قائمة الباقات بالتعليمات' },
       customer_name: { type: 'STRING', description: 'اسم الزبون الكامل' },
       confirmed: { type: 'BOOLEAN', description: 'true بس بعد ما الزبون وافق على ملخص الطلب اللي انعرض عليه' } }, required: ['package_id'] } },
+  { name: 'cancel_order', description: 'يلغي طلب الزبون المفتوح (اللي لسا ما دفعه) لما الزبون نفسه يطلب يلغيه. بعدها بتقدر تعمله طلب جديد.',
+    parameters: { type: 'OBJECT', properties: { order_code: { type: 'STRING', description: 'رقم الطلب إذا الزبون كتبه' } } } },
   { name: 'order_status', description: 'حالة طلبات الزبون من المتجر. بدون order_code: طلبات هالمحادثة.',
     parameters: { type: 'OBJECT', properties: { order_code: { type: 'STRING', description: 'رقم الطلب (8 حروف وأرقام) إذا الزبون كتبه' } } } },
   { name: 'submit_payment', description: 'الزبون بيقول إنه حوّل بجوال باي: يفحص المتجر التحويل باسم اللي حوّل أو رقمه أو الرقم المرجعي.',
@@ -921,6 +923,8 @@ ${shop.packages ? shopSheet(shop) : ''}
 - لما الزبون يختار باقة، اسأله عن اسمه بس (الاسم الأول بكفي، ولا تطلب منه الاسم الكامل). *ما بتسأله عن رقم هاتف ولا رقم شريحة أبداً*: رقمه الجديد بيعطيه المتجر.
   وإذا مش متأكد شو ناقص، اطلب create_order باللي عندك: هو بيقلك شو ناقص بالزبط.
 - لما يسأل عن طلبه أو ليش تأخر: order_status. لما يقول إنه حوّل ويعطيك اسم اللي حوّل أو رقمه أو الرقم المرجعي: submit_payment.
+- *طلب واحد مفتوح بس بالمحادثة*: إذا عنده طلب لسا جاري (بستنى الدفع أو التحقق) لا تفتح طلب جديد، كمّل معه على نفس الطلب. إلا إذا الزبون نفسه قال بدّه يلغيه: cancel_order، وبعدها بتقدر تعمله طلب جديد.
+- لا تكرر كلام قلته قبل بالمحادثة (ترحيب، شرح، تفاصيل طلب): جاوب على الجديد بس.
 - النظام بيضيف تحت ردّك لحاله تفاصيل الطلب (رقمه، المبلغ، رقم الدفع، وحالته). لا تكتبهم إنت ولا تعيدهم، ولا تحكي إنه الدفع أو التفعيل أو الطلب تم أو صار جاهز: هاد النظام بس بيقرره.
 - الدفع بجوال باي، والتفعيل بيصير لحاله بعد ما النظام يتأكد من التحويل.
 - ردّك قصير (سطرين لأربعة). إذا سأل عن شي برّا المتجر، رجّعه بلطف للباقات والطلبات.
@@ -1008,6 +1012,16 @@ async function agentTool(name, args, ctx) {
       }) };
     }
     if (name === 'create_order') {
+      // One open order per chat: the customer goes on with it, or cancels it first (cancel_order).
+      const open = openOrder(jid);
+      if (open) {
+        const v = S.orderView(open);
+        const fact = stageFacts(open, v.stage);
+        if (!ctx.facts.includes(fact)) ctx.facts.push(fact);
+        ctx.prices.add(round(open.amount));
+        return { ok: false, open_order: open.code, stage: v.stage,
+          error: 'الزبون عنده طلب جاري بهالمحادثة: لا تفتح طلب جديد. كمّل معه على هاد الطلب (الدفع أو التحقق). إذا هو قال بدّه يلغيه ويطلب غيره: cancel_order أول.' };
+      }
       // What the customer gave before (in this conversation) fills what this call left out: nothing is asked twice.
       const draft = drafts.get(jid) || { fields: {} };
       for (const k of ['package_id', 'customer_name']) if (args[k] !== undefined && String(args[k]).trim()) draft.fields[k] = args[k];
@@ -1047,6 +1061,15 @@ async function agentTool(name, args, ctx) {
       if (o.number) ctx.phones.add(o.number);
       if (reservedNumber(o)) ctx.phones.add(reservedNumber(o));
       return { ok: true, order_code: o.code, amount: round(o.amount), package: o.package_label, note: 'رقم الطلب والمبلغ وطريقة الدفع بتنضاف تحت ردّك لحالها؛ لا تكتبهم.' };
+    }
+    if (name === 'cancel_order') {
+      const code = orderCodeIn(String(args.order_code || ''));
+      const o = code ? chatOrders(jid).find((x) => x.code === code) : openOrder(jid);
+      if (!o) return { ok: false, error: code ? 'ما في طلب بهالرقم من هالمحادثة' : 'ما في طلب مفتوح بهالمحادثة' };
+      const v = S.cancelOrder(o);
+      drafts.delete(jid);
+      ctx.facts.push(`🧾 طلب *${o.code}* — ${o.package_label}\n❌ انلغى الطلب زي ما طلبت. فيك تطلب باقة تانية وقت ما بدك.`);
+      return { ok: true, order_code: o.code, stage: v.stage, note: 'انلغى الطلب. إذا بدّه باقة تانية بتقدر تعمله طلب جديد.' };
     }
     if (name === 'order_status') {
       const code = orderCodeIn(String(args.order_code || ''));
@@ -1143,6 +1166,11 @@ async function customerAgent(jid, raw, phone, shop) {
 // one's state as the shop has it; one waiting long on its payment check is brought to the manager, once an hour.
 const ORDER_WAIT_MS = 15 * 60_000;
 const askedAbout = new Map();
+// The order still going on in this chat (waiting for its payment or its check): at most one at a time.
+function openOrder(jid) {
+  require('./shop').expireUnconfirmed();
+  return chatOrders(jid).find((o) => OPEN.includes(o.status)) || null;
+}
 function chatOrders(jid) {
   return q(`SELECT o.* FROM shop_orders o
             WHERE o.id IN (SELECT order_id FROM wa_shop WHERE jid = ?) OR o.ip = ?

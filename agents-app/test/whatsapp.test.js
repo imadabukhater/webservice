@@ -169,10 +169,11 @@ test('WhatsApp: agents sell as in the portal; customers buy in the chat, their t
   assert.equal((await ok(call(admin, 'POST', '/api/whatsapp/replies', { on: true }))).config.enabled, true);
   // Linking by the shop's phone number (a code typed on the phone instead of the QR): a wrong number is refused first.
   assert.equal((await call(admin, 'POST', '/api/whatsapp/connect', { phone: '123' })).status, 400);
-  assert.equal(wa.config().aiDailyUsd, 0.5, 'half a dollar a day unless the owner changes it');
+  assert.equal(wa.config().aiDailyUsd, 0.5, 'always half a dollar a day');
   assert.equal(wa.config().aiProvider, 'vertex', 'Gemini on the owner\'s Google Cloud only, no key');
   const saved = wa.saveConfig({ admins: '0599000111', shopUrl: 'https://shop.example.com/shop', aiDailyUsd: 0 });
-  assert.deepEqual([saved.admins, saved.shopUrl, saved.aiDailyUsd], ['0599000111', 'https://shop.example.com/shop', 0]);
+  assert.deepEqual([saved.admins, saved.shopUrl, saved.aiDailyUsd], ['0599000111', 'https://shop.example.com/shop', 0.5], 'the limit stays half a dollar');
+  process.env.WA_AI_DAILY_USD = '0';
   const agentTok = await ok(call(admin, 'POST', '/api/agents', { name: 'وكيل واتساب', username: 'wa-agent', password: 'secret1', phone: '0599111222', balance: 500 }));
   assert.ok(agentTok);
   const login = (await ok(call(null, 'POST', '/api/login', { username: 'wa-agent', password: 'secret1' }))).token;
@@ -235,7 +236,7 @@ test('WhatsApp: agents sell as in the portal; customers buy in the chat, their t
   const C = '972541234567@s.whatsapp.net';
   q('UPDATE packages SET shop_price = 55 WHERE id = ?').run(esimPkg.id);
   await ok(call(admin, 'PUT', '/api/settings', { shopEnabled: true, jawwalpayNumber: '0599000000', jawwalpayName: 'المتجر' }));
-  wa.saveConfig({ aiDailyUsd: 0.6 });
+  process.env.WA_AI_DAILY_USD = '0.6';
   const cSay = async (jid, phone, text, script) => {
     wa._test.recent.clear();
     wa._test.aiCallsByChat.clear();
@@ -297,7 +298,7 @@ test('WhatsApp: agents sell as in the portal; customers buy in the chat, their t
   // The assistant talks with customers: every message goes to Gemini on the owner's Google Cloud (the server's own
   // token, its own project), which asks the shop — the code — for what it needs: packages and prices, a new order, an
   // order's state, a payment check. The code alone decides them, and writes an order's details under the reply.
-  wa.saveConfig({ aiDailyUsd: 0.6 });
+  process.env.WA_AI_DAILY_USD = '0.6';
   // The shop sells eSIMs only: a recharge package with a customer price is still not on sale. The site gets more
   // eSIM numbers, and the shop sees them at its next look.
   q('UPDATE packages SET shop_price = 50 WHERE id = ?').run(cardPkg.id);
@@ -323,7 +324,7 @@ test('WhatsApp: agents sell as in the portal; customers buy in the chat, their t
   assert.equal(r.calls.length, 1, 'one question: nothing to ask the shop for the packages');
   assert.match(r.calls[0].url, /^\/v1\/projects\/agents-portal-test\/locations\/global\/publishers\/google\/models\/gemini-3\.1-flash-lite:generateContent$/);
   assert.equal(r.calls[0].auth, 'Bearer server-token');
-  assert.deepEqual(r.calls[0].body.tools[0].functionDeclarations.map((f) => f.name).sort(), ['create_order', 'order_status', 'submit_payment']);
+  assert.deepEqual(r.calls[0].body.tools[0].functionDeclarations.map((f) => f.name).sort(), ['cancel_order', 'create_order', 'order_status', 'submit_payment']);
   const sheet = r.calls[0].body.systemInstruction.parts[0].text;
   assert.equal(sheet.includes(`#${cardPkg.id} `), false, 'no recharge');
   assert.match(sheet, /eSIM بس/);
@@ -421,8 +422,11 @@ test('WhatsApp: agents sell as in the portal; customers buy in the chat, their t
   r = await ask('اسمي سامي خالد ورقمي 0597771234', [{ text: 'أهلين يا سامي 👋' }]);
   for (let i = 0; i < 11; i++) r = await ask(`سؤال رقم ${i}`, [{ text: 'تكرم' }]);
   assert.ok(JSON.stringify(r.calls[0].body.contents).includes('اسمي سامي خالد ورقمي 0597771234'), 'the name from the start is still there');
-  // A conversation ends after 10 minutes without a message: the next one starts afresh.
-  for (const m of wa._test.history.get(C5)) m.at -= 11 * 60_000;
+  // A conversation ends after 15 minutes without a message: the next one starts afresh (14 minutes: still the same one).
+  for (const m of wa._test.history.get(C5)) m.at -= 14 * 60_000;
+  r = await ask('لسا هون', [{ text: 'تكرم' }]);
+  assert.ok(JSON.stringify(r.calls[0].body.contents).includes('سامي'), 'after 14 minutes the conversation goes on');
+  for (const m of wa._test.history.get(C5)) m.at -= 16 * 60_000;
   r = await ask('مرحبا من جديد', [{ text: 'أهلين فيك!' }]);
   assert.equal(r.calls[0].body.contents.length, 1);
   assert.equal(JSON.stringify(r.calls[0].body.contents).includes('سامي'), false);
@@ -439,7 +443,7 @@ test('WhatsApp: agents sell as in the portal; customers buy in the chat, their t
   assert.match(await cSay(C2, '0541112233', 'بدي eSIM هوت، اسمي رامي سالم', [{ call: 'create_order', args: { package_id: esimPkg.id, customer_name: 'رامي سالم' } }, { text: 'تكرم 👍' }]), /تأكيد الطلب/);
   const top = await cSay(C2, '0541112233', 'نعم', [{ call: 'create_order', args: { confirmed: true } }, { text: 'حجزتلك 👍' }]);
   site.agentScript = null;
-  wa.saveConfig({ aiDailyUsd: 0 }); // the rest: agents, as without the assistant
+  process.env.WA_AI_DAILY_USD = '0'; // the rest: agents, as without the assistant
   const topCode = /رقم \*([A-Z0-9]{8})\*/.exec(top)?.[1];
   assert.ok(topCode, top);
   const png = Buffer.from(require('../src/qr').dataUrl('receipt').split(',')[1], 'base64');

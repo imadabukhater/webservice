@@ -70,7 +70,7 @@ test('the spend of the day is counted from what each answer used; the assistant 
   const wa = require('../src/whatsapp');
   const { q } = require('../src/db');
   q("DELETE FROM settings WHERE key = 'wa_ai_spend'").run();
-  wa.saveConfig({ aiModel: 'gemini-3.1-flash-lite', aiDailyUsd: 0.0015, aiPriceIn: '', aiPriceOut: '' });
+  process.env.WA_AI_DAILY_USD = '0.0015'; wa.saveConfig({ aiModel: 'gemini-3.1-flash-lite', aiPriceIn: '', aiPriceOut: '' });
   vertexReset(wa);
   // 1000 tokens in at $0.25, 150 out (thinking included) at $1.50 a million: $0.000475 a question.
   assert.ok(await wa._test.askModel('تعليمات', 'بيانات'));
@@ -89,23 +89,26 @@ test('the spend of the day is counted from what each answer used; the assistant 
   assert.equal(view.aiSpend.calls, 2);
   assert.ok(view.aiModels.some((m) => m.id === 'gemini-3.1-flash-lite' && m.in === 0.25));
   // A higher limit lets it go on; 0 pauses it.
-  wa.saveConfig({ aiDailyUsd: 0.6 });
+  process.env.WA_AI_DAILY_USD = '0.6';
   assert.ok(await wa._test.askModel('تعليمات', 'بيانات'));
-  wa.saveConfig({ aiDailyUsd: 0 });
+  process.env.WA_AI_DAILY_USD = '0';
   assert.equal(await wa._test.askModel('تعليمات', 'بيانات'), null);
   assert.match(wa.status().aiError, /موقوف/);
   // A model not on the list is counted at the dearest price; the manager's own prices win.
-  wa.saveConfig({ aiDailyUsd: 0.6, aiModel: 'gemini-9-experimental' });
+  process.env.WA_AI_DAILY_USD = '0.6'; wa.saveConfig({ aiModel: 'gemini-9-experimental' });
   assert.deepEqual(wa._test.priceOf(), { in: 1.5, out: 9, listed: false });
   wa.saveConfig({ aiPriceIn: 0.1, aiPriceOut: 0.4 });
   assert.deepEqual(wa._test.priceOf(), { in: 0.1, out: 0.4, listed: false });
-  assert.throws(() => wa.saveConfig({ aiDailyUsd: -1 }), /حد الصرف اليومي/);
+  // The limit is the server's: a value given in the settings is not kept.
+  delete process.env.WA_AI_DAILY_USD;
+  wa.saveConfig({ aiDailyUsd: 50 });
+  assert.equal(wa.config().aiDailyUsd, 0.5);
 });
 function vertexReset(wa) { wa._test.vertexAuth.token = ''; seen.tokens = 0; }
 
 test('Google busy (429): asked again a moment later, then on the fallback model, then the menus', async () => {
   const wa = require('../src/whatsapp');
-  wa.saveConfig({ aiModel: 'gemini-3.1-flash-lite', aiDailyUsd: 0.6, aiPriceIn: '', aiPriceOut: '' });
+  process.env.WA_AI_DAILY_USD = '0.6'; wa.saveConfig({ aiModel: 'gemini-3.1-flash-lite', aiPriceIn: '', aiPriceOut: '' });
   wa._test.vertexAuth.token = '';
   seen.tokens = 0;
   // Busy once: the same model, again.

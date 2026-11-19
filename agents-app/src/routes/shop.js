@@ -670,12 +670,17 @@ route('POST', '/api/shop/orders/:code/jawwal/confirm', null, async ({ params, bo
 
 route('POST', '/api/shop/orders/:code/cancel', null, ({ params, ip }) => {
   throttle(ip, 'cancel', 30);
-  const o = byCode(params.code, ip);
+  return cancelOrder(byCode(params.code, ip));
+});
+// The customer cancels an order not paid yet (from the page or the WhatsApp chat).
+function cancelOrder(order) {
+  const o = q('SELECT * FROM shop_orders WHERE id = ?').get(order.id);
+  if (o.status === 'cancelled') return orderView(o);
   if (o.status !== 'awaiting_payment') fail(400, 'لا يمكن إلغاء الطلب بعد إرسال بيانات التحويل. تواصل مع الدعم.');
   if (jcBusy.has(o.id) || o.jc_unsure) fail(409, 'جارٍ تأكيد الدفع من جوال باي — انتظر لحظة.');
-  q("UPDATE shop_orders SET status = 'cancelled', updated_at = ? WHERE id = ?").run(now(), o.id);
+  q("UPDATE shop_orders SET status = 'cancelled', updated_at = ? WHERE id = ? AND status = 'awaiting_payment'").run(now(), o.id);
   return orderView(byCode(o.code));
-});
+}
 
 // ---------- manager ----------
 const adminOrder = (id) => {
@@ -780,4 +785,4 @@ route('GET', '/api/shop/admin/summary', ADMIN, () => ({
   agentId: shop.shopAgent().id,
 }));
 
-module.exports = { shopCatalogResponse, shopCatalog, ensureStock, submitProof, orderView, byCode, createOrder, refreshStock };
+module.exports = { shopCatalogResponse, shopCatalog, ensureStock, submitProof, orderView, byCode, createOrder, cancelOrder, refreshStock };

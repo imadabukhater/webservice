@@ -6,7 +6,7 @@
 // its amount, and each e-mail pays one order only (shop.claim). Anything the model names outside that is dropped.
 // It is the WhatsApp assistant's Gemini (src/whatsapp.js askModel): Vertex AI on the owner's Google Cloud, by the
 // server's own identity, within the same daily spending limit. No key is kept for it.
-const { q, getSettings } = require('./db');
+const { q } = require('./db');
 
 const WINDOW_MS = Number(process.env.AI_PAY_WINDOW_MS) || 15 * 60_000; // only e-mails of the last quarter hour
 const SKEW_MS = 2 * 60_000; // an e-mail's Date header may run a little behind the server's clock
@@ -119,7 +119,7 @@ function lastError() {
 
 // The manager's «اختبار»: Gemini answers on this server.
 async function test() {
-  if (!aiOn()) throw new AiPayError('المساعد الذكي موقوف: حد الصرف اليومي 0$ — غيّره من الإعدادات ← واتساب');
+  if (!aiOn()) throw new AiPayError('المساعد الذكي موقوف على الخادم');
   const out = await ask('Answer with JSON only: {"ok": true}', 'ping', { temperature: 0, timeout: 20_000 });
   if (!out || out.ok !== true) throw new AiPayError(`لم يصل رد من Gemini${lastError() ? ` (${lastError()})` : ''}`);
   return { ok: true, model: wa().config().aiModel };
@@ -129,8 +129,9 @@ async function test() {
 function aiOn() {
   try { const W = require('./waconfig'); return W.aiReady(W.config()); } catch { return false; }
 }
+// Always on (set by the server, not in the settings), as long as Gemini can answer.
 function ready() {
-  return getSettings().aiPay && aiOn();
+  return aiOn();
 }
 
 function _reset() { lastAsked = ''; asked.length = 0; }

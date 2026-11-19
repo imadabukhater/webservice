@@ -22,7 +22,7 @@ const DEFAULT_DAILY_USD = 0.5;
 function modelFor(model) {
   return model && /^gemini[\w.-]*$/i.test(model) ? model : 'gemini-3.1-flash-lite';
 }
-// The assistant answers whenever the day's limit is above 0 (Vertex AI needs no key).
+// The assistant answers whenever the day's limit is above 0 (Vertex AI needs no key): always, at the fixed limit.
 const aiReady = (c) => c.aiDailyUsd > 0;
 
 function config() {
@@ -34,8 +34,9 @@ function config() {
     aiProvider: 'vertex',
     aiModel: modelFor(get('wa_ai_model')),
     welcome: get('wa_welcome'),
-    // At most this much spent on the assistant a day ($); 0 pauses it. Prices: the manager's, else the model's list price.
-    aiDailyUsd: get('wa_ai_daily_usd') === '' ? DEFAULT_DAILY_USD : Math.max(0, Number(get('wa_ai_daily_usd')) || 0),
+    // At most this much spent on the assistant a day ($): always half a dollar, set by the server and not by any
+    // setting (WA_AI_DAILY_USD only for tests). Prices: the manager's, else the model's list price.
+    aiDailyUsd: process.env.WA_AI_DAILY_USD !== undefined ? Math.max(0, Number(process.env.WA_AI_DAILY_USD) || 0) : DEFAULT_DAILY_USD,
     aiPriceIn: get('wa_ai_price_in') === '' ? null : Number(get('wa_ai_price_in')),
     aiPriceOut: get('wa_ai_price_out') === '' ? null : Number(get('wa_ai_price_out')),
     // What the manager tells the assistant (opening hours, delivery, policies…): part of every question it answers.
@@ -62,8 +63,8 @@ function saveConfig(body = {}) {
     if (!Number.isFinite(n) || n < 0 || n > max) fail(400, `${label}: رقم من 0 إلى ${max}`);
     return String(Math.round(n * 10000) / 10000);
   };
-  for (const [field, key, label, max] of [['aiDailyUsd', 'wa_ai_daily_usd', 'حد الصرف اليومي', 100],
-    ['aiPriceIn', 'wa_ai_price_in', 'سعر الإدخال', 100], ['aiPriceOut', 'wa_ai_price_out', 'سعر الإخراج', 100]]) {
+  // The daily limit is fixed (config): an aiDailyUsd given here is not kept.
+  for (const [field, key, label, max] of [['aiPriceIn', 'wa_ai_price_in', 'سعر الإدخال', 100], ['aiPriceOut', 'wa_ai_price_out', 'سعر الإخراج', 100]]) {
     const v = money(body[field], label, max);
     if (v !== undefined) setSetting(key, v);
   }

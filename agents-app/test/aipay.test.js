@@ -48,8 +48,6 @@ function reset() {
 }
 
 test.before(() => {
-  setSetting('ai_pay', '1');
-  setSetting('wa_ai_daily_usd', '1');
   setSetting('shop_auto_max', '0');
 });
 
@@ -155,16 +153,16 @@ test('above the automatic cap, Gemini\'s match waits for the manager', async () 
   } finally { setSetting('shop_auto_max', '0'); }
 });
 
-test('Gemini off: nothing is asked and the name rules work as before', async () => {
+test('Gemini stopped: nothing is asked and the name rules work as before', async () => {
   reset();
-  setSetting('ai_pay', '0');
+  process.env.WA_AI_DAILY_USD = '0'; // the assistant stopped on the server
   try {
     const o = order({ payName: 'Sami Tareq' });
     mail({ name: 'Sami Tareq' });
     assert.equal(await shop.aiReview(), 0);
     assert.equal(requests.length, 0);
     assert.equal(shop.tryMatch(o.id), true);
-  } finally { setSetting('ai_pay', '1'); }
+  } finally { delete process.env.WA_AI_DAILY_USD; }
 });
 
 test('Aylol: the activation code a new line comes back with (qr_payload) is read', () => {

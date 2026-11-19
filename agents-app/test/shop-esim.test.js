@@ -6,6 +6,8 @@
 process.env.DB_FILE = ':memory:';
 process.env.ADMIN_USERNAME = 'admin';
 process.env.ADMIN_PASSWORD = 'admin-pass';
+// The name rules, as when Gemini cannot answer (its review is in aipay.test.js).
+process.env.WA_AI_DAILY_USD = '0';
 process.env.IMAP_HOST = '127.0.0.1';
 process.env.IMAP_SECURE = '0';
 process.env.SMTP_HOST = '127.0.0.1';

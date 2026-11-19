@@ -4,7 +4,7 @@
 //
 //   sudo -u agents env DB_FILE=/var/lib/agents-app/agents.db node /opt/agents/webservice/agents-app/scripts/whatsapp-settings.js
 //       → shows the settings (never the key) and what the assistant spent today
-//   … whatsapp-settings.js limit 0.5            daily spending limit in $ (0 pauses the assistant)
+//   (the daily spending limit is fixed at $0.5 by the app: it is not changed here)
 //   … whatsapp-settings.js model gemini-3.1-flash-lite   (Gemini on your Google Cloud project; no key)
 //   … whatsapp-settings.js replies on|off       customers on|off
 //   … whatsapp-settings.js admins 0599000111,0599000222
@@ -47,7 +47,7 @@ function show() {
     const set = (body) => { WC.saveConfig(body); console.log('✔ تم الحفظ — يسري من الرسالة التالية.\n'); show(); };
     switch (cmd) {
       case undefined: case 'show': return show();
-      case 'limit': return set({ aiDailyUsd: value });
+      case 'limit': console.error('حد الصرف اليومي ثابت: نص دولار ($0.5) في اليوم، ولا يتغيّر.'); process.exit(1); break;
       case 'model':
         if (!/^gemini[\w.-]*$/i.test(value)) { console.error(`نماذج: ${WC.AI_MODELS.map((m) => m.id).join(' | ')}`); process.exit(1); }
         return set({ aiModel: value });
@@ -59,7 +59,7 @@ function show() {
       case 'price-in': return set({ aiPriceIn: value });
       case 'price-out': return set({ aiPriceOut: value });
       default:
-        console.error('أوامر: show | limit | model | replies | customers | admins | shop-url | welcome | price-in | price-out');
+        console.error('أوامر: show | model | replies | customers | admins | shop-url | welcome | price-in | price-out');
         process.exit(1);
     }
   } catch (e) {

@@ -13,15 +13,14 @@ const run = (args, input) => spawnSync(process.execPath, ['--disable-warning=Exp
   { env, input, encoding: 'utf8' });
 test.after(() => fs.rmSync(dir, { recursive: true, force: true }));
 
-test('the owner changes the limit, the model and who it answers, on the server; Google Cloud only, no key', () => {
+test('the owner changes the model and who it answers, on the server; Google Cloud only, no key', () => {
   let r = run([]);
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /حد الصرف اليومي:\s+\$0\.5/, 'half a dollar a day by default');
   assert.match(r.stdout, /Google Cloud \(Vertex AI\) — بلا مفتاح/);
   r = run(['limit', '0.25']);
-  assert.equal(r.status, 0, r.stderr);
-  assert.match(r.stdout, /\$0\.25/);
-  assert.equal(run(['limit', '-3']).status, 1, 'a negative limit is refused');
+  assert.equal(r.status, 1, 'the daily limit is fixed');
+  assert.match(r.stderr, /ثابت/);
   assert.equal(run(['provider', 'groq']).status, 1, 'no other service');
   assert.equal(run(['key']).status, 1, 'no key');
   assert.equal(run(['model', 'gpt-4o']).status, 1, 'Gemini models only');
@@ -37,6 +36,6 @@ test('the owner changes the limit, the model and who it answers, on the server; 
   const { DatabaseSync } = require('node:sqlite');
   const db = new DatabaseSync(env.DB_FILE, { readOnly: true });
   const get = (k) => db.prepare('SELECT value FROM settings WHERE key = ?').get(k)?.value;
-  assert.deepEqual([get('wa_ai_daily_usd'), get('wa_ai_model'), get('wa_ai_key'), get('wa_enabled')], ['0.25', 'gemini-3.5-flash-lite', undefined, '0']);
+  assert.deepEqual([get('wa_ai_daily_usd'), get('wa_ai_model'), get('wa_ai_key'), get('wa_enabled')], [undefined, 'gemini-3.5-flash-lite', undefined, '0']);
   db.close();
 });

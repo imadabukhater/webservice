@@ -168,8 +168,6 @@ route('PUT', '/api/settings', ADMIN, ({ body }) => {
   }
   if (body.jcUser !== undefined) setSetting('jc_user', str(body.jcUser, 120));
   if (body.jcPass) setSetting('jc_pass', String(body.jcPass).slice(0, 200));
-  // Gemini's payment review (src/aipay.js).
-  if (body.aiPay !== undefined) setSetting('ai_pay', body.aiPay ? '1' : '0');
   if (body.supportWhatsapp !== undefined) {
     // International format without + or leading zeros, as wa.me expects: 972567725080.
     const wa = String(body.supportWhatsapp).replace(/\D/g, '').replace(/^00/, '');
