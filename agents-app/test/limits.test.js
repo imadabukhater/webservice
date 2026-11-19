@@ -30,21 +30,28 @@ test('at most so many orders an hour from one customer; another customer is not 
   const p = pkg('eSIM 20', 20);
   setSetting('shop_hour_limit', '2');
   const order = (contactPhone, clientId) => S.createOrder({ packageId: p, kind: 'esim', customerName: 'زبون', contactPhone }, { ip: 'net-1', clientId });
+  // The orders kept count (paid here: they are no longer waiting, so a next one may be made at all).
+  const paidAll = () => q("UPDATE shop_orders SET status = 'paid', line_id = 1 WHERE status = 'awaiting_payment'").run();
   await order('0591111111', 'browser-a');
-  // Its first order paid or not, the same browser makes a second one for another number…
-  q("UPDATE shop_orders SET status = 'cancelled'").run();
+  paidAll();
+  // Its first order paid, the same browser makes a second one for another number…
   await order('0592222222', 'browser-a');
-  q("UPDATE shop_orders SET status = 'cancelled'").run();
+  paidAll();
   // …but not a third within the hour, whatever the number.
   await assert.rejects(() => order('0593333333', 'browser-a'), /2 طلبات في الساعة/);
   // The same contact phone from other browsers counts too: a second order for it is made, a third is not.
   assert.ok((await order('0591111111', 'browser-b')).code);
-  q("UPDATE shop_orders SET status = 'cancelled'").run();
+  paidAll();
   await assert.rejects(() => order('0591111111', 'browser-e'), /طلبات في الساعة/);
   // Someone else on the same network is not held back.
   assert.ok((await order('0594444444', 'browser-c')).code);
-  // 0: no limit.
+  // Orders the customer cancelled, or whose hold ran out, do not count: they can order again.
   q("UPDATE shop_orders SET status = 'cancelled'").run();
+  for (let i = 0; i < 4; i++) {
+    assert.ok((await order('0595555555', 'browser-d')).code, `order ${i + 1} after cancelling`);
+    q("UPDATE shop_orders SET status = 'cancelled' WHERE client_id = 'browser-d'").run();
+  }
+  // 0: no limit.
   setSetting('shop_hour_limit', '0');
   assert.ok((await order('0593333333', 'browser-a')).code);
   q("UPDATE shop_orders SET status = 'cancelled'").run();

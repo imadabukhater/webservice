@@ -956,6 +956,7 @@ ${shop.packages ? shopSheet(shop) : ''}
 - لما يسأل عن طلبه أو ليش تأخر: order_status. لما يقول إنه حوّل ويعطيك اسم اللي حوّل أو رقمه أو الرقم المرجعي: submit_payment.
 - *طلب واحد مفتوح بس بالمحادثة*: إذا عنده طلب لسا جاري (بستنى الدفع أو التحقق) لا تفتح طلب جديد، كمّل معه على نفس الطلب. إلا إذا الزبون نفسه قال بدّه يلغيه: cancel_order، وبعدها بتقدر تعمله طلب جديد. الطلب المدفوع ما بينلغى، بس ما بيمنع طلب جديد: إذا بدّه باقة تانية اعمله طلب جديد عادي.
 - لا تكرر كلام قلته قبل بالمحادثة (ترحيب، شرح، تفاصيل طلب): جاوب على الجديد بس.
+- إذا المتجر رفض إشي، احكي سببه زي ما رجعلك بالزبط. لا تخترع سبب (زي «ضغط على النظام») ولا تقله «جرّب كمان شوي» إذا السبب ما بيتغيّر.
 - النظام بيضيف تحت ردّك لحاله تفاصيل الطلب (رقمه، المبلغ، رقم الدفع، وحالته). لا تكتبهم إنت ولا تعيدهم، ولا تحكي إنه الدفع أو التفعيل أو الطلب تم أو صار جاهز: هاد النظام بس بيقرره.
 - الدفع بجوال باي، والتفعيل بيصير لحاله بعد ما النظام يتأكد من التحويل.
 - ردّك قصير (سطرين لأربعة). إذا سأل عن شي برّا المتجر، رجّعه بلطف للباقات والطلبات.
@@ -1024,6 +1025,7 @@ function orderFacts(o, shop) {
 }
 const stageFacts = (o, stage) => `🧾 طلب *${o.code}* — ${o.package_label}\n${STAGE_TEXT[stage] || stage}`;
 const OPEN = ['awaiting_payment', 'verifying', 'review'];
+const FAILED_HOLD_MS = 3 * 60_000; // an order just refused: its reason said again for a while, no summary to confirm again
 
 // The shop's answer to one of the assistant's questions. Every check is the shop's own (as for the web page's orders).
 async function agentTool(name, args, ctx) {
@@ -1070,6 +1072,11 @@ async function agentTool(name, args, ctx) {
       // The customer confirms the order's summary (written by the code) before it is made: asked in one message, made only
       // on a later one, for exactly what was shown.
       const key = JSON.stringify([p.id, name2]);
+      if (draft.failed && draft.failed.key === key && Date.now() - draft.failed.at < FAILED_HOLD_MS) {
+        if (!ctx.facts.includes(draft.failed.fact)) ctx.facts.push(draft.failed.fact);
+        ctx.codeOnly = true;
+        return { ok: false, error: draft.failed.reason || 'خطأ بالمتجر', note: 'نفس الطلب انرفض قبل شوي، وسببه بينضاف لحاله تحت ردّك. اقترح عليه باقة تانية أو يستنى، ولا تعيد ملخص الطلب.' };
+      }
       if (!(args.confirmed === true && draft.pendingKey === key && draft.pendingAt < ctx.startedAt)) {
         draft.pendingKey = key;
         draft.pendingAt = Date.now();
@@ -1086,7 +1093,24 @@ async function agentTool(name, args, ctx) {
       const contact = /^05\d{8}$/.test(ctx.phone) ? ctx.phone : '';
       // The eSIM fee is always part of the price shown above, so it is charged.
       const body = { packageId: p.id, kind: 'esim', esim: true, includeEsimFee: true, customerName: name2, contactPhone: contact };
-      const v = await S.createOrder(body, { ip: chat, clientId: chat });
+      let v;
+      try {
+        v = await S.createOrder(body, { ip: chat, clientId: chat });
+      } catch (e) {
+        // Not made: the customer reads why in the shop's own words (the assistant would make one up), and an error that
+        // is not one of the shop's checks goes to the manager.
+        const reason = e && e.status ? String(e.message).slice(0, 200) : '';
+        if (!reason) {
+          console.error('whatsapp create_order', e);
+          tellAdmins(`⚠️ طلب واتساب ما انعمل بسبب خطأ بالمتجر${ctx.phone ? ` (${ctx.phone})` : ''}: ${String(e?.message || e).slice(0, 200)}\nالباقة: ${p.companyName} — ${p.name}، الاسم: ${name2}. ردّ على الزبون.`).catch(() => {});
+        }
+        const fact = reason ? `⚠️ ما انعمل الطلب: ${reason}` : '⚠️ صار خطأ بالمتجر وما انعمل الطلب. بلّغت المدير وبيرد عليك هون بأقرب وقت.';
+        draft.failed = { key, fact, reason, at: Date.now() };
+        ctx.facts = ctx.facts.filter((f) => !f.startsWith('📝'));
+        if (!ctx.facts.includes(fact)) ctx.facts.push(fact);
+        ctx.codeOnly = true;
+        return { ok: false, error: reason || 'خطأ بالمتجر', note: 'سبب الرفض بينضاف لحاله تحت ردّك؛ لا تكتب سبب من عندك.' };
+      }
       const o = S.byCode(v.code);
       drafts.delete(jid);
       follow(jid, o, v.stage);

@@ -120,3 +120,30 @@ test('a reply already sent in the conversation is caught as a repeat (short word
   assert.equal(wa._test.saidBefore(jid, 'تمام 👍'), false);
   assert.equal(wa._test.saidBefore(jid, 'هوت 200 جيجا بـ 40 شيكل، بتحب أعملك الطلب؟'), false);
 });
+
+test('an order the shop refuses: the customer reads the shop\'s own reason, and the summary does not come back in a loop', async () => {
+  const jid = '972500000666@s.whatsapp.net';
+  const pkg = { id: 424242, companyId: 1, companyName: 'WE', name: 'حزمة 500 جيجا', price: 35, esimFee: 5 }; // not in the shop's database
+  const c = (startedAt = Date.now()) => ({ jid, phone: '0500000666', shop: { packages: [pkg], jawwalpay: {} }, startedAt, facts: [], after: [], prices: new Set(), phones: new Set() });
+  const first = c();
+  assert.equal((await wa._test.agentTool('create_order', { package_id: pkg.id, customer_name: 'خوخة' }, first)).awaiting_confirmation, true);
+  assert.match(first.facts[0], /تأكيد الطلب/);
+  await new Promise((r) => setTimeout(r, 5));
+  // «نعم»: the shop refuses (here, the package is not there): its reason, in its words, alone.
+  const yes = c();
+  const r = await wa._test.agentTool('create_order', { confirmed: true }, yes);
+  assert.equal(r.ok, false);
+  assert.equal(yes.facts.length, 1);
+  assert.match(yes.facts[0], /^⚠️ ما انعمل الطلب: \S/, 'the shop\'s own reason');
+  assert.equal(yes.codeOnly, true, 'no «ضغط على النظام» from the assistant');
+  // «جرّب» / «نعم» again at once: the same reason, not the summary to confirm once more.
+  const again = c();
+  await wa._test.agentTool('create_order', { package_id: pkg.id, customer_name: 'خوخة' }, again);
+  assert.equal(again.facts.length, 1);
+  assert.match(again.facts[0], /ما انعمل الطلب/);
+  assert.doesNotMatch(again.facts.join('\n'), /تأكيد الطلب/);
+  // Another package: asked to confirm as usual.
+  const other = { ...pkg, id: 434343, name: 'حزمة تانية' };
+  const c2 = { ...c(), shop: { packages: [pkg, other], jawwalpay: {} } };
+  assert.equal((await wa._test.agentTool('create_order', { package_id: other.id }, c2)).awaiting_confirmation, true);
+});

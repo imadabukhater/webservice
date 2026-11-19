@@ -343,7 +343,8 @@ async function createOrder(body, { ip, clientId = '' }) {
   if (perHour > 0) {
     let contact = '';
     try { contact = validPhone(normalizePhone(body.contactPhone || body.number || '')); } catch {}
-    const n = q(`SELECT COUNT(*) AS c FROM shop_orders WHERE created_at > ? AND ((? != '' AND client_id = ?) OR (? != '' AND contact_phone = ?))`)
+    // Orders the customer cancelled (or whose hold ran out) do not count: they can order again (one waiting at a time).
+    const n = q(`SELECT COUNT(*) AS c FROM shop_orders WHERE created_at > ? AND status != 'cancelled' AND ((? != '' AND client_id = ?) OR (? != '' AND contact_phone = ?))`)
       .get(now() - 60 * 60_000, clientId, clientId, contact, contact)?.c || 0;
     if (n >= perHour) fail(429, `وصلت إلى الحد الأقصى (${perHour} طلبات في الساعة). حاول لاحقاً أو تواصل معنا.`);
   }
