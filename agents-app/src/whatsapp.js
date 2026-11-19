@@ -1076,6 +1076,13 @@ async function agentTool(name, args, ctx) {
       if (args.order_code && !code) return { orders: [], error: 'ما في طلب بهالرقم' };
       const list = code ? [S.byCode(code)] : chatOrders(jid);
       if (!list.length) return { orders: [], note: 'ما في طلبات من هالمحادثة؛ اطلب من الزبون رقم الطلب.' };
+      // The customer asks what happened: an order waiting for its payment check is looked at again (Gemini too).
+      if (list.some((o) => ['verifying', 'review'].includes(o.status))) {
+        const shop = require('./shop');
+        await shop.checkMail().catch((e) => console.error('shop mail', e.message));
+        await shop.aiReview({ asked: true }).catch((e) => console.error('ai pay', e.message)); // its answer is part of this reply
+        for (let i = 0; i < list.length; i++) list[i] = S.byCode(list[i].code);
+      }
       const orders = [];
       for (const o of list) {
         const v = S.orderView(o);

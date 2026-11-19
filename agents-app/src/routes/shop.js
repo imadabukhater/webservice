@@ -473,7 +473,8 @@ route('GET', '/api/shop/orders/:code', null, async ({ params, query, ip }) => {
   if (o.status === 'verifying' || o.status === 'review') {
     if (query.check === '1') throttle(ip, 'mail_check', 30);
     if (!shop.tryMatch(o.id) && (query.check === '1' || Number(o.proof_tries) >= 2)) {
-      try { await shop.checkMail(); } catch (e) { console.error('shop mail', e.message); }
+      // check=1: the customer opened their order (not the page's own refresh): Gemini looks at it too.
+      try { await shop.checkMail({ asked: query.check === '1' }); } catch (e) { console.error('shop mail', e.message); }
     }
     o = byCode(params.code);
   }
@@ -534,7 +535,7 @@ async function submitProof(order, body) {
     .run(payPhone, payName, payReference, receipt, receipt, nextTry, t, t, t, o.id);
   if (!shop.tryMatch(o.id)) {
     // Read the mailbox now: the email often arrives a few seconds after the transfer.
-    try { await shop.checkMail({ force: true }); } catch (e) { console.error('shop mail', e.message); }
+    try { await shop.checkMail({ force: true, asked: true }); } catch (e) { console.error('shop mail', e.message); }
   }
   return orderView(byCode(o.code));
 }

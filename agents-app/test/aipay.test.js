@@ -4,6 +4,7 @@
 process.env.DB_FILE = ':memory:';
 process.env.ADMIN_USERNAME = 'admin';
 process.env.ADMIN_PASSWORD = 'admin-pass';
+process.env.AI_PAY_ASK_AGAIN_MS = '300'; // a customer asking again about the same: once in 300 ms here (a minute live)
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -172,4 +173,55 @@ test('Aylol: the activation code a new line comes back with (qr_payload) is read
   const r = fn({ qr_payload: 'LPA:1$hotmobile.example.com$ABC-123', esim_qr: '/qr-codes/branded/x.png' });
   assert.equal(r.esimCode, 'LPA:1$hotmobile.example.com$ABC-123');
   assert.match(r.qr, /^data:image\/png;base64,/);
+});
+
+test('Gemini is asked on a new payment e-mail or when the customer asks, not on every look', async () => {
+  reset();
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const o = order({ payName: 'Lina Omar' });
+  mail({ name: 'Leena Omar', amount: 39 }); // too little: shown to no one
+  mail({ name: 'Someone Else' });
+  answer = () => ({ matches: [] });
+  // The mailbox looked at, nothing new in it: Gemini is not asked.
+  await shop.checkMail();
+  await sleep(20);
+  assert.equal(requests.length, 0, 'no new e-mail, no question');
+  // The customer asks about their order: asked now, even with nothing new.
+  await shop.checkMail({ asked: true });
+  await sleep(20);
+  assert.equal(requests.length, 1);
+  // Asking again at once about the same: not asked again yet; a moment later it is.
+  await shop.aiReview({ asked: true });
+  assert.equal(requests.length, 1);
+  await sleep(350);
+  await shop.aiReview({ asked: true });
+  assert.equal(requests.length, 2);
+  // Without the customer asking, the same orders and e-mails are not asked about again, however long it waits.
+  await sleep(350);
+  await shop.aiReview();
+  assert.equal(requests.length, 2);
+  // A new e-mail (what run() asks on): asked, and it pays the order.
+  const m = mail({ name: 'Lina Omar' });
+  answer = () => ({ matches: [{ order: o.code, email: m, reason: 'نفس الاسم' }] });
+  assert.equal(await shop.aiReview(), 1);
+  assert.equal(requests.length, 3);
+});
+
+test('a reason to ask that comes while Gemini is answering is asked right after, once', async () => {
+  reset();
+  const o = order({ payName: 'Rami' });
+  mail({ name: 'Somebody' });
+  let release;
+  answer = () => new Promise((r) => { release = () => r({ matches: [] }); });
+  const first = shop.aiReview();
+  await new Promise((r) => setTimeout(r, 10));
+  const m = mail({ name: 'Rami' }); // arrives while the first answer is awaited
+  shop.aiReview();
+  shop.aiReview();
+  answer = () => ({ matches: [{ order: o.code, email: m, reason: 'x' }] });
+  release();
+  await first;
+  for (let i = 0; i < 50 && q('SELECT status FROM shop_orders WHERE id = ?').get(o.id).status !== 'paid'; i++) await new Promise((r) => setTimeout(r, 10));
+  assert.equal(requests.length, 2, 'once more, not twice');
+  assert.equal(q('SELECT status FROM shop_orders WHERE id = ?').get(o.id).status, 'paid');
 });

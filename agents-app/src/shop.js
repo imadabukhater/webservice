@@ -337,15 +337,22 @@ function payWith(o, mailId, verifiedBy) {
 // The waiting orders and the unused payment e-mails of the last 15 minutes go to Gemini, which says which e-mail paid
 // which order (the money rules are checked again in aipay.allowed, and each e-mail pays one order: claim).
 // When Gemini gives no answer, the names are matched by the rules above, as before.
+// Gemini is asked only when a new payment e-mail came in (run), or when the customer asks about their order (asked:
+// their transfer details sent, the order page opened, «شو صار بطلبي» on WhatsApp) — never on a timer by itself.
 let reviewing = null;
-const aiState = { at: 0, error: '', matched: 0 };
-function aiReview() {
+let reviewAgain = null; // a reason to ask that came while Gemini was answering: asked once more right after
+const aiState = { at: 0, error: '', matched: 0, asks: 0 };
+function aiReview({ asked = false } = {}) {
   if (!aipay.ready()) return Promise.resolve(0);
-  if (reviewing) return reviewing;
+  if (reviewing) {
+    reviewAgain = { asked: asked || !!reviewAgain?.asked };
+    return reviewing;
+  }
   reviewing = (async () => {
     let matched = 0;
     try {
-      const picks = await aipay.review();
+      aiState.asks++;
+      const picks = await aipay.review({ byCustomer: asked });
       aiState.error = '';
       for (const p of picks) {
         const o = q("SELECT * FROM shop_orders WHERE id = ? AND status IN ('verifying','review')").get(p.order.id);
@@ -359,7 +366,12 @@ function aiReview() {
     aiState.at = now();
     aiState.matched += matched;
     return matched;
-  })().finally(() => { reviewing = null; });
+  })().finally(() => {
+    reviewing = null;
+    const again = reviewAgain;
+    reviewAgain = null;
+    if (again) aiReview(again).catch((e) => console.error('ai pay', e.message));
+  });
   return reviewing;
 }
 
@@ -550,17 +562,21 @@ let lastImapCheckAt = 0;
 const CHECK_COOLDOWN_MS = Number.isFinite(Number(process.env.SHOP_CHECK_COOLDOWN_MS)) ? Number(process.env.SHOP_CHECK_COOLDOWN_MS) : 60_000;
 
 // Reads new payment emails, then matches waiting orders. force: read even with no order waiting or when cooldown has not elapsed.
+// asked: the customer asks about their order, so Gemini looks at it even without a new e-mail.
 // Automatically rate-limits remote IMAP mailbox queries to at most once per minute (CHECK_COOLDOWN_MS)
 // to prevent mailbox connection floods, server overload, and Gmail account rate-limiting.
-function checkMail({ force = false } = {}) {
+function checkMail({ force = false, asked = false } = {}) {
   const elapsed = now() - lastImapCheckAt;
   if (!force && elapsed < CHECK_COOLDOWN_MS) {
     let matched = 0;
     for (const { id } of q("SELECT id FROM shop_orders WHERE status IN ('verifying','review') ORDER BY proof_at").all()) if (tryMatch(id)) matched++;
+    if (asked) aiReview({ asked: true }).catch((e) => console.error('ai pay', e.message));
     const escalated = escalate();
     return Promise.resolve({ fetched: 0, matched, escalated, mailed: 0, throttled: true });
   }
   if (!running) running = run(force).finally(() => { running = null; });
+  // After the mailbox is read (a new e-mail is then part of what Gemini sees).
+  if (asked) running.then(() => aiReview({ asked: true })).catch((e) => console.error('ai pay', e.message));
   return running;
 }
 
@@ -585,8 +601,8 @@ async function run(force) {
   }
   let matched = 0;
   for (const { id } of q("SELECT id FROM shop_orders WHERE status IN ('verifying','review') ORDER BY proof_at").all()) if (tryMatch(id)) matched++;
-  // Gemini's answer takes a few seconds: the customer's page sees the order paid on its next look.
-  aiReview().catch((e) => console.error('ai pay', e.message));
+  // A new payment e-mail: Gemini looks (its answer takes a few seconds; the customer's page sees it on its next look).
+  if (fetched) aiReview().catch((e) => console.error('ai pay', e.message));
   const escalated = escalate();
   let mailed = 0;
   try { mailed = await deliverQr(); } catch (e) { console.error('shop qr mail', e.message); }
