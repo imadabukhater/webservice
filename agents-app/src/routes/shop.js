@@ -673,13 +673,25 @@ route('POST', '/api/shop/orders/:code/cancel', null, ({ params, ip }) => {
   throttle(ip, 'cancel', 30);
   return cancelOrder(byCode(params.code, ip));
 });
-// The customer cancels an order not paid yet (from the page or the WhatsApp chat).
+// The customer cancels their order (from the page or the WhatsApp chat) as long as it is not paid: waiting for the
+// transfer, for its check, or with the manager. Once paid (being carried out or done) it is not. One cancelled after
+// the transfer details were sent goes to the manager: money may have come in, to give back or use for a new order.
+const CANCELLABLE = ['awaiting_payment', 'verifying', 'review'];
+const CUSTOMER_CANCELLED = 'ألغيت الطلب بنفسك';
 function cancelOrder(order) {
   const o = q('SELECT * FROM shop_orders WHERE id = ?').get(order.id);
   if (o.status === 'cancelled') return orderView(o);
-  if (o.status !== 'awaiting_payment') fail(400, 'لا يمكن إلغاء الطلب بعد إرسال بيانات التحويل. تواصل مع الدعم.');
+  if (!CANCELLABLE.includes(o.status)) fail(400, 'الطلب مدفوع وبيتنفّذ أو انتهى — ما بينلغى. تواصل مع الدعم.');
   if (jcBusy.has(o.id) || o.jc_unsure) fail(409, 'جارٍ تأكيد الدفع من جوال باي — انتظر لحظة.');
-  q("UPDATE shop_orders SET status = 'cancelled', updated_at = ? WHERE id = ? AND status = 'awaiting_payment'").run(now(), o.id);
+  const done = q(`UPDATE shop_orders SET status = 'cancelled', response = ?, updated_at = ?
+                  WHERE id = ? AND status IN ('awaiting_payment','verifying','review')`).run(CUSTOMER_CANCELLED, now(), o.id).changes;
+  // Paid in the meantime (its payment was just confirmed): it goes on.
+  if (!done) fail(409, 'تأكد الدفع للتو والطلب بيتنفّذ — ما بينلغى.');
+  if (o.status !== 'awaiting_payment') {
+    const payer = [o.pay_name, o.pay_phone, o.pay_reference].filter(Boolean).join(' / ') || (o.receipt ? 'صورة إشعار' : '');
+    D.notify({ role: 'admin', kind: 'task', title: `الزبون ألغى الطلب ${o.code} بعد إرسال بيانات التحويل`,
+      body: `${o.package_label} — ${o.amount} ₪${payer ? ` — المحوِّل: ${payer}` : ''}. إذا وصل تحويله: رجّعه، أو استعمله لطلبه الجديد.`, link: '#/shop' });
+  }
   return orderView(byCode(o.code));
 }
 

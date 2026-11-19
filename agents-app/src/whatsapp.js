@@ -883,7 +883,7 @@ const AGENT_TOOLS = [{ functionDeclarations: [
       package_id: { type: 'INTEGER', description: 'رقم الباقة من قائمة الباقات بالتعليمات' },
       customer_name: { type: 'STRING', description: 'اسم الزبون الكامل' },
       confirmed: { type: 'BOOLEAN', description: 'true بس بعد ما الزبون وافق على ملخص الطلب اللي انعرض عليه' } }, required: ['package_id'] } },
-  { name: 'cancel_order', description: 'يلغي طلب الزبون المفتوح (اللي لسا ما دفعه) لما الزبون نفسه يطلب يلغيه. بعدها بتقدر تعمله طلب جديد.',
+  { name: 'cancel_order', description: 'يلغي طلب الزبون الجاري لما الزبون نفسه يطلب يلغيه، حتى لو بعت بيانات التحويل أو الطلب عند المدير (بس مش إذا انْدفع وبيتنفّذ). بعدها بتقدر تعمله طلب جديد.',
     parameters: { type: 'OBJECT', properties: { order_code: { type: 'STRING', description: 'رقم الطلب إذا الزبون كتبه' } } } },
   { name: 'order_status', description: 'حالة طلبات الزبون من المتجر. بدون order_code: طلبات هالمحادثة.',
     parameters: { type: 'OBJECT', properties: { order_code: { type: 'STRING', description: 'رقم الطلب (8 حروف وأرقام) إذا الزبون كتبه' } } } },
@@ -1064,11 +1064,14 @@ async function agentTool(name, args, ctx) {
     }
     if (name === 'cancel_order') {
       const code = orderCodeIn(String(args.order_code || ''));
-      const o = code ? chatOrders(jid).find((x) => x.code === code) : openOrder(jid);
+      const o = code ? q(`SELECT o.* FROM shop_orders o WHERE o.code = ? AND (o.id IN (SELECT order_id FROM wa_shop WHERE jid = ?) OR o.ip = ?)`)
+        .get(code, jid, `wa:${jid}`.slice(0, 64)) : openOrder(jid);
       if (!o) return { ok: false, error: code ? 'ما في طلب بهالرقم من هالمحادثة' : 'ما في طلب مفتوح بهالمحادثة' };
+      const sentDetails = o.status !== 'awaiting_payment';
       const v = S.cancelOrder(o);
       drafts.delete(jid);
-      ctx.facts.push(`🧾 طلب *${o.code}* — ${o.package_label}\n❌ انلغى الطلب زي ما طلبت. فيك تطلب باقة تانية وقت ما بدك.`);
+      follow(jid, o, v.stage); // already told here: no second message about it
+      ctx.facts.push(`🧾 طلب *${o.code}* — ${o.package_label}\n❌ انلغى الطلب زي ما طلبت.${sentDetails ? ' إذا كنت حوّلت المبلغ، المتجر بيتواصل معك بخصوصه.' : ''} فيك تطلب باقة تانية وقت ما بدك.`);
       return { ok: true, order_code: o.code, stage: v.stage, note: 'انلغى الطلب. إذا بدّه باقة تانية بتقدر تعمله طلب جديد.' };
     }
     if (name === 'order_status') {
@@ -1176,7 +1179,9 @@ const askedAbout = new Map();
 // The order still going on in this chat (waiting for its payment or its check): at most one at a time.
 function openOrder(jid) {
   require('./shop').expireUnconfirmed();
-  return chatOrders(jid).find((o) => OPEN.includes(o.status)) || null;
+  return q(`SELECT o.* FROM shop_orders o
+            WHERE (o.id IN (SELECT order_id FROM wa_shop WHERE jid = ?) OR o.ip = ?) AND o.status IN ('awaiting_payment','verifying','review')
+            ORDER BY o.created_at DESC LIMIT 1`).get(jid, `wa:${jid}`.slice(0, 64)) || null;
 }
 function chatOrders(jid) {
   return q(`SELECT o.* FROM shop_orders o
@@ -1227,7 +1232,9 @@ async function orderUpdate(jid, o, v) {
     if (code) await say(jid, `وإذا الكاميرا ما زبطت، هاد رمز التفعيل اليدوي:\n${code}`);
     return undefined;
   }
-  return say(jid, `طلب *${o.code}* — ${o.package_label}\n${STAGE_TEXT[v.stage] || v.stage}`);
+  // Cancelled by the customer (on the page): said so, not as a hold that ran out.
+  const text = v.stage === 'cancelled' && o.response === 'ألغيت الطلب بنفسك' ? '❌ انلغى الطلب زي ما طلبت. فيك تطلب باقة جديدة وقت ما بدك.' : (STAGE_TEXT[v.stage] || v.stage);
+  return say(jid, `طلب *${o.code}* — ${o.package_label}\n${text}`);
 }
 async function tellAdmins(text) {
   for (const p of config().admins) {

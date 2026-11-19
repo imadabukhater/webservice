@@ -41,14 +41,31 @@ test('an order going on in the chat: no new one until the customer cancels it', 
   assert.match(next.error, /ما في باقة/);
 });
 
-test('a transfer already sent: the order is not cancelled from the chat, and still blocks a new one', async () => {
-  const o = order('verifying');
-  const r = await wa._test.agentTool('cancel_order', {}, ctx());
+test('a transfer already sent, or the order with the manager: the customer still cancels it, and the manager is told', async () => {
+  for (const status of ['verifying', 'review']) {
+    const o = order(status);
+    q("UPDATE shop_orders SET pay_name = 'عماد ابو خاطر' WHERE id = ?").run(o.id);
+    assert.equal((await wa._test.agentTool('create_order', { package_id: 1, customer_name: 'عماد' }, ctx())).open_order, o.code, 'it blocks a new one');
+    const c = ctx();
+    const r = await wa._test.agentTool('cancel_order', {}, c);
+    assert.equal(r.ok, true, JSON.stringify(r));
+    const row = q('SELECT * FROM shop_orders WHERE id = ?').get(o.id);
+    assert.equal(row.status, 'cancelled');
+    assert.equal(row.response, 'ألغيت الطلب بنفسك');
+    assert.match(c.facts[0], /إذا كنت حوّلت المبلغ، المتجر بيتواصل معك/);
+    const note = q('SELECT * FROM notifications WHERE title LIKE ? ORDER BY id DESC').get(`%${o.code}%`);
+    assert.ok(note, 'the manager is told');
+    assert.match(note.body, /عماد ابو خاطر/);
+    assert.equal((await wa._test.agentTool('create_order', { package_id: 1, customer_name: 'عماد' }, ctx())).open_order, undefined, 'then a new one may be made');
+  }
+});
+
+test('a paid order is not cancelled, and a new one may be made beside it', async () => {
+  const o = order('paid');
+  const r = await wa._test.agentTool('cancel_order', { order_code: o.code }, ctx());
   assert.equal(r.ok, false);
-  assert.match(r.error, /لا يمكن إلغاء الطلب بعد إرسال بيانات التحويل/);
-  assert.equal((await wa._test.agentTool('create_order', { package_id: 1, customer_name: 'عماد' }, ctx())).open_order, o.code);
-  q("UPDATE shop_orders SET status = 'paid' WHERE id = ?").run(o.id);
-  // Paid (done or being carried out): a new order may be made.
+  assert.match(r.error, /مدفوع/);
+  assert.equal(q('SELECT status FROM shop_orders WHERE id = ?').get(o.id).status, 'paid');
   assert.equal((await wa._test.agentTool('create_order', { package_id: 1, customer_name: 'عماد' }, ctx())).open_order, undefined);
 });
 

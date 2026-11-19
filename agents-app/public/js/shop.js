@@ -2125,7 +2125,7 @@ function renderOrder() {
       ${st.desc ? `<p class="muted" style="margin:0;font-size:.86rem">${esc(st.desc)}</p>` : ''}
       ${o.response ? `<div class="esim-ready-notice">${icon('info')}<span>${esc(o.response)}</span></div>` : ''}
       ${o.expiresAt ? `<div class="shop-kv"><span>صلاحية الباقة حتى</span><b>${fmtDate(o.expiresAt)}</b></div>` : ''}
-      ${o.status === 'awaiting_payment' ? `
+      ${['awaiting_payment', 'verifying', 'review'].includes(o.status) ? `
         <div class="row no-print" style="justify-content:flex-end">
           <button type="button" class="btn ghost btn-sm" id="cancel-order-btn">إلغاء الطلب</button>
         </div>` : ''}
@@ -2408,6 +2408,8 @@ function renderOrder() {
   const cancelBtn = document.getElementById('cancel-order-btn');
   if (cancelBtn) {
     cancelBtn.onclick = async () => {
+      // After the transfer details were sent: the money may already be with the shop, which then contacts them.
+      if (o.status !== 'awaiting_payment' && !window.confirm('أرسلت بيانات التحويل لهذا الطلب. إذا كنت حوّلت المبلغ، المتجر بيتواصل معك بخصوصه. إلغاء الطلب؟')) return;
       try {
         S.order = await jfetch(`/api/shop/orders/${encodeURIComponent(o.code)}/cancel`, { method: 'POST' });
         notify('تم إلغاء الطلب');
