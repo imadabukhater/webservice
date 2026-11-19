@@ -763,20 +763,17 @@ route('POST', '/api/shop/admin/jawwal/test', ADMIN, async () => {
 });
 route('GET', '/api/shop/admin/jawwal/status', ADMIN, () => jc.status());
 
-// Claude's payment review: the saved key works (save first), and how its last look went.
-route('POST', '/api/shop/admin/claude/test', ADMIN, async () => {
-  const claudepay = require('../claudepay');
-  if (!getSettings().claudeConfigured) fail(400, 'أدخل مفتاح Claude API أولاً');
+// Gemini's payment review: the model answers on this server, and how its last look went.
+route('POST', '/api/shop/admin/ai/test', ADMIN, async () => {
+  const aipay = require('../aipay');
   try {
-    return await claudepay.test();
+    return await aipay.test();
   } catch (e) {
-    const status = Number(e.status) || 0;
-    if (status === 401) fail(502, 'Claude رفض المفتاح — تأكد منه في console.anthropic.com');
-    if (status === 429) fail(502, 'Claude: تجاوزت حد الطلبات أو الرصيد — راجع حسابك في console.anthropic.com');
-    fail(502, `Claude: ${String(e.message || e).slice(0, 200)}`);
+    if (!(e instanceof aipay.AiPayError)) throw e;
+    fail(502, e.message);
   }
 });
-route('GET', '/api/shop/admin/claude/status', ADMIN, () => ({ ...shop.claudeState, ready: require('../claudepay').ready() }));
+route('GET', '/api/shop/admin/ai/status', ADMIN, () => ({ ...shop.aiState, ready: require('../aipay').ready() }));
 
 route('GET', '/api/shop/admin/summary', ADMIN, () => ({
   open: q("SELECT COUNT(*) AS n FROM shop_orders WHERE status IN ('verifying','review') OR (status = 'paid' AND line_id IS NULL)").get().n,

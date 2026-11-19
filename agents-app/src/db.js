@@ -468,8 +468,8 @@ const DEFAULT_SETTINGS = {
   aylol_user: '', aylol_pass: '', aylol_markup: '15',
   // Direct Jawwal Pay through the MaalCards corporate API: the subscriber (manager_id) and the corporate account.
   jc_enabled: '0', jc_manager_id: '', jc_user: '', jc_pass: '',
-  // Claude confirms transfers from the payment e-mails (src/claudepay.js): on/off and the Anthropic API key.
-  claude_pay: '0', claude_key: '',
+  // Gemini confirms transfers from the payment e-mails (src/aipay.js): on/off.
+  ai_pay: '0',
   // Safety: a paid customer order above this amount waits for the manager (0: none); orders a customer may make in an
   // hour; Aylol's balance under which the manager is told.
   shop_auto_max: '200', shop_hour_limit: '3', aylol_low_balance: '100',
@@ -559,9 +559,8 @@ function getSettings() {
     jcUser: out.jc_user,
     jcConfigured: !!(out.jc_manager_id && out.jc_user && out.jc_pass),
     jcReady: out.jc_enabled === '1' && !!(out.jc_manager_id && out.jc_user && out.jc_pass),
-    // Claude's payment review: the key never leaves the server.
-    claudePay: out.claude_pay === '1',
-    claudeConfigured: !!out.claude_key,
+    // Gemini's payment review (the WhatsApp assistant's model, within its daily limit).
+    aiPay: out.ai_pay === '1',
   };
 }
 function jcCredentials() {

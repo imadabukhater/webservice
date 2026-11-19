@@ -1281,6 +1281,6 @@ async function flush() {
 if (linked()) setTimeout(() => start().catch((e) => console.error('whatsapp start', e.message)), 3_000).unref();
 
 module.exports = {
-  start, logout, status, config, configView, saveConfig, sendTo, taskResolved, handle, tellAdmins, jidOf,
+  start, logout, status, config, configView, saveConfig, sendTo, taskResolved, handle, tellAdmins, jidOf, askModel,
   _test: { phoneIn, drafts, agentTool, unansweredAt, checkReply, waFormat, askModel, vertexAuth, spendToday, priceOf, safeReply, AGENT_TOOLS, agentSystem, vertexAccess, vertexUrl, aiCallsByChat, askedAbout, setTransport: (fn) => { transport = fn; }, setDownloader: (fn) => { downloader = fn; }, sessions, recent, norm, onRaw, jidOf, watchShop, history },
 };
