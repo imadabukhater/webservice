@@ -554,6 +554,9 @@ async function submitProof(order, body) {
 const jc = require('../jawwalcorp');
 const { jcCredentials } = require('../db');
 const jcBusy = new Set(); // orders with a code being sent or a payment being confirmed now
+// E-SADAD not confirmed yet: /settle asked this many times, this far apart, before the customer is answered.
+const SETTLE_TRIES = Number(process.env.JC_SETTLE_TRIES) || 2;
+const SETTLE_MS = Number(process.env.JC_SETTLE_MS) || 3000;
 
 // The manager hears about a problem with the corporate account once in a while, not on every customer's try.
 const jcTold = new Map();
@@ -656,10 +659,11 @@ async function jcConfirmCode(order, otpInput) {
   jcBusy.add(o.id);
   const creds = jcCredentials();
   let paid = false;
+  let confirmed = null; // what confirming (or /settle) answered when it said yes
   try {
     q('UPDATE shop_orders SET jc_tries = jc_tries + 1, updated_at = ? WHERE id = ?').run(now(), o.id);
     try {
-      await jc.confirmPayment(creds, { invoiceId: o.jc_invoice_id, otp });
+      confirmed = await jc.confirmPayment(creds, { invoiceId: o.jc_invoice_id, otp });
       paid = true;
     } catch (e) {
       if (!(e instanceof jc.JawwalCorpError)) throw e;
@@ -671,18 +675,23 @@ async function jcConfirmCode(order, otpInput) {
         shop.jcLog(o, 'session_gone', { detail: `${e.code} ${e.message}` });
         fail(410, 'انتهت جلسة الدفع عند جوال باي — اطلب رمزاً جديداً.');
       } else if (/^esdad_/.test(e.code || '')) {
-        // The provider did not get the payment confirmed (esdad_payment_not_confirmed: what a wrong code gets, and its
-        // session then ends). Its invoice is read now: confirmed → paid. Otherwise the payment did not go through: the
-        // customer asks for a new code. That invoice is still looked up quietly for a day (reconcileDirect): should it
-        // turn out confirmed, the order is paid with it, or the manager is told if another was paid meanwhile.
+        // E-SADAD has not confirmed it yet (esdad_payment_not_confirmed): the payment is pending, not refused. As the
+        // guide says, it is asked again with /settle every few seconds (never charged twice); still pending after
+        // that, the customer is told so — the payment keeps being followed (reconcileDirect, a day): confirmed later,
+        // the order is paid with it (or the manager is told, if the order was paid another way meanwhile). A wrong
+        // code ends there too, so a new code may be asked for at once.
         console.error('jawwal confirm provider', o.code, e.code, e.message);
-        let inv = null;
-        try { inv = await jc.invoice(creds, o.jc_invoice_id); } catch (e2) { console.error('jawwal invoice', e2.message); }
-        if (inv?.status === 'confirmed') paid = true;
-        else {
-          shop.jcLog(o, 'not_confirmed', { status: inv?.status || '', detail: `${e.code} ${e.message}` });
+        let st = null;
+        for (let i = 0; i < SETTLE_TRIES && !paid; i++) {
+          await new Promise((r) => setTimeout(r, SETTLE_MS));
+          try { st = await shop.invoiceState(jc, creds, o.jc_invoice_id); } catch (e2) { console.error('jawwal settle', e2.message); }
+          if (st?.status === 'confirmed') { paid = true; confirmed = st.raw || null; } else if (st && st.status !== 'pending') break;
+        }
+        if (!paid) {
+          shop.jcLog(o, 'not_confirmed', { status: st?.status || 'pending', detail: `${e.code} ${e.message}` });
           q('UPDATE shop_orders SET jc_expires_at = ?, updated_at = ? WHERE id = ?').run(now(), now(), o.id);
-          fail(402, 'لم يتم الدفع — رمز التحقق غير صحيح أو انتهت صلاحيته. اطلب رمزاً جديداً وأدخله كما وصلك.');
+          if (st && st.status !== 'pending') fail(402, 'لم يتم الدفع — رمز التحقق غير صحيح أو انتهت صلاحيته. اطلب رمزاً جديداً وأدخله كما وصلك.');
+          fail(402, 'لم يتأكد الدفع بعد — إذا كان الرمز صحيحاً نكمل التحقق تلقائياً ونبلغك فور تأكيده؛ وإذا كان غلطاً اطلب رمزاً جديداً.');
         }
       } else if (e.code === 'invoice_expired' || e.code === 'invoice_not_found') {
         q("UPDATE shop_orders SET jc_expires_at = ?, jc_unsure = 0, jc_status = 'expired', updated_at = ? WHERE id = ?").run(now(), now(), o.id);
@@ -699,7 +708,7 @@ async function jcConfirmCode(order, otpInput) {
       } else if (e.unsure) {
         // The payment may have gone through: its invoice says.
         let inv = null;
-        try { inv = await jc.invoice(creds, o.jc_invoice_id); } catch (e2) { console.error('jawwal invoice', e2.message); }
+        try { inv = await shop.invoiceState(jc, creds, o.jc_invoice_id); } catch (e2) { console.error('jawwal invoice', e2.message); }
         shop.jcLog(o, 'confirm_unclear', { status: inv?.status || '', detail: e.message });
         if (inv?.status === 'confirmed') paid = true;
         else if (inv && inv.status === 'pending') fail(502, 'لم يكتمل تأكيد الدفع — أعد إدخال الرمز. لن يُخصم المبلغ مرتين.');
@@ -710,12 +719,17 @@ async function jcConfirmCode(order, otpInput) {
       } else jcFail(e, o, 'confirm');
     }
     if (paid) {
-      // Confirming said yes: the order is paid only once its invoice, read on its own from the invoice list, is
-      // confirmed for this order's amount and mobile. Not readable now: checked again within the minute.
-      shop.jcLog(o, 'confirm_ok', { status: 'confirmed' });
-      let inv = null;
-      try { inv = await jc.invoice(creds, o.jc_invoice_id); } catch (e2) { console.error('jawwal invoice', e2.message); }
-      shop.settleVerified(o, inv);
+      // success: true means confirmed (the guide). The invoice as listed, when the list has it, is still checked for
+      // this order's amount and mobile (a mismatch goes to the manager); not listed (yet), confirming's word is enough.
+      shop.jcLog(o, 'confirm_ok', { status: 'confirmed', detail: confirmed?.paid_via ? `${confirmed.paid_via}${confirmed.bank ? ` ${confirmed.bank}` : ''}` : '' });
+      let listed = null;
+      try { listed = await jc.invoice(creds, o.jc_invoice_id); } catch (e2) { console.error('jawwal invoice', e2.message); }
+      const c = confirmed && typeof confirmed === 'object' ? confirmed : {};
+      shop.settleVerified(o, {
+        invoiceId: o.jc_invoice_id, status: 'confirmed',
+        amount: listed?.amount ?? (c.amount != null && c.amount !== '' ? Number(c.amount) : null),
+        mobile: listed?.mobile || String(c.mobile_number || ''), raw: listed?.raw || c,
+      });
     }
   } finally {
     jcBusy.delete(o.id);
@@ -841,7 +855,7 @@ route('POST', '/api/shop/admin/orders/:id/jawwal-check', ADMIN, async ({ params 
   if (!o.jc_invoice_id) fail(400, 'هذا الطلب ليس له فاتورة جوال باي مباشرة');
   let inv = null;
   try {
-    inv = await jc.invoice(jcCredentials(), o.jc_invoice_id);
+    inv = await shop.invoiceState(jc, jcCredentials(), o.jc_invoice_id);
   } catch (e) {
     if (!(e instanceof jc.JawwalCorpError)) throw e;
     fail(502, `تعذّرت قراءة الفاتورة: ${e.code || e.status || ''} ${e.message}`);

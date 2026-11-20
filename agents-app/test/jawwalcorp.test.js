@@ -6,6 +6,7 @@ process.env.ADMIN_USERNAME = 'admin';
 process.env.ADMIN_PASSWORD = 'admin-pass';
 process.env.SHOP_RESERVE_MS = '3000';
 process.env.JC_SKEW_MS = '0';
+process.env.JC_SETTLE_MS = '20'; // /settle asked again a moment later (3 seconds live)
 process.env.ART_CHECK_MS = '50';
 
 const test = require('node:test');
@@ -65,12 +66,21 @@ const fakeApi = http.createServer((req, res) => {
       if (inv.status === 'confirmed') return send(res, 409, { success: false, error: 'invoice_confirmed' });
       if (inv.status === 'expired' || inv.exp < Date.now()) { inv.status = 'expired'; return send(res, 409, { success: false, error: 'invoice_expired' }); }
       if (api.failNoRetry) { inv.status = 'failed'; return send(res, 402, { success: false, error: 'jawwal_confirm_failed', data: { failure_code: 'insufficient_balance', can_retry: false } }); }
+      if (api.confirmLater && body.otp === inv.otp) { inv.status = 'confirmed'; return send(res, 409, { success: false, code: 'esdad_payment_not_confirmed', message: 'x' }); }
       if (api.confirmAs) return send(res, api.confirmAs.status, { success: false, error: api.confirmAs.error, message: api.confirmAs.message || '' });
       if (body.otp !== inv.otp && api.wrongOtpAs) return send(res, api.wrongOtpAs.status, { success: false, error: api.wrongOtpAs.error, message: 'otp is invalid' });
       if (body.otp !== inv.otp) return send(res, 402, { success: false, error: 'jawwal_confirm_failed', data: { failure_code: 'wrong_otp', can_retry: true } });
       inv.status = 'confirmed';
       if (api.lostAnswer) return send(res, 502, { success: false, message: 'bad gateway' });
       return send(res, 200, { success: true, data: { cor_invoice_id: inv.id, status: 'confirmed' } });
+    }
+    if (url.pathname === '/api/jawwal/corporate/settle') {
+      if (api.invoicesDown) return send(res, 502, {});
+      const inv = api.invoices.get(body.cor_invoice_id);
+      if (!inv) return send(res, 404, { success: false, error: 'invoice_not_found' });
+      if (inv.status === 'confirmed') return send(res, 200, { success: true, data: { cor_invoice_id: inv.id, status: 'confirmed', amount: inv.amount, mobile_number: inv.mobile, paid_via: 'sadad_gate' } });
+      if (inv.status === 'expired') return send(res, 409, { success: false, error: 'invoice_expired' });
+      return send(res, 409, { success: false, code: 'esdad_payment_not_confirmed', message: 'لم يصل تأكيد الدفع من بوابة سداد بعد' });
     }
     if (url.pathname === '/api/jawwal/corporate/invoices') {
       if (api.invoicesDown) return send(res, 502, {});
@@ -236,8 +246,8 @@ test('direct Jawwal Pay: code, confirmation, token reused, one sign-in on revoke
   assert.equal((await ok(call(null, 'GET', `/api/shop/orders/${o10.code}`))).status, 'cancelled');
   assert.equal((await ok(call(null, 'POST', `/api/shop/orders/${o9.code}/jawwal/confirm`, { otp: '123456' }))).status, 'paid');
 
-  // Never a refresh, and only the four paths.
-  assert.ok(api.log.every((l) => /^(POST \/api\/auth\/corporate_sign_in|POST \/api\/jawwal\/corporate\/(send_otp|confirm_payment)|GET \/api\/jawwal\/corporate\/invoices)$/.test(l)), api.log.join('\n'));
+  // Never a refresh, and only the documented paths.
+  assert.ok(api.log.every((l) => /^(POST \/api\/auth\/corporate_sign_in|POST \/api\/jawwal\/corporate\/(send_otp|confirm_payment|settle)|GET \/api\/jawwal\/corporate\/invoices)$/.test(l)), api.log.join('\n'));
 });
 
 test('paid only once the invoice, read on its own, is confirmed for the order: success, mismatch, expired, failed, duplicate, logged without the OTP', async () => {
@@ -301,16 +311,14 @@ test('paid only once the invoice, read on its own, is confirmed for the order: s
   assert.match(logOf(d).at(-1).detail, /insufficient_balance/);
   assert.equal((await confirm(d)).status, 410, 'that code cannot be used again');
 
-  // Confirm says yes but the invoice list cannot be read: not paid yet, checked again, then paid once.
+  // Confirm says yes but the invoice list cannot be read: success means confirmed (the guide) — paid at once, once.
   const e = await order();
   await otp(e, '0599200005');
   api.invoicesDown = true;
   const re = await confirm(e);
   api.invoicesDown = false;
-  assert.equal(re.body.status, 'awaiting_payment');
-  assert.equal(re.body.jawwal.checking, true);
-  assert.equal(await S.reconcileDirect({ force: true }), 1);
-  assert.equal(row(e).status, 'paid');
+  assert.equal(re.body.status, 'paid');
+  assert.equal(await S.reconcileDirect({ force: true }), 0, 'nothing left to look up');
   assert.equal(logOf(e).filter((l) => l.event === 'paid').length, 1);
 });
 
@@ -426,7 +434,7 @@ test('MaalCards\' own link to Jawwal Pay failing (esdad_…): the provider\'s fa
   const r2 = await call(null, 'POST', `/api/shop/orders/${b.code}/jawwal/confirm`, { otp: '000000' });
   api.confirmAs = null;
   assert.equal(r2.status, 402);
-  assert.match(r2.body.error, /لم يتم الدفع — رمز التحقق غير صحيح/);
+  assert.match(r2.body.error, /لم يتأكد الدفع بعد/, 'pending, not refused (the guide)');
   const vb = await ok(call(null, 'GET', `/api/shop/orders/${b.code}`));
   assert.equal(vb.status, 'awaiting_payment');
   assert.equal(vb.jawwal.checking, false, 'not held back');
@@ -472,17 +480,41 @@ test('the invoice found whatever shape the list comes in (SADCOR-…, invoice_id
     const a = await order();
     await ok(call(null, 'POST', `/api/shop/orders/${a.code}/jawwal/otp`, { mobile: '0599500001' }));
     assert.equal((await ok(call(null, 'POST', `/api/shop/orders/${a.code}/jawwal/confirm`, { otp: '123456' }))).status, 'paid');
-    // Not readable right after confirming (as on the server): the manager's «check now» pays it, with what the API said.
+    // Confirmed, the invoice list not readable (as on the server for 5A09GK02): success means confirmed — paid at once.
+    const c0 = await order();
+    await ok(call(null, 'POST', `/api/shop/orders/${c0.code}/jawwal/otp`, { mobile: '0599500003' }));
+    api.invoicesDown = true;
+    assert.equal((await ok(call(null, 'POST', `/api/shop/orders/${c0.code}/jawwal/confirm`, { otp: '123456' }))).status, 'paid');
+    api.invoicesDown = false;
+    // No answer to confirming and nothing readable: the manager's «check now» (later) pays it, with what the API said.
     const b = await order();
     await ok(call(null, 'POST', `/api/shop/orders/${b.code}/jawwal/otp`, { mobile: '0599500002' }));
     api.invoicesDown = true;
-    const rb = await ok(call(null, 'POST', `/api/shop/orders/${b.code}/jawwal/confirm`, { otp: '123456' }));
+    api.lostAnswer = true;
+    const rb = await call(null, 'POST', `/api/shop/orders/${b.code}/jawwal/confirm`, { otp: '123456' });
     api.invoicesDown = false;
-    assert.equal(rb.status, 'awaiting_payment');
+    api.lostAnswer = false;
+    assert.equal(rb.status, 502);
     const id = require('../src/db').q('SELECT id FROM shop_orders WHERE code = ?').get(b.code).id;
     const checked = await ok(call(admin, 'POST', `/api/shop/admin/orders/${id}/jawwal-check`));
     assert.equal(checked.status, 'paid');
     assert.equal(checked.invoice.status, 'confirmed');
-    assert.equal(checked.invoice.raw.state, 'paid', 'the API\'s own answer, for the manager');
+    assert.equal(checked.invoice.raw.paid_via, 'sadad_gate', 'the API\'s own answer (/settle), for the manager');
   } finally { api.listShape = null; }
+});
+
+test('E-SADAD: «not confirmed yet» is pending — asked again with /settle; confirmed a moment later → paid, once', async () => {
+  require('../src/routes/shop')._resetThrottle();
+  require('../src/db').setSetting('jc_wait_until', 0);
+  const admin = (await ok(call(null, 'POST', '/api/login', { username: 'admin', password: 'admin-pass' }))).token;
+  const esim = await QL.esimPackage(call, ok, admin, 45);
+  const o = await ok(call(null, 'POST', '/api/shop/orders', { kind: 'esim', packageId: esim.id, customerName: 'سداد' }));
+  await ok(call(null, 'POST', `/api/shop/orders/${o.code}/jawwal/otp`, { mobile: '0599600001' }));
+  const before = api.log.filter((l) => l.endsWith('/settle')).length;
+  api.confirmLater = true;
+  const v = await ok(call(null, 'POST', `/api/shop/orders/${o.code}/jawwal/confirm`, { otp: '123456' }));
+  api.confirmLater = false;
+  assert.equal(v.status, 'paid');
+  assert.ok(api.log.filter((l) => l.endsWith('/settle')).length > before, 'asked with /settle');
+  assert.equal([...api.invoices.values()].filter((i) => i.mobile === '0599600001' && i.status === 'confirmed').length, 1, 'one payment');
 });

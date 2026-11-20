@@ -773,8 +773,13 @@ async function payHere(jid, raw, phone) {
         await say(jid, `❌ الرمز غلط. ابعتلي الرمز الصحيح خلال ${left(j.expiresAt)} (بقيلك ${j.triesLeft} محاولات).`);
         return true;
       }
+      if (e.status === 402 && /لم يتأكد الدفع بعد/.test(e.message)) {
+        // E-SADAD has not confirmed it yet: followed in the background (the chat hears when it is), or a new code.
+        await say(jid, '⏳ ما وصلنا تأكيد الدفع لسا.\nإذا الرمز صح: بنضل نتحقق لحالنا وبنبلغك هون أول ما يتأكد.\nإذا الرمز غلط: ابعتلي رقم جوال باي تبعك لنبعتلك رمز جديد.');
+        return true;
+      }
       if (e.status === 402 && /غير صحيح/.test(e.message)) {
-        // The provider's session ends with a wrong code: a new code is needed (sent at most every 45 seconds).
+        // A wrong code: a new code is needed (sent at most every 45 seconds).
         await say(jid, '❌ الرمز غلط — ما تم الدفع.\nابعتلي رقم جوال باي تبعك لنبعتلك رمز جديد.');
         return true;
       }

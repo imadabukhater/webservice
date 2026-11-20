@@ -275,6 +275,22 @@ function invoiceMismatch(o, inv) {
   return '';
 }
 
+// An invoice's state as the corporate API says it: asked with /settle (success: confirmed; esdad_payment_not_confirmed:
+// still pending), else read from the invoice list. { invoiceId, status, amount, mobile, raw } or null (not found).
+async function invoiceState(jc, creds, invoiceId) {
+  try {
+    const d = await jc.settle(creds, invoiceId);
+    return { invoiceId: String(invoiceId), status: 'confirmed', amount: d?.amount != null && d.amount !== '' ? Number(d.amount) : null,
+      mobile: String(d?.mobile_number || d?.mobile || ''), raw: d, via: 'settle' };
+  } catch (e) {
+    if (!(e instanceof jc.JawwalCorpError)) throw e;
+    const known = { esdad_payment_not_confirmed: 'pending', invoice_confirmed: 'confirmed', invoice_expired: 'expired', esdad_session_gone: 'failed' };
+    if (known[e.code]) return { invoiceId: String(invoiceId), status: known[e.code], amount: null, mobile: '', raw: e.data, via: 'settle' };
+    if (e.unsure || e.status === 429 || e.status === 401) throw e; // no answer, or the account: not now
+  }
+  return jc.invoice(creds, invoiceId); // /settle does not know it (an invoice before E-SADAD): the list
+}
+
 // The order's invoice as the corporate API lists it decides: confirmed and matching → paid and carried out (once);
 // still pending → looked up again (the minute's reconcile); expired or failed → not paid; confirmed but not matching →
 // the manager is told and nothing is carried out. Returns true when it paid the order.
@@ -350,7 +366,7 @@ async function checkLate(jc, creds) {
   let settled = 0;
   for (const l of lateInvoices()) {
     let inv;
-    try { inv = await jc.invoice(creds, l.invoice_id); } catch (e) { console.error('jawwal late', e.message); break; }
+    try { inv = await invoiceState(jc, creds, l.invoice_id); } catch (e) { console.error('jawwal late', e.message); break; }
     const o = q('SELECT * FROM shop_orders WHERE id = ?').get(l.order_id);
     if (!inv || inv.status === 'pending' || !o) continue;
     if (inv.status !== 'confirmed') { jcLog({ ...o, jc_invoice_id: l.invoice_id }, 'late_closed', { status: inv.status }); continue; }
@@ -379,7 +395,7 @@ function reconcileDirect({ force = false } = {}) {
     let settled = 0;
     for (const r of rows) {
       let inv;
-      try { inv = await jc.invoice(creds, r.jc_invoice_id); } catch (e) { console.error('jawwal reconcile', e.message); break; }
+      try { inv = await invoiceState(jc, creds, r.jc_invoice_id); } catch (e) { console.error('jawwal reconcile', e.message); break; }
       // Not listed (yet): looked up again next time; listed: its state decides (settleVerified).
       if (inv && settleVerified(r, inv)) settled++;
     }
@@ -697,5 +713,5 @@ timer.unref();
 
 module.exports = {
   RESERVE_MS, FIRST_WINDOW_MS, RETRY_WINDOW_MS, VERIFY_MS, WAIT_REVIEW_MS, CHECK_COOLDOWN_MS,
-  shopAgent, namesMatch, matchReason, findMail, claim, tryMatch, payWith, jcLog, invoiceMismatch, settleVerified, aiReview, aiState, fulfil, settleDirect, reconcileDirect, checkMail, escalate, expireUnconfirmed, saveMail, deliverQr, makeEsimQr, isMadeUpCode, isMadeUpQr, realCode, realQr,
+  shopAgent, namesMatch, matchReason, findMail, claim, tryMatch, payWith, jcLog, invoiceMismatch, settleVerified, invoiceState, aiReview, aiState, fulfil, settleDirect, reconcileDirect, checkMail, escalate, expireUnconfirmed, saveMail, deliverQr, makeEsimQr, isMadeUpCode, isMadeUpQr, realCode, realQr,
 };

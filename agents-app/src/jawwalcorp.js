@@ -237,6 +237,13 @@ const STATES = { confirmed: 'confirmed', paid: 'confirmed', success: 'confirmed'
   pending: 'pending', waiting: 'pending', expired: 'expired', failed: 'failed', cancelled: 'failed', canceled: 'failed', rejected: 'failed' };
 const stateOf = (v) => STATES[String(v || '').toLowerCase().trim()] || String(v || '').toLowerCase().trim();
 
+// A payment in progress asked again (E-SADAD: success means confirmed; 409 esdad_payment_not_confirmed: still pending).
+// Never charges twice.
+async function settle(creds, invoiceId) {
+  const r = await call(creds, 'POST', '/api/jawwal/corporate/settle', { cor_invoice_id: String(invoiceId) });
+  return r.data && typeof r.data === 'object' ? r.data : r;
+}
+
 // The account's invoices: { status: pending|confirmed|expired|failed, mobile, cor_invoice_id, limit, page }.
 async function invoices(creds, filters = {}, { withRaw = false } = {}) {
   const qs = new URLSearchParams();
@@ -268,4 +275,4 @@ async function invoice(creds, invoiceId) {
   return null;
 }
 
-module.exports = { BASE, JawwalCorpError, sendOtp, confirmPayment, invoices, invoice, listIn, stateOf, status, token, parseTime, _forget: forget };
+module.exports = { BASE, JawwalCorpError, sendOtp, confirmPayment, settle, invoices, invoice, listIn, stateOf, status, token, parseTime, _forget: forget };
