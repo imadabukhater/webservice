@@ -169,6 +169,7 @@ route('PUT', '/api/settings', ADMIN, ({ body }) => {
   if (body.jcUser !== undefined) setSetting('jc_user', str(body.jcUser, 120));
   if (body.jcPass) setSetting('jc_pass', String(body.jcPass).slice(0, 200));
   if (body.mailPay !== undefined) setSetting('mail_pay', body.mailPay ? '1' : '0');
+  if (body.jcPals !== undefined) setSetting('jc_pals', body.jcPals ? '1' : '0');
   if (body.mailPay !== undefined || body.jcEnabled !== undefined) {
     const after = getSettings();
     if (!after.mailPay && !after.jcReady) {

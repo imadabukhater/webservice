@@ -799,31 +799,50 @@ async function payHere(jid, raw, phone) {
     }
     return true;
   }
-  // A number: asked to confirm first. «نعم» to a number waiting: the code is sent to it.
+  // A number: asked to confirm it — and, when a bank is offered too, where to pay from (1: the wallet, 2: the bank).
+  const banks = S.shopCatalogResponse().jawwalBanks || [];
   const mobile = payMobileIn(raw);
   if (mobile) {
     payMobiles.set(jid, { mobile, orderId: st.o.id, at: Date.now() });
-    await say(jid, `📱 رح نبعت رمز التحقق على رقم جوال باي: *${mobile}*\nصح؟ ابعت *نعم* للتأكيد، أو ابعتلي الرقم الصحيح.`);
+    await say(jid, banks.length
+      ? [`📱 رح نبعت رمز التحقق على الرقم: *${mobile}*`, 'من وين بدك تدفع؟', '1️⃣ محفظة *جوال باي*',
+        ...banks.map((b, i) => `${['2️⃣', '3️⃣', '4️⃣'][i]} *${b.name}* (الرقم لازم يكون المسجّل بالبنك)`),
+        `ابعت الرقم ${banks.length > 1 ? 'المناسب' : '1 أو 2'}، أو ابعتلي رقم الجوال الصحيح.`].join('\n')
+      : `📱 رح نبعت رمز التحقق على رقم جوال باي: *${mobile}*\nصح؟ ابعت *نعم* للتأكيد، أو ابعتلي الرقم الصحيح.`);
     return true;
   }
   const asked = payMobiles.get(jid);
-  if (!asked || asked.orderId !== st.o.id || Date.now() - asked.at > 10 * 60_000 || !YES.test(westernDigits(raw).trim())) return false;
+  if (!asked || asked.orderId !== st.o.id || Date.now() - asked.at > 10 * 60_000) return false;
+  const choice = payChoice(westernDigits(raw).trim(), banks);
+  if (choice === null) return false;
+  const bankName = choice ? (banks.find((b) => b.code === choice)?.name || choice) : '';
   let v;
   try {
-    v = await S.jcSendCode(S.directOrderByCode(st.o.code), asked.mobile);
+    v = await S.jcSendCode(S.directOrderByCode(st.o.code), asked.mobile, choice);
   } catch (e) {
     if (!(e && e.status)) throw e;
     if (e.status === 422) {
       payMobiles.delete(jid);
-      await say(jid, `⚠️ ما قدرنا نبعت رمز على الرقم *${asked.mobile}* — غالباً مش مسجّل بجوال باي.\nحالياً بندعم الدفع من محفظة *جوال باي* بس (مش بنك فلسطين ولا أي خدمة تانية). ابعتلي رقم جوال باي تبعك.`);
+      const others = banks.length ? `نقدر نستقبل الدفع من محفظة *جوال باي* أو *${banks.map((b) => b.name).join('* أو *')}* (بالرقم المسجّل بالبنك).` : 'حالياً بندعم الدفع من محفظة *جوال باي* بس.';
+      await say(jid, `⚠️ ما قدرنا نبعت رمز على الرقم *${asked.mobile}* — ${choice ? `غالباً مش هو الرقم المسجّل لدى *${bankName}*` : 'غالباً مش مسجّل بجوال باي'}.\n${others} ابعتلي الرقم الصحيح.`);
       return true;
     }
     return shopErr(e);
   }
   payMobiles.delete(jid);
   const until = v.jawwal?.expiresAt ? `\n(الرمز صالح لحد ${clock(v.jawwal.expiresAt)})` : '';
-  await say(jid, `✅ بعتنالك رمز تحقق برسالة على *${v.jawwal?.mobile || asked.mobile}* لدفع *${round(st.o.amount)} ₪*.\nابعتلي الرمز هون عشان أتمم عملية الدفع، وبعطيك رمز التفعيل مباشرة خلال ثواني هون بالشات.${until}`);
+  await say(jid, `✅ ${choice ? `*${bankName}* بعتلك` : 'بعتنالك'} رمز تحقق برسالة على *${v.jawwal?.mobile || asked.mobile}* لدفع *${round(st.o.amount)} ₪*.\nابعتلي الرمز هون عشان أتمم عملية الدفع، وبعطيك رمز التفعيل مباشرة خلال ثواني هون بالشات.${until}`);
   return true;
+}
+// The customer's answer to «where from?»: '' the wallet, a bank's code, or null (not an answer). Without banks: «نعم».
+function payChoice(t, banks) {
+  if (!banks.length) return YES.test(t) ? '' : null;
+  if (/^(1|١)(?!\d)|جوال\s*باي|محفظ/.test(t)) return '';
+  for (let i = 0; i < banks.length; i++) {
+    const n = String(i + 2);
+    if (new RegExp(`^${n}(?!\\d)`).test(t) || t.includes(banks[i].name) || (banks[i].code === 'PALS' && /بنك\s*فلسطين|^بنك$|^البنك$/.test(t))) return banks[i].code;
+  }
+  return YES.test(t) ? '' : null; // «نعم»: the wallet, as before
 }
 
 // A customer's message the assistant could not answer: the manager is told on WhatsApp (once in a while per chat).
@@ -1125,7 +1144,7 @@ function shopSheet(shop) {
   }
   return `الباقات المتوفرة هلأ بالمتجر (رقم الباقة، الاسم، الخدمة، السعر):${lines.join('\n')}
 ${shop.jawwalDirect
-    ? `الدفع: هون بالمحادثة، مباشرة من محفظة جوال باي، خلال ${minutes} دقايق من الطلب: الزبون بيبعت رقم جوال باي تبعه، بيأكده بـ«نعم»، بيوصله رمز تحقق برسالة، وبيبعته هون — والنظام بياخد الرقم والرمز ويكمّل الدفع لحاله (مش إنت). لا تبعته عالموقع، ولا تطلب الرمز إنت ولا تكتبه. بندعم جوال باي بس (مش بنك فلسطين ولا غيره). إذا سأل ليش فشل الدفع: احكيله السبب المكتوب برسالة النظام بس، ولا تخترع سبب (زي ضغط أو مشكلة تقنية).${shop.manualPay === false ? ' *ما في تحويل يدوي*: لا تطلب منه يحوّل ولا يبعت اسم المحوِّل.' : ''} التفعيل بيصير لحاله بعد الدفع، وبيوصل الزبون هون (وللـ eSIM رمز QR).`
+    ? `الدفع: هون بالمحادثة، مباشرة من محفظة جوال باي، خلال ${minutes} دقايق من الطلب: الزبون بيبعت رقم جواله، بيأكده (وبيختار من وين يدفع)، بيوصله رمز تحقق برسالة، وبيبعته هون — والنظام بياخد الرقم والرمز ويكمّل الدفع لحاله (مش إنت). لا تبعته عالموقع، ولا تطلب الرمز إنت ولا تكتبه. ${(shop.jawwalBanks || []).length ? `بندعم محفظة جوال باي و${shop.jawwalBanks.map((b) => b.name).join(' و')} (بالرقم المسجّل بالبنك) بس، مش بنوك تانية.` : 'بندعم جوال باي بس (مش بنك فلسطين ولا غيره).'} إذا سأل ليش فشل الدفع: احكيله السبب المكتوب برسالة النظام بس، ولا تخترع سبب (زي ضغط أو مشكلة تقنية).${shop.manualPay === false ? ' *ما في تحويل يدوي*: لا تطلب منه يحوّل ولا يبعت اسم المحوِّل.' : ''} التفعيل بيصير لحاله بعد الدفع، وبيوصل الزبون هون (وللـ eSIM رمز QR).`
     : `الدفع: بجوال باي${shop.jawwalpay?.number ? ` على ${shop.jawwalpay.number}${shop.jawwalpay.name ? ` (${shop.jawwalpay.name})` : ''}` : ''} خلال ${minutes} دقايق من الطلب. التفعيل بيصير لحاله بعد ما المتجر يتأكد من التحويل، وبيوصل الزبون هون (وللـ eSIM رمز QR).`}`;
 }
 
@@ -1209,11 +1228,13 @@ function orderFacts(o, shop) {
   const where = shop.jawwalpay?.number ? ` على *${shop.jawwalpay.number}*${shop.jawwalpay.name ? ` (${shop.jawwalpay.name})` : ''}` : '';
   const head = [`✅ انحجز طلبك رقم *${o.code}*`, ...(reservedNumber(o) ? [`📞 رقمك الجديد: *${reservedNumber(o)}* (محجوزلك لحد ما تدفع)`] : [])];
   if (shop.jawwalDirect) {
-    return [...head, `💳 المبلغ: *${round(o.amount)} ₪* — الدفع بيصير هون بالشات من محفظة *جوال باي* خلال ${minutes} دقايق:`,
-      '1️⃣ ابعتلي *رقم جوال باي* تبعك.',
-      '2️⃣ بنبعتلك عليه *رمز تحقق* برسالة SMS.',
+    const banks = (shop.jawwalBanks || []).map((b) => b.name);
+    const from = banks.length ? `محفظة *جوال باي* أو *${banks.join('* أو *')}*` : 'محفظة *جوال باي*';
+    return [...head, `💳 المبلغ: *${round(o.amount)} ₪* — الدفع بيصير هون بالشات من ${from} خلال ${minutes} دقايق:`,
+      banks.length ? '1️⃣ ابعتلي *رقم جوالك* (المسجّل بجوال باي أو بالبنك) وبتختار من وين تدفع.' : '1️⃣ ابعتلي *رقم جوال باي* تبعك.',
+      '2️⃣ بيوصلك عليه *رمز تحقق* برسالة SMS.',
       '3️⃣ بتبعتلي الرمز هون، وبنأكد الدفع وبنبعتلك رمز التفعيل (QR) خلال ثواني هون بالشات.',
-      'ℹ️ حالياً بندعم الدفع من *جوال باي* بس (مش بنك فلسطين ولا أي خدمة تانية).',
+      banks.length ? `ℹ️ بندعم الدفع من *جوال باي* و*${banks.join('* و*')}* بس (مش بنوك أو خدمات تانية).` : 'ℹ️ حالياً بندعم الدفع من *جوال باي* بس (مش بنك فلسطين ولا أي خدمة تانية).',
       ...(shop.manualPay !== false ? [`أو إذا بتحب: حوّل بجوال باي${where} وابعتلي *اسم اللي حوّل*.`] : [])].join('\n');
   }
   return [...head, `💳 حوّل *${round(o.amount)} ₪* بجوال باي${where} خلال ${minutes} دقايق.`,
@@ -1590,5 +1611,5 @@ linkIds().filter((id) => linked(id)).forEach((id, i) => {
 
 module.exports = {
   start, logout, status, addLink, removeLink, config, configView, saveConfig, sendTo, taskResolved, handle, tellAdmins, jidOf, askModel,
-  _test: { links, link, linkFor, chatLink, linkIds, follow, phoneIn, drafts, agentTool, saidBefore, seenMessages, payHere, payState, otpIn, payMobileIn, orderFacts, unansweredAt, checkReply, waFormat, askModel, vertexAuth, spendToday, priceOf, safeReply, AGENT_TOOLS, agentSystem, vertexAccess, vertexUrl, aiCallsByChat, askedAbout, setTransport: (fn) => { transport = fn; }, setDownloader: (fn) => { downloader = fn; }, sessions, recent, norm, onRaw, jidOf, watchShop, history },
+  _test: { payChoice, links, link, linkFor, chatLink, linkIds, follow, phoneIn, drafts, agentTool, saidBefore, seenMessages, payHere, payState, otpIn, payMobileIn, orderFacts, unansweredAt, checkReply, waFormat, askModel, vertexAuth, spendToday, priceOf, safeReply, AGENT_TOOLS, agentSystem, vertexAccess, vertexUrl, aiCallsByChat, askedAbout, setTransport: (fn) => { transport = fn; }, setDownloader: (fn) => { downloader = fn; }, sessions, recent, norm, onRaw, jidOf, watchShop, history },
 };

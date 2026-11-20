@@ -443,6 +443,8 @@ ensureColumn('shop_orders', 'jc_unsure', 'jc_unsure INTEGER NOT NULL DEFAULT 0')
 ensureColumn('shop_orders', 'jc_status', "jc_status TEXT NOT NULL DEFAULT ''");
 // The shop's WhatsApp number a followed order's chat is on (src/whatsapp.js: several numbers may be linked).
 ensureColumn('wa_shop', 'link', "link TEXT NOT NULL DEFAULT ''");
+// Where a direct payment's code was sent from: '' (Jawwal Pay wallet) or 'PALS' (Bank of Palestine).
+ensureColumn('shop_orders', 'jc_bank', "jc_bank TEXT NOT NULL DEFAULT ''");
 db.exec("CREATE INDEX IF NOT EXISTS shop_orders_client_status ON shop_orders(client_id, status)");
 db.exec("CREATE INDEX IF NOT EXISTS shop_orders_ip_status ON shop_orders(ip, status)");
 // Before gone_at, a sync that briefly got an incomplete list from QuickLine hid packages for good. The manager hid
@@ -483,6 +485,8 @@ const DEFAULT_SETTINGS = {
   aylol_user: '', aylol_pass: '', aylol_markup: '15',
   // Direct Jawwal Pay through the MaalCards corporate API: the subscriber (manager_id) and the corporate account.
   jc_enabled: '0', jc_manager_id: '', jc_user: '', jc_pass: '',
+  // Paying from Bank of Palestine too (E-SADAD, by the mobile registered with the bank), beside the Jawwal Pay wallet.
+  jc_pals: '1',
   // Paying by a manual transfer, confirmed from the payment e-mails: on unless the manager stops it.
   mail_pay: '1',
   // Safety: a paid customer order above this amount waits for the manager (0: none); orders a customer may make in an
@@ -570,6 +574,7 @@ function getSettings() {
     mailFrom: out.mail_from,
     // Direct Jawwal Pay (corporate API): the password never leaves the server (see jcCredentials).
     jcEnabled: out.jc_enabled === '1',
+    jcPals: out.jc_pals !== '0',
     jcManagerId: out.jc_manager_id,
     jcUser: out.jc_user,
     jcConfigured: !!(out.jc_manager_id && out.jc_user && out.jc_pass),

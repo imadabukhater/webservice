@@ -87,6 +87,7 @@ function errorCode(b) {
   for (const k of ['error_code', 'code', 'error']) {
     const v = pick(b, k);
     if (typeof v === 'string' && /^[a-z][a-z0-9_]+$/.test(v)) return v;
+    if ((typeof v === 'number' || (typeof v === 'string' && /^\d{1,4}$/.test(v)))) return String(v); // e.g. 14 (the number is not registered at the bank)
   }
   const m = b?.message;
   return typeof m === 'string' && /^[a-z][a-z0-9_]+$/.test(m) ? m : '';
@@ -199,8 +200,9 @@ async function call(creds, method, path, body) {
 const money = (n) => Math.round((Number(n) || 0) * 100) / 100;
 
 // Texts the customer a code for this amount. Returns the invoice to confirm: { invoiceId, expiresAt, amount, mobile }.
-async function sendOtp(creds, { mobile, amount }) {
-  const r = await call(creds, 'POST', '/api/jawwal/corporate/send_otp', { mobile_number: String(mobile), amount: money(amount) });
+// bank: '' (Jawwal Pay wallet) or 'PALS' (Bank of Palestine, which texts the code to the mobile registered with it).
+async function sendOtp(creds, { mobile, amount, bank = '' }) {
+  const r = await call(creds, 'POST', '/api/jawwal/corporate/send_otp', { mobile_number: String(mobile), amount: money(amount), ...(bank ? { bank } : {}) });
   const d = r.data && typeof r.data === 'object' ? r.data : r;
   if (!d.cor_invoice_id) throw new JawwalCorpError('رد جوال باي بلا رقم فاتورة', { unsure: true });
   return {

@@ -1919,25 +1919,30 @@ function fmtRemaining(untilMs) {
 
 // Direct Jawwal Pay: the customer's Jawwal Pay mobile, then the code texted to it. The money is taken only when the
 // code is confirmed.
+// Where the code comes from: the Jawwal Pay wallet, or a bank the shop offers (Bank of Palestine, by mobile number).
+function directBanks() { return Array.isArray(S.data?.jawwalBanks) ? S.data.jawwalBanks : []; }
 function renderDirectPay(o) {
   const j = o.jawwal || {};
   const sent = Boolean(j.otpSent);
   const canResend = (j.sendsLeft ?? 3) > 0;
+  const banks = directBanks();
+  const via = banks.some((b) => b.code === S.jcBank) ? S.jcBank : '';
+  const viaName = via ? (banks.find((b) => b.code === via)?.name || via) : 'Jawwal Pay';
   if (j.checking) {
     return `
       <div class="card shop-pay shop-direct no-print">
-        <div class="esim-ready-notice">${icon('clock')}<span>نتحقق من دفعتك لدى جوال باي — <b>لا تدفع مرة أخرى</b>. تتحدّث هذه الصفحة تلقائياً.</span></div>
+        <div class="esim-ready-notice">${icon('clock')}<span>نتحقق من دفعتك — <b>لا تدفع مرة أخرى</b>. تتحدّث هذه الصفحة تلقائياً.</span></div>
       </div>`;
   }
   return `
     <div class="card shop-pay shop-direct no-print">
       <div class="row between" style="flex-wrap:wrap;gap:8px">
-        <h3 style="margin:0">ادفع مباشرة من Jawwal Pay</h3>
+        <h3 style="margin:0">${banks.length ? 'ادفع مباشرة: جوال باي أو البنك' : 'ادفع مباشرة من Jawwal Pay'}</h3>
         <span class="shop-sec-tag">${icon('bolt')}<span>تفعيل فوري</span></span>
       </div>
       ${sent ? `
         <p class="muted" style="margin:0;font-size:.86rem">
-          أرسلنا رمز تحقق إلى <bdi dir="ltr" class="mono"><b>${esc(j.mobile || '')}</b></bdi> لدفع <b class="ltr mono">${fmtMoney(o.amount)}</b>.
+          ${j.bankName ? `أرسل <b>${esc(j.bankName)}</b>` : 'أرسلنا'} رمز تحقق إلى <bdi dir="ltr" class="mono"><b>${esc(j.mobile || '')}</b></bdi> لدفع <b class="ltr mono">${fmtMoney(o.amount)}</b>.
           اكتبه هنا لإتمام الدفع — صالح لمدة <b id="jc-countdown" class="ltr mono">${fmtRemaining(j.expiresAt)}</b>.
         </p>
         <form id="jc-f" class="form" style="margin-top:4px" autocomplete="off">
@@ -1952,12 +1957,16 @@ function renderDirectPay(o) {
             <button type="button" class="btn ghost btn-sm" id="jc-change">${icon('phone')}<span>تغيير الرقم أو إعادة إرسال الرمز</span></button>
           </div>` : ''}
       ` : canResend ? `
+        ${banks.length ? `<div class="segmented" role="radiogroup" aria-label="الدفع من" style="margin:2px 0">
+          <button type="button" data-jc-bank="" aria-pressed="${!via}">محفظة جوال باي</button>
+          ${banks.map((b) => `<button type="button" data-jc-bank="${esc(b.code)}" aria-pressed="${via === b.code}">${esc(b.name)}</button>`).join('')}
+        </div>` : ''}
         <p class="muted" style="margin:0;font-size:.86rem">
-          اكتب رقم جوالك المسجّل في <b>Jawwal Pay</b> وسيصلك رمز تحقق لدفع <b class="ltr mono">${fmtMoney(o.amount)}</b> — لا حاجة لتحويل يدوي أو إرسال إشعار.
+          ${via ? `اكتب رقم جوالك <b>المسجّل لدى ${esc(viaName)}</b> ويرسل لك البنك رمز تحقق` : 'اكتب رقم جوالك المسجّل في <b>Jawwal Pay</b> وسيصلك رمز تحقق'} لدفع <b class="ltr mono">${fmtMoney(o.amount)}</b> — لا حاجة لتحويل يدوي أو إرسال إشعار.
         </p>
         <form id="jc-send-f" class="form" style="margin-top:4px">
           <div class="field">
-            <label for="jc-mobile">رقم جوال باي</label>
+            <label for="jc-mobile">${via ? `رقم الجوال المسجّل في ${esc(viaName)}` : 'رقم جوال باي'}</label>
             <input id="jc-mobile" name="mobile" class="input ltr" inputmode="tel" autocomplete="tel" maxlength="16" placeholder="059XXXXXXX" value="${esc(S.jcMobile || '')}" required>
           </div>
           <button class="btn primary lg" type="submit">${icon('phone')}<span>إرسال رمز التحقق</span></button>
@@ -1969,6 +1978,13 @@ function renderDirectPay(o) {
 }
 
 function bindDirectPay(o) {
+  document.querySelectorAll('[data-jc-bank]').forEach((b) => {
+    b.onclick = () => {
+      S.jcMobile = document.getElementById('jc-mobile')?.value || S.jcMobile || '';
+      S.jcBank = b.dataset.jcBank || '';
+      renderOrder();
+    };
+  });
   const sendForm = document.getElementById('jc-send-f');
   if (sendForm) {
     sendForm.onsubmit = async (e) => {
@@ -1979,8 +1995,9 @@ function bindDirectPay(o) {
       const btn = sendForm.querySelector('[type="submit"]');
       btn.disabled = true;
       try {
-        S.order = await jfetch(`/api/shop/orders/${encodeURIComponent(o.code)}/jawwal/otp`, { method: 'POST', body: { mobile } });
-        notify('تم إرسال رمز التحقق إلى جوالك');
+        const bank = directBanks().some((x) => x.code === S.jcBank) ? S.jcBank : '';
+        S.order = await jfetch(`/api/shop/orders/${encodeURIComponent(o.code)}/jawwal/otp`, { method: 'POST', body: { mobile, bank } });
+        notify(bank ? 'أرسل البنك رمز التحقق إلى جوالك' : 'تم إرسال رمز التحقق إلى جوالك');
         renderOrder();
         document.getElementById('jc-otp')?.focus();
       } catch (err) {
@@ -2059,7 +2076,7 @@ function renderOrder() {
   const isSupportNeeded = Boolean(transferChecking && (o.needsSupport || (o.waitUntil && Date.now() >= Number(o.waitUntil))));
   const statusPillCls = isSupportNeeded ? 's-bad' : st.cls;
   const stageDesc = o.status === 'awaiting_payment' && showDirect && !canShowForm
-    ? 'ادفع مباشرة من محفظة جوال باي: اكتب رقمك ويصلك رمز تحقق، وبعد الدفع يتفعّل طلبك تلقائياً.'
+    ? `ادفع مباشرة من محفظة جوال باي${directBanks().length ? ` أو ${directBanks().map((b) => b.name).join(' أو ')}` : ''}: اكتب رقمك ويصلك رمز تحقق، وبعد الدفع يتفعّل طلبك تلقائياً.`
     : jcChecking ? 'نتأكد من دفعتك لدى جوال باي — لا تدفع مرة أخرى.' : st.desc;
   const statusPillLabel = isSupportNeeded ? 'يرجى التحدث مع الدعم' : jcChecking ? 'جارٍ التحقق من الدفع…' : (transferChecking ? 'بانتظار التحقق (حتى 15 دقيقة)' : st.label);
   const wa = waHref(S.data?.supportWhatsapp, `مرحباً، بخصوص الطلب ${o.code}`);

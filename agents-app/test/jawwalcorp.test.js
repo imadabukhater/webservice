@@ -55,9 +55,11 @@ const fakeApi = http.createServer((req, res) => {
     if (api.revokeAlways || !api.seat || auth !== api.seat.token) return send(res, 401, { success: false, error: 'token_revoked' });
     if (url.pathname === '/api/jawwal/corporate/send_otp') {
       if (api.sendAs) return send(res, api.sendAs.status, { success: false, error: api.sendAs.error, message: api.sendAs.message || '' });
+      if (body.bank && !['PALS', 'JWLP'].includes(body.bank)) return send(res, 400, { success: false, code: 'invalid_bank' });
+      if (body.bank === 'PALS' && body.mobile_number === api.notAtBank) return send(res, 422, { success: false, code: '14', message: 'not registered' });
       if (body.mobile_number === api.notJawwalPay) return send(res, 422, { success: false, error: 'jawwal_send_otp_failed', message: 'mobile is not a jawwal pay wallet' });
       const id = `COR-${Date.now()}-${++api.n}`;
-      api.invoices.set(id, { id, amount: body.amount, mobile: body.mobile_number, otp: '123456', status: 'pending', exp: Date.now() + 5 * 60_000 });
+      api.invoices.set(id, { id, amount: body.amount, mobile: body.mobile_number, bank: body.bank || '', otp: '123456', status: 'pending', exp: Date.now() + 5 * 60_000 });
       return send(res, 200, { success: true, message: 'otp sent', data: { cor_invoice_id: id, expires_at: new Date(Date.now() + 5 * 60_000).toISOString(), amount: body.amount, mobile_number: body.mobile_number } });
     }
     if (url.pathname === '/api/jawwal/corporate/confirm_payment') {
@@ -367,17 +369,17 @@ test('WhatsApp: the whole payment in the chat — the number, the code texted, t
   const o = S.byCode(v.code);
   // After the order: what to send, to pay here (never the site).
   const facts = wa._test.orderFacts ? wa._test.orderFacts(o, S.shopCatalogResponse()) : '';
-  assert.match(facts, /1️⃣ ابعتلي \*رقم جوال باي\* تبعك[\s\S]*2️⃣[\s\S]*3️⃣/, 'the payment explained first');
-  assert.match(facts, /بندعم الدفع من \*جوال باي\* بس \(مش بنك فلسطين/);
+  assert.match(facts, /1️⃣ ابعتلي \*رقم جوالك\*[\s\S]*2️⃣[\s\S]*3️⃣/, 'the payment explained first');
+  assert.match(facts, /بندعم الدفع من \*جوال باي\* و\*بنك فلسطين\* بس/);
   assert.doesNotMatch(facts, /#\/order\/|نفس الرقم/);
   const invoicesBefore = api.invoices.size;
   // A number not on Jawwal Pay: asked to confirm, then the API cannot text it — said so, with what is supported.
   assert.equal(await wa._test.payHere(jid, '0599300999', '0599300001'), true);
-  assert.match(said(), /رح نبعت رمز التحقق على رقم جوال باي: \*0599300999\*\nصح؟ ابعت \*نعم\*/);
+  assert.match(said(), /رح نبعت رمز التحقق على الرقم: \*0599300999\*\nمن وين بدك تدفع؟\n1️⃣ محفظة \*جوال باي\*\n2️⃣ \*بنك فلسطين\*/);
   assert.equal(api.invoices.size, invoicesBefore, 'nothing sent before the yes');
   api.notJawwalPay = '0599300999';
   assert.equal(await wa._test.payHere(jid, 'نعم', '0599300001'), true);
-  assert.match(said(), /ما قدرنا نبعت رمز على الرقم \*0599300999\* — غالباً مش مسجّل بجوال باي[\s\S]*مش بنك فلسطين/);
+  assert.match(said(), /ما قدرنا نبعت رمز على الرقم \*0599300999\* — غالباً مش مسجّل بجوال باي[\s\S]*محفظة \*جوال باي\* أو \*بنك فلسطين\*/);
   require('../src/db').q('UPDATE shop_orders SET jc_sent_at = NULL WHERE id = ?').run(o.id); // past the 45 seconds between codes
   // The right number, confirmed: the code is texted to it.
   await wa._test.payHere(jid, 'رقمي 0599300001', '0599300001');
@@ -517,4 +519,47 @@ test('E-SADAD: «not confirmed yet» is pending — asked again with /settle; co
   assert.equal(v.status, 'paid');
   assert.ok(api.log.filter((l) => l.endsWith('/settle')).length > before, 'asked with /settle');
   assert.equal([...api.invoices.values()].filter((i) => i.mobile === '0599600001' && i.status === 'confirmed').length, 1, 'one payment');
+});
+
+test('Bank of Palestine: the code from the bank to its registered mobile — on the site and in the chat; off in the settings', async () => {
+  require('../src/routes/shop')._resetThrottle();
+  require('../src/db').setSetting('jc_wait_until', 0);
+  const { q } = require('../src/db');
+  const admin = (await ok(call(null, 'POST', '/api/login', { username: 'admin', password: 'admin-pass' }))).token;
+  const esim = await QL.esimPackage(call, ok, admin, 40);
+  assert.deepEqual((await ok(call(null, 'GET', '/api/shop'))).jawwalBanks, [{ code: 'PALS', name: 'بنك فلسطين' }]);
+  const order = async () => ok(call(null, 'POST', '/api/shop/orders', { kind: 'esim', packageId: esim.id, customerName: 'بنك' }));
+  // The site: chosen, sent with bank PALS, said on the order; then paid as usual.
+  const a = await order();
+  const v = await ok(call(null, 'POST', `/api/shop/orders/${a.code}/jawwal/otp`, { mobile: '0599700001', bank: 'PALS' }));
+  assert.equal([...api.invoices.values()].at(-1).bank, 'PALS');
+  assert.equal(v.jawwal.bank, 'PALS');
+  assert.equal(v.jawwal.bankName, 'بنك فلسطين');
+  assert.equal((await ok(call(null, 'POST', `/api/shop/orders/${a.code}/jawwal/confirm`, { otp: '123456' }))).status, 'paid');
+  // Not the bank's registered number (code 14): said so; an unknown bank: refused before anything is sent.
+  const b = await order();
+  api.notAtBank = '0599700002';
+  const r14 = await call(null, 'POST', `/api/shop/orders/${b.code}/jawwal/otp`, { mobile: '0599700002', bank: 'PALS' });
+  assert.equal(r14.status, 422);
+  assert.match(r14.body.error, /غير مسجّل لدى بنك فلسطين/);
+  q('UPDATE shop_orders SET jc_sent_at = NULL WHERE code = ?').run(b.code);
+  assert.equal((await call(null, 'POST', `/api/shop/orders/${b.code}/jawwal/otp`, { mobile: '0599700003', bank: 'QUDS' })).status, 400);
+  // The chat: the number, «2» (the bank) → the bank texts the code.
+  const wa = require('../src/whatsapp');
+  const sent = [];
+  wa._test.setTransport(async (jid, content) => { sent.push({ jid, ...content }); });
+  const jid = '972599700004@s.whatsapp.net';
+  const S = require('../src/routes/shop');
+  const c = S.byCode((await S.createOrder({ packageId: esim.id, kind: 'esim', esim: true, includeEsimFee: true, customerName: 'بنك' }, { ip: `wa:${jid}`, clientId: `wa:${jid}` })).code);
+  assert.match(wa._test.orderFacts(c, S.shopCatalogResponse()), /محفظة \*جوال باي\* أو \*بنك فلسطين\*/);
+  await wa._test.payHere(jid, '0599700004', '0599700004');
+  assert.equal(await wa._test.payHere(jid, '2', '0599700004'), true);
+  assert.match(sent.at(-1).text, /\*بنك فلسطين\* بعتلك رمز تحقق برسالة على/);
+  assert.equal([...api.invoices.values()].at(-1).bank, 'PALS');
+  // Off in the settings: not offered, and refused if asked.
+  await ok(call(admin, 'PUT', '/api/settings', { jcPals: false }));
+  assert.deepEqual((await ok(call(null, 'GET', '/api/shop'))).jawwalBanks, []);
+  const d = await order();
+  assert.equal((await call(null, 'POST', `/api/shop/orders/${d.code}/jawwal/otp`, { mobile: '0599700005', bank: 'PALS' })).status, 400);
+  await ok(call(admin, 'PUT', '/api/settings', { jcPals: true }));
 });

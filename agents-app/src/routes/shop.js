@@ -132,6 +132,7 @@ function orderView(o, { admin = false } = {}) {
       sendsLeft: Math.max(0, JC_SENDS_MAX - (o.jc_sends || 0)),
       triesLeft: Math.max(0, JC_TRIES_MAX - (o.jc_tries || 0)),
       checking: !!o.jc_unsure,
+      bank: o.jc_bank || '', bankName: BANK_NAME[o.jc_bank] || '',
       ...(admin ? { invoiceId: o.jc_invoice_id, status: o.jc_status || '' } : {}),
     } : null,
     esimQr: o.esim && qr ? qr : null,
@@ -249,6 +250,8 @@ function shopCatalogResponse() {
     payPhone: s.jawwalpayNumber || s.palpayNumber || '',
     // Paying straight from the customer's Jawwal Pay wallet with a code texted to them (corporate API).
     jawwalDirect: s.jcReady,
+    // Banks the customer may pay from instead of the wallet (the code comes from the bank, to its registered mobile).
+    jawwalBanks: jcBanks(s).map((code) => ({ code, name: BANK_NAME[code] || code })),
     // A manual transfer, confirmed from the payment e-mails (the manager may stop it: direct payment only).
     manualPay: s.mailPay || !s.jcReady,
     jawwalpay: { number: s.jawwalpayNumber, name: s.jawwalpayName },
@@ -580,6 +583,12 @@ function jcFail(e, o = null, step = '') {
     tellManager(e.code, `رفضت واجهة الشركات الدخول (${e.code}). راجع رقم المشترك واسم المستخدم وكلمة المرور في إعدادات المتجر.`);
   }
   if (e.status === 429 || e.status === 401 || e.status === 403 || e.code === 'not_configured') fail(503, `الدفع المباشر غير متاح الآن — حاول بعد دقيقة.${manual}`);
+  if (e.code === '14') fail(422, 'هذا الرقم غير مسجّل لدى بنك فلسطين — استخدم رقم الجوال المسجّل في حسابك البنكي.');
+  if (e.code === 'esdad_bank_mobile_unavailable') fail(503, 'بنك فلسطين لا يقبل الدفع برقم الجوال حالياً — ادفع من محفظة جوال باي.');
+  if (e.code === 'sadad_banks_not_enabled' || e.code === 'invalid_bank') {
+    tellManager(e.code, `الدفع من بنك فلسطين مرفوض من MaalCards (${e.code}). أوقفه من إعدادات المتجر أو راجعهم.`);
+    fail(503, 'الدفع من البنك غير متاح حالياً — ادفع من محفظة جوال باي.');
+  }
   if (/^esdad_/.test(e.code || '')) {
     tellManager('esdad', `مزوّد الدفع (MaalCards) لم يكمل العملية مع جوال باي: ${e.code} — ${String(e.message).slice(0, 200)}. هذا خلل عندهم: أرسل لهم الرمز والوقت.`);
     fail(503, `الدفع المباشر من جوال باي متوقف مؤقتاً عند مزوّد الدفع — جرّب بعد قليل.${manual}`);
@@ -602,15 +611,20 @@ function directOrder(code, ip) {
 // last can be confirmed), a few per order, not more often than every 45 seconds.
 route('POST', '/api/shop/orders/:code/jawwal/otp', null, async ({ params, body, ip }) => {
   throttle(ip, 'jc_otp', 15);
-  return jcSendCode(directOrder(params.code, ip), body.mobile);
+  return jcSendCode(directOrder(params.code, ip), body.mobile, body.bank);
 });
 // Shared by the order page and the WhatsApp chat: every check and limit is the same.
-async function jcSendCode(o, mobileInput) {
+// The banks a customer may pay from besides the Jawwal Pay wallet (by mobile number): Bank of Palestine, when allowed.
+const jcBanks = (s = getSettings()) => (s.jcReady && s.jcPals ? ['PALS'] : []);
+const BANK_NAME = { PALS: 'بنك فلسطين' };
+async function jcSendCode(o, mobileInput, bankInput = '') {
+  const bank = String(bankInput || '').toUpperCase() === 'JWLP' ? '' : String(bankInput || '').toUpperCase();
+  if (bank && !jcBanks().includes(bank)) fail(400, 'طريقة الدفع غير متاحة — اختر محفظة جوال باي');
   if (o.status === 'cancelled') fail(400, 'انتهت مهلة حجز الرقم وتم إلغاء الطلب. اطلب من جديد.');
   if (o.status !== 'awaiting_payment' || o.proof_at) fail(400, 'تم التعامل مع هذا الطلب');
   if (o.jc_unsure) fail(409, 'جارٍ التأكد من دفعتك السابقة لدى جوال باي — انتظر لحظة.');
   const mobile = normalizePhone(toLatinDigits(String(mobileInput || '')));
-  if (!/^05\d{8}$/.test(mobile)) fail(400, 'اكتب رقم جوالك المسجّل في جوال باي (10 أرقام يبدأ بـ 05)');
+  if (!/^05\d{8}$/.test(mobile)) fail(400, bank ? 'اكتب رقم جوالك المسجّل في البنك (10 أرقام يبدأ بـ 05)' : 'اكتب رقم جوالك المسجّل في جوال باي (10 أرقام يبدأ بـ 05)');
   if ((o.jc_sends || 0) >= JC_SENDS_MAX) fail(429, 'وصلت إلى الحد الأقصى لرموز التحقق لهذا الطلب. ادفع بالتحويل اليدوي أو تواصل معنا.');
   if (o.jc_sent_at && now() < o.jc_sent_at + JC_RESEND_MS) fail(429, `انتظر ${Math.ceil((o.jc_sent_at + JC_RESEND_MS - now()) / 1000)} ثانية قبل طلب رمز جديد`);
   if (jcBusy.has(o.id)) fail(409, 'جارٍ إرسال الرمز…');
@@ -618,7 +632,7 @@ async function jcSendCode(o, mobileInput) {
   try {
     let r;
     try {
-      r = await jc.sendOtp(jcCredentials(), { mobile, amount: o.amount });
+      r = await jc.sendOtp(jcCredentials(), { mobile, amount: o.amount, bank });
     } catch (e) {
       // Counted even when refused: a number that cannot take codes is not tried forever.
       q('UPDATE shop_orders SET jc_sends = jc_sends + 1, jc_sent_at = ?, updated_at = ? WHERE id = ?').run(now(), now(), o.id);
@@ -632,8 +646,8 @@ async function jcSendCode(o, mobileInput) {
     }
     const until = Math.min(r.expiresAt && r.expiresAt > now() ? r.expiresAt : now() + JC_HOLD_MS, now() + JC_HOLD_MS);
     q(`UPDATE shop_orders SET jc_invoice_id = ?, jc_mobile = ?, jc_expires_at = ?, jc_sent_at = ?, jc_sends = jc_sends + 1, jc_tries = 0,
-         jc_status = 'pending', updated_at = ? WHERE id = ? AND status = 'awaiting_payment'`).run(r.invoiceId, mobile, until, now(), now(), o.id);
-    shop.jcLog({ ...o, jc_invoice_id: r.invoiceId }, 'otp_sent', { status: 'pending', detail: `${r.amount ?? o.amount} ₪ → ${maskMobile(mobile)}` });
+         jc_status = 'pending', jc_bank = ?, updated_at = ? WHERE id = ? AND status = 'awaiting_payment'`).run(r.invoiceId, mobile, until, now(), bank, now(), o.id);
+    shop.jcLog({ ...o, jc_invoice_id: r.invoiceId }, 'otp_sent', { status: 'pending', detail: `${r.amount ?? o.amount} ₪ → ${maskMobile(mobile)}${bank ? ` (${BANK_NAME[bank] || bank})` : ''}` });
   } finally {
     jcBusy.delete(o.id);
   }

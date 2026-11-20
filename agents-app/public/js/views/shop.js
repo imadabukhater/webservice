@@ -102,6 +102,7 @@ function openSettings() {
         <div class="field"><label for="st-jcu">اسم مستخدم الشركة</label><input class="input ltr" id="st-jcu" name="jcUser" value="${esc(s.jcUser || '')}" autocomplete="off" placeholder="corp-…"></div></div>
       <div class="field"><label for="st-jcp">كلمة المرور ${s.jcConfigured ? '<span class="opt">(محفوظة — اتركها فارغة للإبقاء عليها)</span>' : ''}</label>
         <input class="input ltr" id="st-jcp" name="jcPass" type="password" autocomplete="new-password"></div>
+      <label class="switch-row"><span class="grow"><b>الدفع من بنك فلسطين أيضاً</b><small>يختار الزبون «بنك فلسطين» ويرسل البنك رمز التحقق إلى رقم جواله المسجّل لديه (عبر بوابة سداد)</small></span><input class="switch" type="checkbox" name="jcPals" ${s.jcPals ? 'checked' : ''}></label>
       <button type="button" class="btn btn-soft btn-block" id="st-jctest">${icon('refresh')}اختبار الاتصال بواجهة الشركات</button>
       <div class="divider"></div>
       <h3>تأكيد الدفع بالذكاء (Gemini)</h3>
@@ -145,7 +146,7 @@ function openSettings() {
     },
     async onSubmit(form) {
       V.settings = await api.put('/api/settings', {
-        jcEnabled: form.elements.jcEnabled.checked, jcManagerId: field(form, 'jcManagerId'), jcUser: field(form, 'jcUser'), jcPass: field(form, 'jcPass'),
+        jcEnabled: form.elements.jcEnabled.checked, jcPals: form.elements.jcPals.checked, jcManagerId: field(form, 'jcManagerId'), jcUser: field(form, 'jcUser'), jcPass: field(form, 'jcPass'),
         shopEnabled: form.elements.shopEnabled.checked,
         shopInstant: form.elements.shopInstant.checked,
         shopAutoMax: field(form, 'shopAutoMax'), shopHourLimit: field(form, 'shopHourLimit'),
