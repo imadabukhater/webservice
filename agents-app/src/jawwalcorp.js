@@ -218,26 +218,54 @@ async function confirmPayment(creds, { invoiceId, otp }) {
   return r.data && typeof r.data === 'object' ? r.data : r;
 }
 
+// The list of invoices wherever the response holds it (data, data.invoices, data.data, data.items…, a page object):
+// the first array of objects found, a few levels deep.
+function listIn(r, depth = 0) {
+  if (Array.isArray(r)) return r.filter((x) => x && typeof x === 'object');
+  if (!r || typeof r !== 'object' || depth > 3) return [];
+  for (const k of ['data', 'invoices', 'items', 'results', 'rows', 'list', 'records']) {
+    const l = listIn(r[k], depth + 1);
+    if (l.length) return l;
+  }
+  return [];
+}
+// The invoice's id under whichever name it has (cor_invoice_id as documented; SADCOR-… / COR-… as sent back).
+const ID_KEYS = ['cor_invoice_id', 'invoice_id', 'invoiceId', 'corInvoiceId', 'reference', 'ref', 'id'];
+const idsOf = (i) => ID_KEYS.map((k) => i?.[k]).filter((v) => v !== undefined && v !== null && v !== '').map(String);
+// The documented states, and the names a payment provider may use for them.
+const STATES = { confirmed: 'confirmed', paid: 'confirmed', success: 'confirmed', succeeded: 'confirmed', completed: 'confirmed', done: 'confirmed',
+  pending: 'pending', waiting: 'pending', expired: 'expired', failed: 'failed', cancelled: 'failed', canceled: 'failed', rejected: 'failed' };
+const stateOf = (v) => STATES[String(v || '').toLowerCase().trim()] || String(v || '').toLowerCase().trim();
+
 // The account's invoices: { status: pending|confirmed|expired|failed, mobile, cor_invoice_id, limit, page }.
-async function invoices(creds, filters = {}) {
+async function invoices(creds, filters = {}, { withRaw = false } = {}) {
   const qs = new URLSearchParams();
   for (const [k, v] of Object.entries(filters)) if (v !== undefined && v !== null && v !== '') qs.set(k, String(v));
   const r = await call(creds, 'GET', `/api/jawwal/corporate/invoices${qs.size ? `?${qs}` : ''}`);
-  const d = r.data ?? r;
-  const list = Array.isArray(d) ? d : Array.isArray(d?.invoices) ? d.invoices : Array.isArray(d?.items) ? d.items : Array.isArray(d?.data) ? d.data : Array.isArray(r.invoices) ? r.invoices : [];
-  return list.map((i) => ({
-    invoiceId: String(i.cor_invoice_id ?? i.id ?? ''),
-    status: String(i.status || '').toLowerCase(),
-    amount: i.amount === undefined ? null : money(i.amount),
-    mobile: String(i.mobile_number ?? i.mobile ?? ''),
+  const list = listIn(r).map((i) => ({
+    invoiceId: idsOf(i).find((v) => /COR-/i.test(v)) || idsOf(i)[0] || '',
+    ids: idsOf(i),
+    status: stateOf(i.status ?? i.state ?? i.payment_status),
+    amount: i.amount === undefined || i.amount === null ? null : money(i.amount),
+    mobile: String(i.mobile_number ?? i.mobile ?? i.msisdn ?? ''),
     raw: i,
   }));
+  return withRaw ? { list, raw: r } : list;
 }
 
-// One invoice by its id, or null.
+// One invoice by its id, or null: asked by its id; not found that way, among the latest invoices (by any id field, or
+// the id anywhere in it). What the API answered is logged when it is not found, to see how it names things.
 async function invoice(creds, invoiceId) {
-  const list = await invoices(creds, { cor_invoice_id: invoiceId, limit: 5 });
-  return list.find((i) => i.invoiceId === String(invoiceId)) || null;
+  const id = String(invoiceId);
+  const has = (i) => i.ids.includes(id) || JSON.stringify(i.raw).includes(`"${id}"`);
+  const first = await invoices(creds, { cor_invoice_id: id, limit: 5 }, { withRaw: true });
+  let hit = first.list.find(has);
+  if (hit) return { ...hit, invoiceId: id };
+  const latest = await invoices(creds, { limit: 100 }, { withRaw: true });
+  hit = latest.list.find(has);
+  if (hit) return { ...hit, invoiceId: id };
+  console.error('jawwal invoice not found', id, JSON.stringify(first.raw).slice(0, 600), '| latest:', JSON.stringify(latest.raw).slice(0, 600));
+  return null;
 }
 
-module.exports = { BASE, JawwalCorpError, sendOtp, confirmPayment, invoices, invoice, status, token, parseTime, _forget: forget };
+module.exports = { BASE, JawwalCorpError, sendOtp, confirmPayment, invoices, invoice, listIn, stateOf, status, token, parseTime, _forget: forget };

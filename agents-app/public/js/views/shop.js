@@ -179,6 +179,9 @@ async function openOrder(id) {
         ${o.esim ? kv('رسوم QR', fmtMoney(o.esimFee || 0)) : ''}
         ${o.esim ? kv('رمز QR', o.qrMailedAt ? `أُرسل بالبريد ${fmtDateTime(o.qrMailedAt)}` : o.email ? 'يُرسل بالبريد بعد التفعيل' : 'يظهر للزبون في صفحة الطلب') : ''}
         ${o.esimCode ? kv('كود التفعيل اليدوي', `<code class="ltr small">${esc(o.esimCode)}</code>`) : ''}</div>
+      ${o.jawwal?.invoiceId && decidable ? `<button type="button" class="btn btn-soft btn-block" id="jc-check" style="margin:8px 0">${icon('refresh')}فحص فاتورة جوال باي الآن</button>
+        <p class="small muted">يسأل حساب الشركة عن الفاتورة الآن: إن كانت مؤكدة بنفس المبلغ والرقم يُنفَّذ الطلب تلقائياً، وإلا يظهر رد المزوّد كما هو.</p>
+        <pre id="jc-raw" class="small ltr" style="white-space:pre-wrap;max-height:30vh;overflow:auto" hidden></pre>` : ''}
       ${o.esimQr ? `<div style="text-align:center;margin:10px 0"><img src="${esc(o.esimQr)}" alt="رمز QR لـ eSIM" style="max-width:220px;border-radius:16px;border:1px solid var(--line);padding:8px;background:#fff"></div>` : ''}
       ${o.receipt ? `<img class="thumb" style="max-height:50vh" src="${esc(o.receipt)}" alt="صورة إشعار التحويل">` : ''}
       ${o.mail ? `<h3>الإشعار المعتمد</h3><pre class="small" style="white-space:pre-wrap">${esc(o.mail.body)}</pre>` : ''}
@@ -190,6 +193,21 @@ async function openOrder(id) {
           <label class="switch-row"><span class="grow"><b>بدون إشعار</b><small>تأكدت من التحويل في تطبيق جوال باي</small></span><input type="radio" name="mailId" value="" checked></label></div>`
     : `<div class="msg warn">${icon('info')}<span>لا يوجد إشعار بالمبلغ نفسه. تأكد من التحويل في تطبيق جوال باي قبل التأكيد.</span></div>`}` : ''}`,
     submit: decidable ? 'تأكيد الدفع وتنفيذ الطلب' : 'إغلاق',
+    onMount(form) {
+      // Asks the corporate account about the invoice now; paid and carried out when it is confirmed for this order.
+      form.querySelector('#jc-check')?.addEventListener('click', async (e) => {
+        const btn = e.currentTarget;
+        const out = form.querySelector('#jc-raw');
+        btn.disabled = true;
+        try {
+          const r = await api.post(`/api/shop/admin/orders/${o.id}/jawwal-check`);
+          out.hidden = false;
+          out.textContent = r.invoice ? JSON.stringify(r.invoice.raw, null, 2) : 'لم يجد حساب الشركة هذه الفاتورة.';
+          if (r.status === 'paid') { toast('الفاتورة مؤكدة — تم الدفع وتنفيذ الطلب'); changed(); }
+          else toast(r.invoice ? `حالة الفاتورة: ${r.invoice.status || 'غير معروفة'}` : 'لم يجد حساب الشركة هذه الفاتورة', { error: !r.invoice });
+        } catch (ex) { toast(ex.message, { error: true }); } finally { btn.disabled = false; }
+      });
+    },
     async onSubmit(form) {
       if (!decidable) return '';
       const mailId = form.querySelector('input[name=mailId]:checked')?.value || null;

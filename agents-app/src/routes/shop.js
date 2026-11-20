@@ -836,6 +836,19 @@ route('POST', '/api/shop/admin/jawwal/test', ADMIN, async () => {
   }
 });
 route('GET', '/api/shop/admin/jawwal/status', ADMIN, () => jc.status());
+route('POST', '/api/shop/admin/orders/:id/jawwal-check', ADMIN, async ({ params }) => {
+  const o = adminOrder(params.id);
+  if (!o.jc_invoice_id) fail(400, 'هذا الطلب ليس له فاتورة جوال باي مباشرة');
+  let inv = null;
+  try {
+    inv = await jc.invoice(jcCredentials(), o.jc_invoice_id);
+  } catch (e) {
+    if (!(e instanceof jc.JawwalCorpError)) throw e;
+    fail(502, `تعذّرت قراءة الفاتورة: ${e.code || e.status || ''} ${e.message}`);
+  }
+  if (inv && ['awaiting_payment', 'cancelled'].includes(o.status)) shop.settleVerified(o, inv);
+  return { ...orderView(adminOrder(o.id), { admin: true }), invoice: inv ? { status: inv.status, amount: inv.amount, mobile: inv.mobile, raw: inv.raw } : null };
+});
 
 // Gemini's payment review: the model answers on this server, and how its last look went.
 route('POST', '/api/shop/admin/ai/test', ADMIN, async () => {

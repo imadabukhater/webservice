@@ -74,6 +74,11 @@ const fakeApi = http.createServer((req, res) => {
     }
     if (url.pathname === '/api/jawwal/corporate/invoices') {
       if (api.invoicesDown) return send(res, 502, {});
+      if (api.listShape === 'paged') {
+        // Another shape: a page object, the id as invoice_id, «paid», and the id filter not applied.
+        const all = [...api.invoices.values()].reverse().map((i) => ({ invoice_id: i.id, state: i.status === 'confirmed' ? 'paid' : i.status, amount: String(i.amount), mobile: i.mobile }));
+        return send(res, 200, { success: true, data: { invoices: { data: all, total: all.length, current_page: 1 } } });
+      }
       const id = url.searchParams.get('cor_invoice_id');
       const list = [...api.invoices.values()].filter((i) => !id || i.id === id)
         .map((i) => ({ cor_invoice_id: i.id, status: i.status, amount: i.amount + api.listAmountDelta, mobile_number: i.mobile }));
@@ -453,4 +458,31 @@ test('MaalCards\' own link to Jawwal Pay failing (esdad_…): the provider\'s fa
   assert.equal(r3.status, 410);
   assert.match(r3.body.error, /انتهت جلسة الدفع/);
   assert.equal((await ok(call(null, 'GET', `/api/shop/orders/${c.code}`))).jawwal.otpSent, false);
+});
+
+test('the invoice found whatever shape the list comes in (SADCOR-…, invoice_id, «paid», no filter); the manager checks it now', async () => {
+  require('../src/routes/shop')._resetThrottle();
+  require('../src/db').setSetting('jc_wait_until', 0);
+  const admin = (await ok(call(null, 'POST', '/api/login', { username: 'admin', password: 'admin-pass' }))).token;
+  const esim = await QL.esimPackage(call, ok, admin, 45);
+  const order = async () => ok(call(null, 'POST', '/api/shop/orders', { kind: 'esim', packageId: esim.id, customerName: 'محمد' }));
+  api.listShape = 'paged';
+  try {
+    // Confirmed, and found in the other shape at once: paid.
+    const a = await order();
+    await ok(call(null, 'POST', `/api/shop/orders/${a.code}/jawwal/otp`, { mobile: '0599500001' }));
+    assert.equal((await ok(call(null, 'POST', `/api/shop/orders/${a.code}/jawwal/confirm`, { otp: '123456' }))).status, 'paid');
+    // Not readable right after confirming (as on the server): the manager's «check now» pays it, with what the API said.
+    const b = await order();
+    await ok(call(null, 'POST', `/api/shop/orders/${b.code}/jawwal/otp`, { mobile: '0599500002' }));
+    api.invoicesDown = true;
+    const rb = await ok(call(null, 'POST', `/api/shop/orders/${b.code}/jawwal/confirm`, { otp: '123456' }));
+    api.invoicesDown = false;
+    assert.equal(rb.status, 'awaiting_payment');
+    const id = require('../src/db').q('SELECT id FROM shop_orders WHERE code = ?').get(b.code).id;
+    const checked = await ok(call(admin, 'POST', `/api/shop/admin/orders/${id}/jawwal-check`));
+    assert.equal(checked.status, 'paid');
+    assert.equal(checked.invoice.status, 'confirmed');
+    assert.equal(checked.invoice.raw.state, 'paid', 'the API\'s own answer, for the manager');
+  } finally { api.listShape = null; }
 });
