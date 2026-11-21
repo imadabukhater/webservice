@@ -94,6 +94,14 @@ const maskMobile = (m) => (m && m.length >= 7 ? `${m.slice(0, 3)}${'•'.repeat(
 function stage(o, line) {
   if (o.status !== 'paid') return o.status;
   if (!line) return o.error ? 'paid_issue' : 'processing';
+  if (o.kind === 'recharge') {
+    // A renewal: done once the extension is carried out (its task at the supplier or the manager), refused → failed.
+    const t = q("SELECT status FROM tasks WHERE line_id = ? AND type = 'renew' AND created_at >= ? ORDER BY id DESC LIMIT 1")
+      .get(line.id, (o.paid_at || o.created_at) - 60_000);
+    if (t?.status === 'open') return 'processing';
+    if (t?.status === 'rejected') return 'failed';
+    return 'done';
+  }
   if (line.status === 'pending') return 'processing';
   if (line.status === 'disconnected') return 'failed';
   return 'done';
@@ -341,8 +349,67 @@ route('POST', '/api/shop/orders', null, ({ body, ip, req }) => {
   return createOrder(body, { ip, clientId: str(req?.headers?.['x-client-id'] || body.clientId || '', 64) });
 });
 
+// ---------- renewing a number (any line in the system) ----------
+// The line behind a number, and the packages that may renew it at the shop's price: its company's, priced for the shop
+// (shop_price), and that its supplier extends (quickline.renewalProblem: a QuickLine / Layan / telecom line only on its
+// own package's extension). What the customer sees: the company, the package, the expiry — never whose it is.
+function renewalLine(numberInput) {
+  let number = '';
+  try { number = validPhone(normalizePhone(toLatinDigits(String(numberInput || '')))); } catch { fail(400, 'اكتب رقم الخط اللي بدك تمدّده (10 أرقام يبدأ بـ 05)'); }
+  const l = q(`${D.LINE_SELECT} WHERE l.number = ? AND l.status != 'disconnected' ORDER BY l.id DESC LIMIT 1`).get(number);
+  if (!l) fail(404, 'هذا الرقم غير مسجّل عندنا — للتمديد تواصل مع الدعم.');
+  if (l.status === 'pending') fail(409, 'طلب هذا الرقم ما زال قيد التنفيذ — جرّب بعد قليل.');
+  if (q("SELECT 1 FROM tasks WHERE line_id = ? AND type = 'renew' AND status = 'open'").get(l.id)) fail(409, 'تمديد هذا الرقم قيد التنفيذ الآن.');
+  return l;
+}
+function renewalOptions(l) {
+  const { renewalProblem } = require('../quickline');
+  return q(`SELECT p.*, c.name AS company_name FROM packages p JOIN companies c ON c.id = p.company_id
+            WHERE p.active = 1 AND p.shop_price > 0 ${l.company_id ? 'AND p.company_id = ?' : ''} ORDER BY p.shop_price, p.id`)
+    .all(...(l.company_id ? [l.company_id] : []))
+    .filter((p) => !renewalProblem(l.package_ref, p.art_card_id) && !/^(qln|lyn|tcn|ay:bill|ay:esim):/.test(p.art_card_id || ''));
+}
+function renewalView(l) {
+  return {
+    number: l.number, company: l.company_name || '', packageLabel: l.package_label || '', expiresAt: l.expires_at || null,
+    status: l.status, options: renewalOptions(l).map((p) => ({ id: p.id, name: p.name, label: D.packageLabel(p), price: round(p.shop_price), days: p.days || 30 })),
+  };
+}
+route('GET', '/api/shop/renew', null, ({ query, ip }) => {
+  enabled();
+  throttle(ip, 'renew_lookup', 30);
+  return renewalView(renewalLine(query.number));
+});
+route('POST', '/api/shop/renewals', null, ({ body, ip, req }) => {
+  throttle(ip, 'order', 20);
+  return createRenewal(body, { ip, clientId: str(req?.headers?.['x-client-id'] || body.clientId || '', 64) });
+});
+// A renewal order (kind 'recharge'): paid like any order (directly, or by transfer while that is on); once paid the shop's
+// account renews the line (shop.fulfil → lines.renewLine), carried out by its supplier when it is one we automate.
+function createRenewal(body, { ip, clientId = '' }) {
+  const l = renewalLine(body.number);
+  const p = renewalOptions(l).find((x) => x.id === Number(body.packageId));
+  if (!p) fail(404, 'هذه الرزمة لا تصلح لتمديد هذا الرقم — اختر من القائمة');
+  orderGuards({ number: l.number, contactPhone: body.contactPhone }, { ip, clientId });
+  let contact = '';
+  try { contact = body.contactPhone ? validPhone(normalizePhone(toLatinDigits(String(body.contactPhone)))) : ''; } catch {}
+  const code = newCode();
+  const t = now();
+  q(`INSERT INTO shop_orders (code, package_id, package_label, kind, number, sim, customer_name, contact_phone, amount, esim_fee, ip, client_id, created_at, updated_at, esim)
+     VALUES (?, ?, ?, 'recharge', ?, '', ?, ?, ?, 0, ?, ?, ?, ?, 0)`)
+    .run(code, p.id, /تمديد/.test(p.name) ? D.packageLabel(p) : `تمديد ${D.packageLabel(p)}`, l.number, '', contact, round(p.shop_price), ip, clientId, t, t); // not the line's owner's name: whoever has the order sees it
+  return orderView(byCode(code));
+}
+
 // A new order, with every check the web page's orders get (also made over WhatsApp, where ip and clientId name the chat).
 async function createOrder(body, { ip, clientId = '' }) {
+  const s = orderGuards(body, { ip, clientId });
+  // eSIMs only (whatever the request asks for): a supplier's eSIM, or an Aylol new line as an eSIM.
+  return newOrder(body, { ip, clientId, s });
+}
+// What every customer order is checked against first (an eSIM or a renewal): the hourly limit, one order waiting at a
+// time per customer and per number, and per network. Returns the settings.
+function orderGuards(body, { ip, clientId = '' }) {
   // At most so many orders an hour from one customer (their browser or chat, or their contact phone).
   const perHour = getSettings().shopHourLimit;
   if (perHour > 0) {
@@ -387,8 +454,9 @@ async function createOrder(body, { ip, clientId = '' }) {
   if (activeIpCount >= MAX_ACTIVE_PER_IP) {
     fail(429, 'تم الوصول للحد الأقصى لعدد الحجوزات المعلقة المتزامنة من هذه الشبكة. يرجى إتمام الدفع أو الانتظار حتى انتهاء مهلة الحجز.');
   }
-
-  // eSIMs only (whatever the request asks for): a supplier's eSIM, or an Aylol new line as an eSIM.
+  return s;
+}
+async function newOrder(body, { ip, clientId, s }) {
   const p = q(`SELECT p.*, c.name AS company_name, c.esim_fee AS company_esim_fee FROM packages p JOIN companies c ON c.id = p.company_id
                WHERE p.id = ? AND p.active = 1 AND p.shop_price > 0`).get(Number(body.packageId));
   const kind = p && shopKind(p);
@@ -898,4 +966,5 @@ route('GET', '/api/shop/admin/summary', ADMIN, () => ({
 // The WhatsApp chat pays an order directly too: the order as the page would find it (direct payment on, holds expired).
 const directOrderByCode = (code) => directOrder(code);
 module.exports = { shopCatalogResponse, shopCatalog, ensureStock, submitProof, orderView, byCode, createOrder, cancelOrder, refreshStock,
+  renewalLine, renewalOptions, renewalView, createRenewal,
   jcSendCode, jcConfirmCode, directOrderByCode, _resetThrottle: () => hits.clear() };

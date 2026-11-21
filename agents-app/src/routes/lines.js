@@ -67,6 +67,10 @@ function createLine(user, body, opts = {}) {
   if (existing) {
     // Recharging a card on one of the agent's own numbers extends that line.
     if (kind === 'external' && existing.agent_id === agent.id) return { ...renewLine(user, D.getLine(existing.id, user), body), renewed: true };
+    // The shop's customer renews a number another agent sold: paid by the shop's account, the line stays that agent's.
+    if (kind === 'external' && opts.renewAny) {
+      return { ...renewLine(user, D.getLine(existing.id, { role: 'admin' }), body, { payer: agent, total: opts.total }), renewed: true };
+    }
     fail(409, kind === 'external' ? `الرقم ${number} مسجّل عند وكيل آخر. تواصل مع المدير.` : `الرقم ${number} مفعّل مسبقاً`);
   }
 
@@ -233,12 +237,13 @@ route('GET', '/api/lines/:id/renew-options', ANY, ({ user, params }) => {
 // ----- renewal (existing customer, or a card recharge on a known number) -----
 route('POST', '/api/lines/:id/renew', ANY, ({ user, params, body }) => tx(() => renewLine(user, D.getLine(params.id, user), body)));
 
-// Runs inside the caller's transaction.
-function renewLine(user, l, body) {
+// Runs inside the caller's transaction. opts.payer: who pays (the shop's account for its customer's renewal of any
+// line; else the line's agent); opts.total: what that customer paid, which the renewal is charged.
+function renewLine(user, l, body, opts = {}) {
   const isAdmin = user.role === 'admin';
   if (l.status === 'pending') fail(400, 'طلب هذا الرقم ما زال قيد التنفيذ');
   if (l.status === 'disconnected') fail(400, 'الرقم مفصول. فعّله من جديد من «اشتراك فاتورة جديدة».');
-  const agent = D.getUser(l.agent_id);
+  const agent = opts.payer || D.getUser(l.agent_id);
   if (!agent.active) fail(403, 'حساب الوكيل موقوف');
   let months = int(Number(body.months ?? 1), 'المدة', 1, 24);
   const packageId = body.offerId ? null : body.packageId ?? l.package_id;
@@ -252,6 +257,7 @@ function renewLine(user, l, body) {
   if (days) months = 1;
   let unit = quoted;
   if (isAdmin && !isBlank(body.unitPrice)) unit = num(body.unitPrice, 'السعر');
+  if (Number(opts.total) > 0) unit = round(Number(opts.total) / months);
   if (unit < 0) fail(400, 'السعر لا يكون سالباً');
   if (!isAdmin && !(unit > 0)) fail(400, 'لم يحدد المدير سعر هذه الرزمة بعد');
   const total = round(unit * months);
@@ -269,12 +275,13 @@ function renewLine(user, l, body) {
     type: 'renew', actor: user, lineId: l.id, number: l.number, cost, profit: total - cost, package: label, customerPrice,
     detail: [`تمديد ${durationText(months, days)}`, offer ? `عرض: ${offer.title}` : '', card ? 'زبون دفع مسبق' : '', manual ? 'بانتظار التنفيذ' : ''].filter(Boolean).join(' · '),
   }, { charge: true });
+  let taskId = null;
   if (manual) {
     const note = [`${card ? 'زبون دفع مسبق' : 'تمديد رزمة'} ${l.number}`, label, durationText(months, days), l.customer_name ? `الزبون: ${l.customer_name}` : '']
       .filter(Boolean).join(' — ');
-    D.openSaleTask({ type: 'renew', agent, lineId: l.id, amount: total, note, payload: renewal });
+    taskId = D.openSaleTask({ type: 'renew', agent, lineId: l.id, amount: total, note, payload: renewal });
   }
-  return { line: view(l.id, user), pending: manual, balance: round(agent.balance), available: round(agent.balance + agent.credit_limit) };
+  return { line: view(l.id, opts.payer ? { role: 'admin' } : user), pending: manual, taskId, balance: round(agent.balance), available: round(agent.balance + agent.credit_limit) };
 }
 
 // Extends a line by a renewal (now, or when the manager carries out a renewal request).
@@ -447,4 +454,4 @@ route('DELETE', '/api/lines/:id', ADMIN, ({ user, params, query }) => tx(() => {
   return { ok: true };
 }));
 
-module.exports = { monthsText, applyRenewal, createLine };
+module.exports = { monthsText, applyRenewal, createLine, renewLine };

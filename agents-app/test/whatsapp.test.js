@@ -330,7 +330,7 @@ test('WhatsApp: agents sell as in the portal; customers buy in the chat, their t
   assert.equal(r.calls.length, 1, 'one question: nothing to ask the shop for the packages');
   assert.match(r.calls[0].url, /^\/v1\/projects\/agents-portal-test\/locations\/global\/publishers\/google\/models\/gemini-3\.1-flash-lite:generateContent$/);
   assert.equal(r.calls[0].auth, 'Bearer server-token');
-  assert.deepEqual(r.calls[0].body.tools[0].functionDeclarations.map((f) => f.name).sort(), ['cancel_order', 'create_order', 'order_status', 'submit_payment']);
+  assert.deepEqual(r.calls[0].body.tools[0].functionDeclarations.map((f) => f.name).sort(), ['cancel_order', 'create_order', 'order_status', 'renew_number', 'submit_payment']);
   const sheet = r.calls[0].body.systemInstruction.parts[0].text;
   assert.equal(sheet.includes(`#${cardPkg.id} `), false, 'no recharge');
   assert.match(sheet, /eSIM بس/);

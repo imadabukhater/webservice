@@ -525,7 +525,8 @@ function fulfil(orderId) {
         : { kind: o.kind === 'recharge' ? 'external' : 'new', number: o.number, sim: o.sim, packageId: o.package_id, months: 1, customerName: o.customer_name, customerPrice: o.amount, note },
         // Sold at what the customer paid (the eSIM's fee is added again by the sale), not at an agent's price, which the
         // manager may not have set (or set above the shop's): the payment the shop account was just credited pays it.
-        { total: Number(o.amount), shopLine: /^ay:bill:/.test(lineArt) });
+        // A renewal (kind recharge) may be of any number in the system: paid by the shop's account, the line stays its agent's.
+        { total: Number(o.amount), shopLine: /^ay:bill:/.test(lineArt), renewAny: o.kind === 'recharge' });
       if (o.esim && o.esim_qr) {
         q("UPDATE lines SET esim_qr = COALESCE(NULLIF(esim_qr, ''), ?) WHERE id = ?").run(o.esim_qr, sale.line.id);
         if (!qlRef && !lyRef && !tcRef) {

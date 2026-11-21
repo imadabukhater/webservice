@@ -1119,6 +1119,11 @@ const AGENT_TOOLS = [{ functionDeclarations: [
       package_id: { type: 'INTEGER', description: 'رقم الباقة من قائمة الباقات بالتعليمات' },
       customer_name: { type: 'STRING', description: 'اسم الزبون الكامل' },
       confirmed: { type: 'BOOLEAN', description: 'true بس بعد ما الزبون وافق على ملخص الطلب اللي انعرض عليه' } }, required: ['package_id'] } },
+  { name: 'renew_number', description: 'تمديد (تجديد) رقم موجود عند الزبون: بدّه رقم الخط. بيعرض رزم التمديد المتاحة لهالرقم بأسعارها، وبعد ما يختار بيعرض ملخص للتأكيد، ولما يوافق اطلبه مع confirmed=true.',
+    parameters: { type: 'OBJECT', properties: {
+      number: { type: 'STRING', description: 'رقم الخط اللي بدّه يمدّده (05XXXXXXXX)' },
+      package_id: { type: 'INTEGER', description: 'رقم رزمة التمديد من القائمة اللي رجعت' },
+      confirmed: { type: 'BOOLEAN', description: 'true بس بعد ما الزبون وافق على ملخص التمديد' } }, required: ['number'] } },
   { name: 'cancel_order', description: 'يلغي طلب الزبون الجاري لما الزبون نفسه يطلب يلغيه، حتى لو بعت بيانات التحويل أو الطلب عند المدير (بس مش إذا انْدفع وبيتنفّذ). بعدها بتقدر تعمله طلب جديد.',
     parameters: { type: 'OBJECT', properties: { order_code: { type: 'STRING', description: 'رقم الطلب إذا الزبون كتبه' } } } },
   { name: 'order_status', description: 'حالة طلبات الزبون من المتجر. بدون order_code: طلبات هالمحادثة.',
@@ -1161,6 +1166,7 @@ ${shop.packages ? shopSheet(shop) : ''}
 - لما الزبون يختار باقة، اسأله عن اسمه بس (الاسم الأول بكفي، ولا تطلب منه الاسم الكامل). *ما بتسأله عن رقم هاتف ولا رقم شريحة أبداً*: رقمه الجديد بيعطيه المتجر.
   وإذا مش متأكد شو ناقص، اطلب create_order باللي عندك: هو بيقلك شو ناقص بالزبط.
 - لما يسأل عن طلبه أو ليش تأخر: order_status. لما يقول إنه حوّل ويعطيك اسم اللي حوّل أو رقمه أو الرقم المرجعي: submit_payment.
+- لما بدّه *يمدّد أو يجدد* رقم عنده (مش شريحة جديدة): renew_number مع رقمه. النظام بيعرض رزم التمديد وأسعارها وملخص التأكيد لحاله؛ لا تكتبهم إنت. الدفع بعدها زي أي طلب.
 - *طلب واحد مفتوح بس بالمحادثة*: إذا عنده طلب لسا جاري (بستنى الدفع أو التحقق) لا تفتح طلب جديد، كمّل معه على نفس الطلب. إلا إذا الزبون نفسه قال بدّه يلغيه: cancel_order، وبعدها بتقدر تعمله طلب جديد. الطلب المدفوع ما بينلغى، بس ما بيمنع طلب جديد: إذا بدّه باقة تانية اعمله طلب جديد عادي.
 - لا تكرر كلام قلته قبل بالمحادثة (ترحيب، شرح، تفاصيل طلب): جاوب على الجديد بس.
 - إذا المتجر رفض إشي، احكي سببه زي ما رجعلك بالزبط. لا تخترع سبب (زي «ضغط على النظام») ولا تقله «جرّب كمان شوي» إذا السبب ما بيتغيّر.
@@ -1226,7 +1232,9 @@ async function askAgent(system, contents) {
 function orderFacts(o, shop) {
   const minutes = Math.max(1, Math.round(require('./shop').RESERVE_MS / 60_000));
   const where = shop.jawwalpay?.number ? ` على *${shop.jawwalpay.number}*${shop.jawwalpay.name ? ` (${shop.jawwalpay.name})` : ''}` : '';
-  const head = [`✅ انحجز طلبك رقم *${o.code}*`, ...(reservedNumber(o) ? [`📞 رقمك الجديد: *${reservedNumber(o)}* (محجوزلك لحد ما تدفع)`] : [])];
+  const head = o.kind === 'recharge'
+    ? [`✅ انعمل طلب تمديد الرقم *${o.number}* (طلب *${o.code}*)`]
+    : [`✅ انحجز طلبك رقم *${o.code}*`, ...(reservedNumber(o) ? [`📞 رقمك الجديد: *${reservedNumber(o)}* (محجوزلك لحد ما تدفع)`] : [])];
   if (shop.jawwalDirect) {
     const banks = (shop.jawwalBanks || []).map((b) => b.name);
     const from = banks.length ? `محفظة *جوال باي* أو *${banks.join('* أو *')}*` : 'محفظة *جوال باي*';
@@ -1338,6 +1346,72 @@ async function agentTool(name, args, ctx) {
       if (o.number) ctx.phones.add(o.number);
       if (reservedNumber(o)) ctx.phones.add(reservedNumber(o));
       return { ok: true, order_code: o.code, amount: round(o.amount), package: o.package_label, note: 'رقم الطلب والمبلغ وطريقة الدفع بتنضاف تحت ردّك لحالها؛ لا تكتبهم.' };
+    }
+    if (name === 'renew_number') {
+      // A number in the system renewed at the shop's price: its options, then a summary to confirm, then the order.
+      const open = openOrder(jid);
+      if (open) {
+        const v = S.orderView(open);
+        const fact = stageFacts(open, v.stage);
+        if (!ctx.facts.includes(fact)) ctx.facts.push(fact);
+        return { ok: false, open_order: open.code, error: 'الزبون عنده طلب جاري بهالمحادثة: كمّل عليه أو cancel_order أول.' };
+      }
+      const draft = drafts.get(jid) || { fields: {} };
+      if (args.number) draft.fields.renew_number = String(args.number);
+      if (args.package_id) draft.fields.renew_package = Number(args.package_id);
+      drafts.set(jid, draft);
+      let info;
+      try {
+        info = S.renewalView(S.renewalLine(draft.fields.renew_number));
+      } catch (e) {
+        if (!(e && e.status)) throw e;
+        const fact = `⚠️ ${String(e.message).slice(0, 200)}`;
+        if (!ctx.facts.includes(fact)) ctx.facts.push(fact);
+        ctx.codeOnly = true;
+        return { ok: false, error: e.message, note: 'السبب بينضاف تحت ردّك لحاله.' };
+      }
+      const until = info.expiresAt ? new Date(info.expiresAt).toLocaleDateString('en-GB', { timeZone: 'Asia/Jerusalem' }) : '';
+      const head = `📱 الرقم *${info.number}* — ${info.company}${until ? ` (ينتهي ${until})` : ''}`;
+      if (!info.options.length) {
+        ctx.facts.push(`${head}\n⚠️ ما في رزم تمديد لهالرقم بالمتجر حالياً — المتجر بيرد عليك بأقرب وقت.`);
+        ctx.codeOnly = true;
+        tellAdmins(`🔔 زبون بدّه يمدّد الرقم ${info.number} (${info.company}) وما في رزمة تمديد بسعر متجر لهالشركة. حدّد «سعر المتجر» لرزمة التمديد من «الشركات والرزم».`).catch(() => {});
+        return { ok: false, error: 'ما في رزم تمديد', note: 'السبب بينضاف تحت ردّك لحاله.' };
+      }
+      for (const o of info.options) ctx.prices.add(o.price);
+      const p = info.options.length === 1 ? info.options[0] : info.options.find((o) => o.id === Number(draft.fields.renew_package));
+      if (!p) {
+        ctx.facts.push([head, 'رزم التمديد:', ...info.options.map((o, i) => `${i + 1}️⃣ ${o.name} — *${o.price} ₪* (${o.days} يوم)`), 'شو بتختار؟'].join('\n'));
+        ctx.codeOnly = true;
+        return { ok: false, need: ['package_id'], options: info.options.map((o) => ({ package_id: o.id, name: o.name, price: o.price })), note: 'القائمة بتنضاف لحالها؛ لما يختار اطلب renew_number مع package_id.' };
+      }
+      const key = JSON.stringify(['renew', info.number, p.id]);
+      if (!(args.confirmed === true && draft.pendingKey === key && draft.pendingAt < ctx.startedAt)) {
+        draft.pendingKey = key;
+        draft.pendingAt = Date.now();
+        ctx.facts.push(['📝 *تأكيد التمديد:*', head, `الرزمة: ${p.label}`, `السعر: *${p.price} ₪* (${p.days} يوم)`, '', 'إذا كله صح ابعت *نعم*، وإذا بدك تغيّر إشي احكيلي.'].join('\n'));
+        ctx.codeOnly = true;
+        return { ok: false, awaiting_confirmation: true, note: 'ملخص التمديد بينضاف لحاله. لما يوافق اطلب renew_number مع confirmed=true.' };
+      }
+      draft.pendingKey = '';
+      let v;
+      try {
+        v = S.createRenewal({ number: info.number, packageId: p.id, contactPhone: /^05\d{8}$/.test(ctx.phone) ? ctx.phone : '' }, { ip: chat, clientId: chat });
+      } catch (e) {
+        if (!(e && e.status)) throw e;
+        const fact = `⚠️ ما انعمل طلب التمديد: ${String(e.message).slice(0, 200)}`;
+        if (!ctx.facts.includes(fact)) ctx.facts.push(fact);
+        ctx.codeOnly = true;
+        return { ok: false, error: e.message };
+      }
+      const o = S.byCode(v.code);
+      drafts.delete(jid);
+      follow(jid, o, v.stage);
+      ctx.facts = ctx.facts.filter((f) => !f.startsWith('📝'));
+      ctx.facts.push(orderFacts(o, shop));
+      ctx.prices.add(round(o.amount));
+      ctx.codeOnly = true;
+      return { ok: true, order_code: o.code, amount: round(o.amount) };
     }
     if (name === 'cancel_order') {
       const code = orderCodeIn(String(args.order_code || ''));
@@ -1516,6 +1590,14 @@ async function orderUpdate(jid, o, v) {
     else await say(jid, `${caption}\nالرمز موجود بصفحة طلبك عالمتجر.`);
     if (code) await say(jid, `وإذا الكاميرا ما زبطت، هاد رمز التفعيل اليدوي:\n${code}`);
     return undefined;
+  }
+  // A renewal: its own words (extended until…), not an activation's.
+  if (o.kind === 'recharge' && ['processing', 'done', 'failed'].includes(v.stage)) {
+    const until = v.expiresAt ? new Date(v.expiresAt).toLocaleDateString('en-GB', { timeZone: 'Asia/Jerusalem' }) : '';
+    const said = { processing: `✅ تأكدنا من الدفع. عم نمدّد الرقم *${o.number}* هلأ، وبيوصلك التأكيد هون.`,
+      done: `✅ تم تمديد الرقم *${o.number}*${until ? ` — صالح لحد *${until}*` : ''}. شكراً إلك 🙏`,
+      failed: '⚠️ ما قدرنا نكمّل التمديد. المتجر بيتواصل معك هون بأقرب وقت.' }[v.stage];
+    return say(jid, `طلب *${o.code}* — ${o.package_label}\n${said}`);
   }
   // Cancelled by the customer (on the page): said so, not as a hold that ran out.
   const text = v.stage === 'cancelled' && o.response === 'ألغيت الطلب بنفسك' ? '❌ انلغى الطلب زي ما طلبت. فيك تطلب باقة جديدة وقت ما بدك.' : (STAGE_TEXT[v.stage] || v.stage);
