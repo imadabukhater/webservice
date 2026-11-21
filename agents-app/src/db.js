@@ -220,6 +220,26 @@ CREATE TABLE IF NOT EXISTS shop_orders (
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
 );
+-- The subscribers each supplier holds for our accounts (src/supsubs.js), read every hour: one row per subscription there.
+CREATE TABLE IF NOT EXISTS supplier_subs (
+  id INTEGER PRIMARY KEY,
+  supplier TEXT NOT NULL,
+  ext_id TEXT NOT NULL,
+  number TEXT NOT NULL DEFAULT '',
+  sim TEXT NOT NULL DEFAULT '',
+  company TEXT NOT NULL DEFAULT '',
+  package TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT '',
+  active INTEGER NOT NULL DEFAULT 0,
+  end_at INTEGER,
+  customer TEXT NOT NULL DEFAULT '',
+  details_at INTEGER,
+  first_seen INTEGER NOT NULL,
+  last_seen INTEGER NOT NULL,
+  gone_at INTEGER,
+  UNIQUE (supplier, ext_id)
+);
+CREATE INDEX IF NOT EXISTS supplier_subs_number ON supplier_subs(number);
 -- Direct Jawwal Pay (corporate API): what happened to each order's payment, for the manager. Never the OTP.
 CREATE TABLE IF NOT EXISTS jc_log (
   id INTEGER PRIMARY KEY,

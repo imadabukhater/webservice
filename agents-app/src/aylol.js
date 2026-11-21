@@ -469,6 +469,27 @@ async function purchaseEsim({ categoryId, purchaseType = 'empty_esim', phone = '
   return { ok: true, phoneNumber: phoneFrom(d, res, String(stPhone || body.phone || '').replace(/\D/g, '')), simNumber: String(d.sim_number || d.sim || d.iccid || stSim || ''), ...esimCodeAndQr(d, res), esimId: d.id || d.esim_id || esimStockId || '' };
 }
 
+// The dealer's subscriptions (the «الاشتراكات» page's table, as its DataTable asks it, page by page): read only.
+// [{ id, phone, status: active|paused|stopped|expired…, endDate: yyyy-mm-dd, company, packageName, customer }].
+const textOf = (h) => String(h ?? '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+async function subscriptions(creds) {
+  await ensureSession(creds);
+  const rows = [];
+  for (let page = 0; page < 50; page++) {
+    const qs = new URLSearchParams({ draw: String(page + 1), start: String(rows.length), length: '200', 'search[value]': '', 'search[regex]': 'false' });
+    const r = parseJson(await ajax(`/dashboard/subscription-history/data?${qs}`, { ref: '/dashboard/subscription-history', signed: false }));
+    if (!r || !Array.isArray(r.data)) throw new AylolError('أيلول: رد غير مفهوم لقائمة الاشتراكات');
+    rows.push(...r.data);
+    const total = Number(r.recordsFiltered ?? r.recordsTotal);
+    if (!r.data.length || !(total > rows.length)) break;
+  }
+  return rows.map((x) => ({
+    // The phone comes as a link to the subscription (its id in the address): the link's text only.
+    id: x.id, phone: textOf(x.phone).replace(/\D/g, ''), status: String(x.status || '').toLowerCase(), endDate: x.end_date || '',
+    company: textOf(x.company_name || x.company_category_name), packageName: textOf(x.package_name_value || x.package_name), customer: textOf(x.client_name),
+  })).filter((x) => x.id);
+}
+
 // Ready numbers for a package (no purchase unless `allocate`, which buys an eSIM: only when an order is carried out).
 async function lookupAvailableNumbers({ ref = '', companyId = '', packageId = '', simNumber = '', allocate = false }, creds) {
   await ensureSession(creds);
@@ -818,5 +839,5 @@ async function executeOrderCounted(args, creds) {
 module.exports = {
   knownBalance, exBalance, executeOrder: executeOrderCounted, billNumbers, packageInfo, subscribeBill, splitName, BILL_COMPANIES, billAuto, billShop, lineModes, simTypeOf, qrImage,
   AylolError, login, balance, esimAgentPrice, listedPrice, parseCategoriesFromHtml, fetchPackages, syncAll, fetchEsimPage, fetchEsimPackages, fetchEsimReadyStocks,
-  purchaseEsim, lookupAvailableNumbers, currentPrice, mapToEsimCategoryId, esimCodeAndQr, twoFactorForm, twoFactorFields, _state: state,
+  purchaseEsim, lookupAvailableNumbers, currentPrice, mapToEsimCategoryId, esimCodeAndQr, twoFactorForm, twoFactorFields, subscriptions, _state: state,
 };

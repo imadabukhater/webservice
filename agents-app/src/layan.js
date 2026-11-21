@@ -185,7 +185,7 @@ async function numbers(creds) {
   return (data?.data || []).map((x) => ({
     id: x.id, number: String(x.number || '').replace(/\D/g, ''), sim: String(x.simNumber || ''), company: x.companyName || '',
     packageName: x.package?.name || '', status: x.status?.name || '', active: x.status?.name === ACTIVE,
-    suspended: x.status?.name === SUSPENDED, endDate: x.endDate || '',
+    suspended: x.status?.name === SUSPENDED, endDate: x.endDate || '', customer: x.customerName || '',
   })).filter((x) => x.number);
 }
 

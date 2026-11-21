@@ -22,6 +22,7 @@ require('./src/routes/aylol');
 require('./src/routes/whatsapp');
 require('./src/routes/invoices');
 require('./src/routes/shop');
+require('./src/routes/supsubs');
 require('./src/routes/sync');
 require('./src/routes/health');
 require('./src/autoexec');
