@@ -465,6 +465,8 @@ ensureColumn('shop_orders', 'jc_status', "jc_status TEXT NOT NULL DEFAULT ''");
 ensureColumn('wa_shop', 'link', "link TEXT NOT NULL DEFAULT ''");
 // Where a direct payment's code was sent from: '' (Jawwal Pay wallet) or 'PALS' (Bank of Palestine).
 ensureColumn('shop_orders', 'jc_bank', "jc_bank TEXT NOT NULL DEFAULT ''");
+// The supplier's own package id for a subscription (QuickLine, telecom), to find our package of it.
+ensureColumn('supplier_subs', 'pkg_id', "pkg_id TEXT NOT NULL DEFAULT ''");
 db.exec("CREATE INDEX IF NOT EXISTS shop_orders_client_status ON shop_orders(client_id, status)");
 db.exec("CREATE INDEX IF NOT EXISTS shop_orders_ip_status ON shop_orders(ip, status)");
 // Before gone_at, a sync that briefly got an incomplete list from QuickLine hid packages for good. The manager hid

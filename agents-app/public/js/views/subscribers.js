@@ -6,7 +6,7 @@ import {
 import { openRenew } from './renew.js';
 import { simFieldHtml, bindSimField } from '../simfield.js';
 
-const V = { lines: [], agents: [], q: '', state: '', agentId: '', shown: 60, view: 'ours', sup: null, supQ: '', supKey: '', supState: 'active', supShown: 80 };
+const V = { lines: [], agents: [], q: '', state: '', agentId: '', shown: 60, sup: null };
 
 const FILTERS = [
   ['', 'الكل'], ['active', 'فعّال'], ['expiring', 'ينتهي قريباً'], ['expired', 'منتهي'], ['frozen', 'مجمّد'], ['pending', 'قيد التنفيذ'], ['disconnected', 'مفصول'],
@@ -263,84 +263,22 @@ function chipsHtml() {
   return FILTERS.map(([k, label]) => `<button class="chip" data-action="state" data-state="${k}" aria-pressed="${V.state === k}">${label}<span class="n">${count(k)}</span></button>`).join('');
 }
 
-// ---------- the suppliers' subscribers (the manager's): every supplier's list in one table, read every hour ----------
-const SUP_FILTERS = [['active', 'فعّال'], ['inactive', 'غير فعّال'], ['notOurs', 'غير مسجّل عندنا'], ['oursOnly', 'عندنا وليس عند المورّد'], ['', 'الكل']];
-function supRows() {
-  const qv = digits(V.supQ) || V.supQ.trim().toLowerCase();
-  const all = (V.sup?.rows || []).filter((r) => !V.supKey || r.supplier === V.supKey);
-  const by = {
-    active: (r) => r.active && !r.gone, inactive: (r) => !r.active || r.gone, notOurs: (r) => r.active && !r.gone && !r.line, '': () => true,
-  }[V.supState] || (() => true);
-  return all.filter(by).filter((r) => !qv || [r.number, r.customer, r.package, r.company, r.sim, r.line?.agentName].some((x) => String(x || '').toLowerCase().includes(qv)));
+// ---------- where the list comes from (the manager's): the suppliers' lists, read every hour ----------
+// Everyone a supplier lists is a subscriber here (src/supsubs.js adds and updates them), so there is one list; this bar
+// only says when each supplier was last read, and reads one again now.
+function supBar() {
+  const list = V.sup?.suppliers || [];
+  if (!list.length) return '';
+  return `<div class="card card-pad" style="padding:10px 12px;margin-bottom:12px">
+      <div class="row between wrap" style="gap:8px">
+        <span class="small muted">${icon('refresh')} تُضاف أرقام المورّدين وتُحدَّث حالتها وتاريخ انتهائها تلقائياً كل ساعة</span>
+        <button class="btn btn-sm" type="button" data-action="sup-sync" ${list.some((s) => s.running) ? 'disabled' : ''}>${icon('refresh')}تحديث الآن</button>
+      </div>
+      <div class="chips" style="margin-top:8px">${list.map((s) => `<button class="chip" type="button" data-action="sup-sync" data-sup="${s.key}" title="تحديث ${esc(s.name)} الآن" ${s.running ? 'disabled' : ''}
+          style="${s.error ? 'border-color:var(--bad);color:var(--bad)' : ''}">${s.error ? icon('alert') : ''}${esc(s.name)}<span class="n">${s.at ? `${s.count} · ${esc(relTime(s.at))}` : 'لم يُقرأ'}</span></button>`).join('')}</div>
+      ${list.filter((s) => s.error).map((s) => `<div class="small" style="color:var(--bad);margin-top:6px">${esc(s.name)}: ${esc(s.error)}</div>`).join('')}
+    </div>`;
 }
-function supCount(state) {
-  if (state === 'oursOnly') return (V.sup?.oursOnly || []).filter((l) => !V.supKey || l.supplier === V.supKey).length;
-  const keep = V.supState;
-  V.supState = state;
-  const qSaved = V.supQ;
-  V.supQ = '';
-  const n = supRows().length;
-  V.supState = keep;
-  V.supQ = qSaved;
-  return n;
-}
-function supCards() {
-  return `<div class="grid-cards" style="margin-bottom:12px">${(V.sup?.suppliers || []).filter((s) => s.configured).map((s) => `
-    <article class="card card-pad" style="padding:12px">
-      <div class="row between"><b>${esc(s.name)}</b><button class="btn btn-sm" type="button" data-action="sup-sync" data-sup="${s.key}" ${s.running ? 'disabled' : ''}>${icon('refresh')}تحديث</button></div>
-      <div class="small muted">${s.at ? `${s.count} مشترك · آخر تحديث ${esc(relTime(s.at))}` : 'لم يُقرأ بعد'}</div>
-      ${s.error ? `<div class="small" style="color:var(--bad)">${icon('alert')} ${esc(s.error)}</div>` : ''}
-    </article>`).join('') || '<p class="muted">لا يوجد مورّد بحساب محفوظ.</p>'}</div>`;
-}
-function supRowHtml(r) {
-  const days = r.endsAt ? Math.ceil((r.endsAt - Date.now()) / 864e5) : null;
-  const when = r.gone ? `لم يعد عند المورّد منذ ${fmtDate(r.goneAt)}` : r.endsAt ? `${days >= 0 ? `متبقٍ ${daysText(days)}` : `انتهى منذ ${daysText(-days)}`} · حتى <span class="ltr">${fmtDate(r.endsAt)}</span>` : 'بدون تاريخ انتهاء';
-  const renewable = r.line && ['active', 'frozen'].includes(r.line.status);
-  return `<article class="item">
-    <div class="item-top"><span class="chip" style="pointer-events:none">${esc(r.supplierName)}</span>
-      <div class="grow">${phone(r.number)}<div class="item-sub"><span>${esc(r.company)}</span><span>${esc(r.package)}</span>${r.customer ? `<span>${esc(r.customer)}</span>` : ''}</div></div>
-      <span class="pill ${r.active && !r.gone ? 's-done' : 's-bad'}">${esc(r.gone ? 'غير موجود' : r.status || '—')}</span></div>
-    <div class="small muted">${when}</div>
-    <div class="row between" style="margin-top:6px;gap:8px;flex-wrap:wrap">
-      <span class="small">${r.line ? `عندنا: <b>${esc(r.line.agentName)}</b>` : '<b style="color:var(--warn,#b45309)">غير مسجّل عندنا</b>'}</span>
-      ${r.line ? `<span class="btn-row"><button class="btn btn-sm" type="button" data-action="open-line" data-id="${r.line.id}">${icon('eye')}الخط</button>
-        ${renewable ? `<button class="btn btn-sm btn-primary" type="button" data-action="sup-renew" data-id="${r.line.id}">${icon('refresh')}تمديد</button>` : ''}</span>` : ''}
-    </div></article>`;
-}
-function supListHtml() {
-  if (!V.sup) return empty('refresh', 'جارٍ التحميل…', '');
-  if (V.supState === 'oursOnly') {
-    const list = (V.sup.oursOnly || []).filter((l) => !V.supKey || l.supplier === V.supKey);
-    return list.length ? `<div class="list">${list.map((l) => `<article class="item clickable" data-action="open-line" data-id="${l.id}">
-      <div class="item-top"><div class="grow">${phone(l.number)}<div class="item-sub"><span>${esc(l.packageLabel)}</span><span>${esc(l.agentName)}</span></div></div>
-      <span class="pill s-bad">ليس عند المورّد</span></div></article>`).join('')}</div>` : empty('checkCircle', 'لا يوجد', 'كل خطوطنا الفعّالة موجودة عند مورّديها.');
-  }
-  const rows = supRows();
-  if (!rows.length) return empty('users', 'لا يوجد مشتركون', V.sup.rows.length ? 'غيّر الفلتر أو البحث.' : 'اضغط «تحديث» لقراءة قوائم المورّدين.');
-  return `<div class="list">${rows.slice(0, V.supShown).map(supRowHtml).join('')}</div>
-    ${rows.length > V.supShown ? `<button class="btn btn-block" type="button" data-action="sup-more">عرض المزيد (${rows.length - V.supShown})</button>` : ''}`;
-}
-function supChips() {
-  return SUP_FILTERS.map(([k, label]) => `<button class="chip" data-action="sup-state" data-state="${k}" aria-pressed="${V.supState === k}">${label}<span class="n">${supCount(k)}</span></button>`).join('');
-}
-function supHtml() {
-  return `${supCards()}
-    <div class="toolbar">
-      <div class="search-box">${icon('search', 'i lead')}<input class="input" id="sup-q" type="search" placeholder="رقم، زبون، رزمة، شريحة أو وكيل" value="${esc(V.supQ)}" autocomplete="off"></div>
-      <select class="input" id="sup-key" style="width:auto;min-width:150px"><option value="">كل المورّدين</option>${(V.sup?.suppliers || []).filter((s) => s.configured).map((s) => `<option value="${s.key}" ${V.supKey === s.key ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}</select>
-      <button class="btn" type="button" data-action="sup-sync">${icon('refresh')}<span class="hide-xs">تحديث الكل</span></button>
-      <button class="btn" type="button" data-action="sup-export">${icon('download')}<span class="hide-xs">تصدير</span></button>
-    </div>
-    <div class="chips" id="sup-chips">${supChips()}</div>
-    <p class="hint">تُقرأ قوائم المورّدين تلقائياً كل ساعة (قراءة فقط). «غير مسجّل عندنا»: فعّال عند المورّد ولا يوجد خط بنفس الرقم في نظامنا.</p>
-    <div id="sup-list">${supListHtml()}</div>`;
-}
-const supRefresh = () => {
-  const list = document.getElementById('sup-list');
-  if (list) list.innerHTML = supListHtml();
-  const chips = document.getElementById('sup-chips');
-  if (chips) chips.innerHTML = supChips();
-};
 
 export default {
   title: () => ({ title: isAdmin() ? 'كل المشتركين' : 'المشتركون', subtitle: 'الأرقام المفعّلة وحالة رزمها' }),
@@ -349,8 +287,7 @@ export default {
     if (ctx.query.state !== undefined) V.state = ctx.query.state;
     if (ctx.query.q !== undefined) V.q = ctx.query.q;
     if (ctx.query.agent !== undefined) V.agentId = ctx.query.agent;
-    if (ctx.query.view !== undefined) V.view = ctx.query.view === 'suppliers' && isAdmin() ? 'sup' : 'ours';
-    if (V.view === 'sup' && isAdmin()) V.sup = await api.get('/api/supplier-subs').catch(() => ({ suppliers: [], rows: [], oursOnly: [] }));
+    if (isAdmin()) api.get('/api/supplier-subs?summary=1').then((s) => { V.sup = s; const bar = document.getElementById('sup-bar'); if (bar) bar.innerHTML = supBar(); }).catch(() => {});
     const [lines, agents] = await Promise.all([
       api.get(`/api/lines${isAdmin() && V.agentId ? `?agentId=${V.agentId}` : ''}`),
       isAdmin() ? api.get('/api/agents') : [],
@@ -360,11 +297,7 @@ export default {
     V.agents = agents;
   },
   render() {
-    const switcher = isAdmin() ? `<div class="segmented" style="margin-bottom:12px">
-        <button data-action="sub-view" data-view="ours" aria-pressed="${V.view !== 'sup'}">${icon('users')}في نظامنا</button>
-        <button data-action="sub-view" data-view="sup" aria-pressed="${V.view === 'sup'}">${icon('refresh')}عند المورّدين</button></div>` : '';
-    if (V.view === 'sup' && isAdmin()) return switcher + supHtml();
-    return switcher + `
+    return (isAdmin() ? `<div id="sup-bar">${supBar()}</div>` : '') + `
       <div class="toolbar">
         <div class="search-box">${icon('search', 'i lead')}<input class="input" id="sub-q" type="search" placeholder="رقم، اسم زبون، شريحة أو رزمة" value="${esc(V.q)}" autocomplete="off"></div>
         ${isAdmin() ? `<select class="input" id="sub-agent" style="width:auto;min-width:180px"><option value="">كل الوكلاء</option>${V.agents.map((a) => `<option value="${a.id}" ${String(a.id) === String(V.agentId) ? 'selected' : ''}>${esc(a.name)}</option>`).join('')}</select>` : ''}
@@ -374,11 +307,6 @@ export default {
       <div id="sub-list">${listHtml()}</div>`;
   },
   mount(root, ctx) {
-    if (V.view === 'sup' && isAdmin()) {
-      root.querySelector('#sup-q')?.addEventListener('input', debounce((e) => { V.supQ = e.target.value; V.supShown = 80; supRefresh(); }, 120));
-      root.querySelector('#sup-key')?.addEventListener('change', (e) => { V.supKey = e.target.value; V.supShown = 80; supRefresh(); });
-      return;
-    }
     root.querySelector('#sub-q').addEventListener('input', debounce((e) => {
       V.q = e.target.value;
       V.shown = 60;
@@ -394,12 +322,6 @@ export default {
       document.getElementById('sub-list').innerHTML = listHtml();
     },
     more(btn, e, ctx) { V.shown += 60; document.getElementById('sub-list').innerHTML = listHtml(); },
-    async 'sub-view'(btn, e, ctx) {
-      V.view = btn.dataset.view === 'sup' ? 'sup' : 'ours';
-      await ctx.reload();
-    },
-    'sup-state'(btn) { V.supState = btn.dataset.state; V.supShown = 80; supRefresh(); },
-    'sup-more'() { V.supShown += 80; supRefresh(); },
     async 'sup-sync'(btn, e, ctx) {
       btn.disabled = true;
       toast(btn.dataset.sup ? 'جارٍ قراءة قائمة المورّد…' : 'جارٍ قراءة قوائم كل المورّدين… قد يأخذ دقيقة');
@@ -407,22 +329,8 @@ export default {
         V.sup = await api.post('/api/supplier-subs/sync', btn.dataset.sup ? { supplier: btn.dataset.sup } : {});
         const bad = (V.sup.result || []).filter((r) => r.error);
         toast(bad.length ? `تعذّر: ${bad.map((r) => r.key).join('، ')}` : 'تم التحديث', { error: !!bad.length });
-        ctx.rerender();
+        await ctx.reload(); // new subscribers from the suppliers are in the list now
       } catch (ex) { toast(ex.message, { error: true }); btn.disabled = false; }
-    },
-    'sup-renew'(btn) {
-      const l = V.lines.find((x) => x.id === Number(btn.dataset.id));
-      if (l) openRenew(l); else openLine(Number(btn.dataset.id));
-    },
-    'sup-export'() {
-      const rows = supRows();
-      const cell = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
-      const head = ['المورّد', 'الرقم', 'الشركة', 'الرزمة', 'الحالة', 'ينتهي في', 'الزبون', 'الشريحة', 'الوكيل عندنا'];
-      const body = rows.map((r) => [r.supplierName, r.number, r.company, r.package, r.gone ? 'غير موجود' : r.status, r.endsAt ? fmtISO(r.endsAt) : '', r.customer, r.sim, r.line?.agentName || 'غير مسجّل عندنا'].map(cell).join(','));
-      const blob = new Blob([`\ufeff${[head.map(cell).join(','), ...body].join('\n')}`], { type: 'text/csv;charset=utf-8' });
-      const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download: `مشتركو-المورّدين-${fmtISO(Date.now())}.csv` });
-      a.click();
-      setTimeout(() => URL.revokeObjectURL(a.href), 2000);
     },
     'open-line': (btn) => openLine(Number(btn.dataset.id)),
     'line-renew': (btn) => openRenew(V.lines.find((l) => l.id === Number(btn.dataset.id))),

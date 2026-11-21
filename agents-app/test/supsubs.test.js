@@ -1,6 +1,6 @@
 'use strict';
-// Every supplier's subscribers in one table for the manager (src/supsubs.js): read, matched with our lines, kept when
-// they disappear, never wiped by an empty answer; the manager only.
+// Every supplier's subscribers (src/supsubs.js): read, kept when they disappear, never wiped by an empty answer, and one
+// list with ours — each is a line in our system, added and kept in step every hour; the manager only.
 process.env.DB_FILE = ':memory:';
 process.env.ADMIN_USERNAME = 'admin';
 process.env.ADMIN_PASSWORD = 'admin-pass';
@@ -49,36 +49,70 @@ test('the suppliers\' subscribers: read, matched with our lines, gone ones kept,
   add('0521000001');
   add('0521000099');
 
-  qlRows = [row('11', '0521000001'), row('12', '972521000002'), row('13', '0521000003', { active: false, status: 'فصل نهائي' })];
-  let v = await ok(call(admin, 'POST', '/api/supplier-subs/sync', {}));
-  assert.deepEqual(v.result, [{ key: 'ql', count: 3, gone: 0 }]);
+  const end = Date.now() + 9 * 864e5;
+  qlRows = [row('11', '0521000001', { endAt: end }), row('12', '972521000002', { pkgId: '2400', sim: '8997201' }), row('13', '0521000003', { active: false, status: 'فصل نهائي' })];
+  let s = await ok(call(admin, 'POST', '/api/supplier-subs/sync', {}));
+  assert.deepEqual(s.result, [{ key: 'ql', count: 3, gone: 0 }]);
+  assert.equal(s.suppliers.find((x) => x.key === 'ql').count, 3);
+  assert.equal(s.rows, undefined, 'the sync answers with the state of the reading only');
+  let v = await ok(call(admin, 'GET', '/api/supplier-subs'));
   assert.equal(v.rows.length, 3);
   const first = v.rows.find((r) => r.number === '0521000001');
-  assert.equal(first.line.agentName, 'المدير', 'matched with our line');
-  assert.equal(v.rows.find((r) => r.number === '0521000002').line, null, 'a +972 number in local form; not ours');
+  assert.equal(first.line.agentName, 'المدير', 'already ours: stays the agent\'s line');
+  assert.equal(q("SELECT expires_at FROM lines WHERE number = '0521000001'").get().expires_at, end, 'its end date from the supplier');
+  // One list: the supplier's subscriber is ours now, on the shop's account, with its package; a finally cut one is not added.
+  const added = q("SELECT * FROM lines WHERE number = '0521000002'").get();
+  assert.ok(added, 'a +972 number added in local form');
+  assert.equal(added.agent_id, Number(q("SELECT value FROM settings WHERE key = 'shop_agent_id'").get().value), 'on the shop\'s account');
+  assert.equal(added.package_id, pkg, 'its package by QuickLine\'s package id');
+  assert.equal(added.company_id, co);
+  assert.equal(added.status, 'active');
+  assert.equal(added.sim, '8997201');
+  assert.equal(added.price, 0, 'no sale recorded');
+  assert.equal(v.rows.find((r) => r.number === '0521000002').line.agentName, 'متجر الزبائن');
+  assert.equal(q("SELECT COUNT(*) AS n FROM lines WHERE number = '0521000003'").get().n, 0, 'cut before we met it');
+  assert.equal(q("SELECT COUNT(*) AS n FROM ops WHERE type = 'supplier_sync' AND number = '0521000002'").get().n, 1);
   assert.deepEqual(v.oursOnly.map((l) => l.number), ['0521000099'], 'our active line no supplier lists');
-  assert.equal(v.suppliers.find((s) => s.key === 'ql').count, 3);
+  // Read again: nothing added twice.
+  await ok(call(admin, 'POST', '/api/supplier-subs/sync', {}));
+  assert.equal(q("SELECT COUNT(*) AS n FROM lines WHERE number = '0521000002'").get().n, 1);
 
   // Read again without one: kept, marked gone.
-  qlRows = [row('11', '0521000001'), row('13', '0521000003', { active: false, status: 'فصل نهائي' }), row('14', '0521000004'), row('15', '0521000005'), row('16', '0521000006'), row('17', '0521000007')];
-  v = await ok(call(admin, 'POST', '/api/supplier-subs/sync', { supplier: 'ql' }));
+  qlRows = [row('11', '0521000001', { active: false, status: 'موقوف' }), row('13', '0521000003', { active: false, status: 'فصل نهائي' }), row('14', '0521000004'), row('15', '0521000005'), row('16', '0521000006'), row('17', '0521000007')];
+  await ok(call(admin, 'POST', '/api/supplier-subs/sync', { supplier: 'ql' }));
+  v = await ok(call(admin, 'GET', '/api/supplier-subs'));
   const gone = v.rows.find((r) => r.number === '0521000002');
   assert.equal(gone.gone, true);
   assert.equal(gone.active, false);
   assert.equal(v.rows.length, 7);
+  assert.equal(q("SELECT status FROM lines WHERE number = '0521000002'").get().status, 'disconnected', 'gone at its supplier: cut here');
+  assert.equal(q("SELECT status FROM lines WHERE number = '0521000001'").get().status, 'frozen', 'suspended there: frozen here');
+  assert.equal(q("SELECT COUNT(*) AS n FROM lines WHERE number LIKE '052100000_' AND status = 'active'").get().n, 4, 'the new ones added (0004-0007)');
+  // A line we are carrying out (pending) is left alone.
+  q("UPDATE lines SET status = 'pending' WHERE number = '0521000004'").run();
+  qlRows = qlRows.filter((r) => r.ext !== '14');
+  await ok(call(admin, 'POST', '/api/supplier-subs/sync', {}));
+  assert.equal(q("SELECT status FROM lines WHERE number = '0521000004'").get().status, 'pending');
+  // Listed again (a new subscription at the supplier): active again, not cut by the old one.
+  qlRows = [...qlRows, row('18', '0521000002')];
+  await ok(call(admin, 'POST', '/api/supplier-subs/sync', {}));
+  assert.equal(q("SELECT status FROM lines WHERE number = '0521000002' ORDER BY id DESC").get().status, 'active');
+  assert.equal(q("SELECT COUNT(*) AS n FROM lines WHERE number = '0521000002'").get().n, 1);
 
   // An empty answer where there were many: a failure, nothing wiped; the manager told once.
   qlRows = [];
-  v = await ok(call(admin, 'POST', '/api/supplier-subs/sync', {}));
-  assert.match(v.result[0].error, /فاضية/);
+  s = await ok(call(admin, 'POST', '/api/supplier-subs/sync', {}));
+  assert.match(s.result[0].error, /فاضية/);
+  v = await ok(call(admin, 'GET', '/api/supplier-subs'));
   assert.equal(v.rows.filter((r) => !r.gone).length, 6, 'nothing marked gone');
   qlFail = new Error('QuickLine: تعذّر الاتصال');
   await ok(call(admin, 'POST', '/api/supplier-subs/sync', {}));
   assert.equal(q("SELECT COUNT(*) AS n FROM notifications WHERE title = 'تعذّر تحديث مشتركي QuickLine'").get().n, 1, 'told once until it works again');
   qlFail = null;
   qlRows = [row('11', '0521000001')];
-  v = await ok(call(admin, 'POST', '/api/supplier-subs/sync', {}));
-  assert.equal(v.suppliers.find((s) => s.key === 'ql').error, '');
+  s = await ok(call(admin, 'POST', '/api/supplier-subs/sync', {}));
+  assert.equal(s.suppliers.find((x) => x.key === 'ql').error, '');
+  assert.equal((await ok(call(admin, 'GET', '/api/supplier-subs?summary=1'))).suppliers.length, 1, 'the bar: suppliers with an account only');
 
   // The manager only.
   await ok(call(admin, 'POST', '/api/agents', { name: 'وكيل', username: 'agent-s', password: 'secret1' }));

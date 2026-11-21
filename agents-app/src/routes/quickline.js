@@ -235,4 +235,4 @@ route('GET', '/api/quickline/lines', ADMIN, () => wrap(async (creds) => {
 
 // remember: the customer shop keeps the number a customer picked with the order (payment can take longer than this
 // list lasts), and puts it back here before selling it.
-module.exports = { syncKind, REF, simRuleFor, servedNumber, remember, companyFor, freeNumbersFor };
+module.exports = { syncKind, REF, simRuleFor, servedNumber, remember, companyFor, freeNumbersFor, COMPANIES };

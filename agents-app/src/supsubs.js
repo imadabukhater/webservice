@@ -32,19 +32,19 @@ async function readTelecom() {
   const tc = require('./telecom');
   const creds = tcCredentials();
   const leads = await tc.leads(creds);
-  const known = new Map(q("SELECT ext_id, end_at, package, details_at FROM supplier_subs WHERE supplier = 'tc'").all().map((r) => [r.ext_id, r]));
+  const known = new Map(q("SELECT ext_id, end_at, package, pkg_id, details_at FROM supplier_subs WHERE supplier = 'tc'").all().map((r) => [r.ext_id, r]));
   const out = [];
   for (const l of leads) {
     const ext = String(l.leadId);
     const row = { ext, number: localNumber(l.number), sim: '', company: l.company || '', pkg: '', status: l.status || '', active: !!l.active, endAt: null, customer: l.name || '' };
     const was = known.get(ext);
-    if (was) Object.assign(row, { endAt: was.end_at, pkg: was.package, detailsAt: was.details_at });
+    if (was) Object.assign(row, { endAt: was.end_at, pkg: was.package, pkgId: was.pkg_id || '', detailsAt: was.details_at });
     // The end date and package are on each subscriber's own page: read for the active ones, twice a day at most.
-    if (l.active && !(was?.details_at > now() - DETAIL_MS)) {
+    if (l.active && !(was?.details_at > now() - DETAIL_MS && was.pkg_id)) {
       try {
         const d = await tc.lead(creds, l.leadId);
         const name = q("SELECT name FROM packages WHERE art_card_id LIKE ? ORDER BY id LIMIT 1").get(`tc%:${d.packageId}:%`)?.name;
-        Object.assign(row, { endAt: dateOf(d.endDate), pkg: name || (d.packageId ? `رزمة ${d.packageId}` : ''), detailsAt: now() });
+        Object.assign(row, { endAt: dateOf(d.endDate), pkg: name || (d.packageId ? `رزمة ${d.packageId}` : ''), pkgId: d.packageId ? String(d.packageId) : '', detailsAt: now() });
       } catch (e) { console.error('supsubs telecom lead', l.leadId, e.message); }
     }
     out.push(row);
@@ -59,6 +59,7 @@ let READERS = {
     read: async () => (await require('./quickline').subscriptions(qlCredentials())).map((r) => ({
       ext: String(r.id), number: localNumber(r.number), sim: r.sim || '', company: r.company || '', pkg: r.packageName || '',
       status: r.status || '', active: r.statusValue === 2 || r.status === 'فعال', endAt: dateOf(r.cutDate), customer: r.customer || '',
+      pkgId: r.packageId != null ? String(r.packageId) : '',
     })),
   },
   ly: {
@@ -84,20 +85,87 @@ const setting = (k) => q('SELECT value FROM settings WHERE key = ?').get(k)?.val
 
 function save(key, rows, t) {
   return tx(() => {
-    const up = q(`INSERT INTO supplier_subs (supplier, ext_id, number, sim, company, package, status, active, end_at, customer, details_at, first_seen, last_seen)
-                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    const up = q(`INSERT INTO supplier_subs (supplier, ext_id, number, sim, company, package, pkg_id, status, active, end_at, customer, details_at, first_seen, last_seen)
+                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                   ON CONFLICT(supplier, ext_id) DO UPDATE SET number = excluded.number, sim = excluded.sim, company = excluded.company,
-                    package = excluded.package, status = excluded.status, active = excluded.active, end_at = excluded.end_at,
+                    package = excluded.package, pkg_id = excluded.pkg_id, status = excluded.status, active = excluded.active, end_at = excluded.end_at,
                     customer = excluded.customer, details_at = COALESCE(excluded.details_at, supplier_subs.details_at),
                     last_seen = excluded.last_seen, gone_at = NULL`);
     for (const r of rows) {
       if (!r.ext) continue;
-      up.run(key, r.ext, localNumber(r.number), r.sim || '', r.company || '', r.pkg || '', r.status || '', r.active ? 1 : 0, r.endAt ?? null,
+      up.run(key, r.ext, localNumber(r.number), r.sim || '', r.company || '', r.pkg || '', r.pkgId || '', r.status || '', r.active ? 1 : 0, r.endAt ?? null,
         r.customer || '', r.detailsAt ?? null, t, t);
     }
     // No longer listed: kept, marked gone.
-    return q('UPDATE supplier_subs SET gone_at = ?, active = 0 WHERE supplier = ? AND last_seen < ? AND gone_at IS NULL').run(t, key, t).changes;
+    const gone = q('UPDATE supplier_subs SET gone_at = ?, active = 0 WHERE supplier = ? AND last_seen < ? AND gone_at IS NULL').run(t, key, t).changes;
+    mirror(key, t);
+    return gone;
   });
+}
+
+// ---------- one list: the suppliers' subscribers are our subscribers ----------
+// Everyone a supplier lists bought through us, so each is a line in our system: added when first seen (on the shop's
+// account, «متجر الزبائن», unless the number is already a line), and kept in step with the supplier every hour — its
+// state (active / frozen when suspended / disconnected when finally cut or gone) and its end date. A line being carried
+// out by us (pending) is left alone. Prices are not touched (no sale is recorded: a supplier_sync entry, the manager's).
+const FINAL = /نهائي|קבוע|ملغى|cancel|disconnect/i;
+const lineStatus = (r) => (r.gone_at || FINAL.test(r.status) ? 'disconnected' : r.active ? 'active' : 'frozen');
+function companyFind(name) {
+  const v = String(name || '').trim();
+  if (!v) return null;
+  const exact = q('SELECT id FROM companies WHERE lower(name) = lower(?)').get(v);
+  // Else by the known names (Cellcom, HOT, …), or a company the catalog has not met yet, as the catalog sync does.
+  return exact ? exact.id : require('./routes/quickline').companyFor(v);
+}
+// Our package of a subscription: by the supplier's package id (QuickLine qln:/ql:, telecom tcn:/tc:), else by name
+// (Layan lyn:/ly:, Aylol ay:bill:). Its new-line package first: the line's own, which a renewal is checked against.
+function packageOf(r) {
+  const one = (sql, ...a) => q(`SELECT p.*, c.name AS company_name FROM packages p JOIN companies c ON c.id = p.company_id WHERE ${sql} ORDER BY p.id LIMIT 1`).get(...a);
+  const id = String(r.pkg_id || '');
+  if (r.supplier === 'ql' && id) return one("p.art_card_id LIKE ?", `qln:${id}:%`) || one("p.art_card_id LIKE ?", `ql:${id}:%`);
+  if (r.supplier === 'tc' && id) return one("p.art_card_id LIKE ?", `tcn:${id}:%`) || one("p.art_card_id LIKE ?", `tc:${id}:%`);
+  if (r.supplier === 'ly' && r.package) return one("p.art_card_id LIKE 'lyn:%' AND p.name = ?", r.package) || one("p.art_card_id LIKE 'ly:%' AND p.name = ?", r.package);
+  if (r.supplier === 'ay' && r.package) return one("p.art_card_id LIKE 'ay:bill:%' AND p.name = ?", r.package);
+  return null;
+}
+function mirror(key, t) {
+  // Each number once, by its best row at any supplier (listed and active first): an old subscription gone at one
+  // supplier does not cut a number listed again (at it or another one).
+  const numbers = q('SELECT DISTINCT number FROM supplier_subs WHERE supplier = ? AND (last_seen = ? OR gone_at = ?)').all(key, t, t).map((x) => x.number);
+  const best = q('SELECT * FROM supplier_subs WHERE number = ? ORDER BY gone_at IS NOT NULL, active DESC, last_seen DESC, id DESC LIMIT 1');
+  let shop = null;
+  for (const number of numbers) {
+    if (!number) continue;
+    const r = best.get(number);
+    const status = lineStatus(r);
+    const line = q("SELECT * FROM lines WHERE number = ? ORDER BY (status != 'disconnected') DESC, id DESC LIMIT 1").get(r.number);
+    if (line) {
+      if (line.status === 'pending') continue;
+      if (!line.package_id) {
+        const p = packageOf(r);
+        if (p) q('UPDATE lines SET package_id = ?, company_id = COALESCE(company_id, ?), updated_at = ? WHERE id = ?').run(p.id, p.company_id, t, line.id);
+      }
+      q(`UPDATE lines SET status = ?, expires_at = COALESCE(?, expires_at), sim = CASE WHEN sim = '' THEN ? ELSE sim END,
+           customer_name = CASE WHEN customer_name = '' THEN ? ELSE customer_name END, updated_at = ? WHERE id = ?
+           AND (status != ? OR COALESCE(expires_at, 0) != COALESCE(?, expires_at, 0) OR (sim = '' AND ? != '') OR (customer_name = '' AND ? != ''))`)
+        .run(status, r.end_at, r.sim || '', r.customer || '', t, line.id, status, r.end_at, r.sim || '', r.customer || '');
+      continue;
+    }
+    if (status === 'disconnected') continue; // cut before we met it: not added
+    shop ||= require('./shop').shopAgent();
+    const p = packageOf(r);
+    const companyId = p?.company_id ?? companyFind(r.company);
+    const id = Number(q(`INSERT INTO lines (number, sim, company_id, package_id, package_label, agent_id, kind, months, price, cost, status, customer_name, note, activated_at, expires_at, updated_at)
+                       VALUES (?, ?, ?, ?, ?, ?, 'new', 1, 0, 0, ?, ?, ?, ?, ?, ?)`)
+      .run(r.number, r.sim || '', companyId, p?.id ?? null, r.package || p?.name || '', shop.id, status, r.customer || '', `من ${NAMES[r.supplier]}`, r.first_seen, r.end_at, t).lastInsertRowid);
+    D.logLineOp('supplier_sync', { id, number: r.number }, shop, { id: null, name: NAMES[r.supplier] }, `أُضيف من ${NAMES[r.supplier]}: ${r.package || ''}`.trim());
+  }
+}
+
+// The supplier's subscription behind a number a customer may renew: listed (not gone), and not finally cut.
+function renewable(number) {
+  const r = q('SELECT * FROM supplier_subs WHERE number = ? AND gone_at IS NULL ORDER BY active DESC, last_seen DESC LIMIT 1').get(localNumber(number));
+  return r && !FINAL.test(r.status) ? r : null;
 }
 
 // One supplier read and saved. A failure is kept (shown to the manager, told once until it works again); the rows read
@@ -173,6 +241,17 @@ function view() {
   }).map((l) => ({ id: l.id, number: l.number, supplier: supplierOfRef(l.package_ref).supplier, agentName: l.agent_name, packageLabel: l.package_label, expiresAt: l.expires_at }));
   return { suppliers, rows, oursOnly, everyMs: EVERY_MS };
 }
+// Just the reading's state per supplier, for the bar above the one subscribers list.
+function summary() {
+  const s = getSettings();
+  return {
+    everyMs: EVERY_MS,
+    suppliers: KEYS.map((key) => ({
+      key, name: NAMES[key], configured: !!READERS[key].configured(s), at: Number(setting(sKey(key, 'at'))) || null,
+      count: Number(setting(sKey(key, 'count'))) || 0, error: setting(sKey(key, 'error')), running: running.has(key),
+    })).filter((x) => x.configured),
+  };
+}
 
 const AUTO = process.env.NODE_ENV === 'production' || process.env.SUPSUBS === '1';
 if (AUTO) {
@@ -180,4 +259,4 @@ if (AUTO) {
   setInterval(() => syncAll().catch((e) => console.error('supsubs', e.message)), Math.min(EVERY_MS, 15 * 60_000)).unref();
 }
 
-module.exports = { NAMES, syncOne, syncAll, view, dateOf, localNumber, _setReaders: (r) => { READERS = { ...READERS, ...r }; } };
+module.exports = { NAMES, syncOne, syncAll, view, summary, dateOf, localNumber, renewable, packageOf, _setReaders: (r) => { READERS = { ...READERS, ...r }; } };

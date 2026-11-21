@@ -1,5 +1,5 @@
 'use strict';
-// The shop's customer renews a number: any line in the system (an agent's too), at the shop's price of the packages that
+// The shop's customer renews a number a supplier lists (an agent's line too), at the shop's price of the packages that
 // may renew it; paid like any order; renewed by the shop's account, the line staying its agent's.
 process.env.DB_FILE = ':memory:';
 process.env.ADMIN_USERNAME = 'admin';
@@ -18,6 +18,10 @@ const call = async (token, method, url, body) => {
 };
 const ok = async (p) => { const r = await p; assert.equal(r.status, 200, JSON.stringify(r.body)); return r.body; };
 const DAY = 864e5;
+// The number as a supplier lists it (src/supsubs.js reads them every hour): only these are renewed by customers.
+const listed = (number, extra = {}) => q(`INSERT INTO supplier_subs (supplier, ext_id, number, status, active, end_at, first_seen, last_seen, gone_at)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(extra.supplier || 'ql', extra.ext || number, number, extra.status || 'فعال', extra.active === false ? 0 : 1,
+  extra.endAt ?? null, Date.now(), Date.now(), extra.goneAt ?? null);
 
 test.before(async () => {
   ({ server } = require('../server'));
@@ -42,6 +46,9 @@ test('a customer renews an agent\'s number from the shop: options at the shop pr
   const lineId = Number(q(`INSERT INTO lines (number, company_id, package_id, package_label, agent_id, months, price, cost, status, customer_name, activated_at, expires_at, updated_at)
     VALUES ('0521112233', ?, ?, 'سلكوم 400', ?, 1, 60, 50, 'active', 'محمد السري', ?, ?, ?)`).run(co.id, sold, agent.id, t - 27 * DAY, t + 3 * DAY, t).lastInsertRowid);
 
+  // Not listed by any supplier: not renewed by the customer; listed: renewed.
+  assert.equal((await call(null, 'GET', '/api/shop/renew?number=0521112233')).status, 404, 'in our system only');
+  listed('0521112233');
   // The options: only the shop-priced package of its company; nothing about whose it is.
   const v = await ok(call(null, 'GET', '/api/shop/renew?number=052-111-2233'));
   assert.equal(v.number, '0521112233');
@@ -83,6 +90,7 @@ test('a renewal waits for its supplier when the company is carried out by hand; 
   const t = Date.now();
   q(`INSERT INTO lines (number, company_id, package_id, package_label, agent_id, months, price, cost, status, activated_at, expires_at, updated_at)
      VALUES ('0541112233', ?, ?, 'بارتنر', ?, 1, 50, 40, 'active', ?, ?, ?)`).run(co.id, renew, agent.id, t, t + DAY, t);
+  listed('0541112233', { supplier: 'tc' });
   const o = await ok(call(null, 'POST', '/api/shop/renewals', { number: '0541112233', packageId: renew }));
   const id = q('SELECT id FROM shop_orders WHERE code = ?').get(o.code).id;
   await ok(call(admin, 'POST', `/api/shop/admin/orders/${id}/approve`, {}));
@@ -129,5 +137,5 @@ test('WhatsApp: «بدي أمدد رقمي» — the options, a summary to confi
   q('UPDATE shop_orders SET status = \'cancelled\' WHERE id = ?').run(o.id);
   const c4 = ctx();
   await wa._test.agentTool('renew_number', { number: '0599999999' }, c4);
-  assert.match(c4.facts[0], /غير مسجّل عندنا/);
+  assert.match(c4.facts[0], /غير مسجّل عند مزوّدينا/);
 });

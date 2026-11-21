@@ -356,8 +356,12 @@ route('POST', '/api/shop/orders', null, ({ body, ip, req }) => {
 function renewalLine(numberInput) {
   let number = '';
   try { number = validPhone(normalizePhone(toLatinDigits(String(numberInput || '')))); } catch { fail(400, 'اكتب رقم الخط اللي بدك تمدّده (10 أرقام يبدأ بـ 05)'); }
-  const l = q(`${D.LINE_SELECT} WHERE l.number = ? AND l.status != 'disconnected' ORDER BY l.id DESC LIMIT 1`).get(number);
-  if (!l) fail(404, 'هذا الرقم غير مسجّل عندنا — للتمديد تواصل مع الدعم.');
+  // Only a number a supplier lists (read every hour: src/supsubs.js), whose line the same reading keeps in our system.
+  const sub = require('../supsubs').renewable(number);
+  const l = sub && q(`${D.LINE_SELECT} WHERE l.number = ? AND l.status != 'disconnected' ORDER BY l.id DESC LIMIT 1`).get(number);
+  if (!l) fail(404, 'هذا الرقم غير مسجّل عند مزوّدينا — للتمديد تواصل مع الدعم.');
+  if (sub.end_at) l.expires_at = sub.end_at;
+  Object.assign(l, { sub_supplier: sub.supplier, sub_pkg: sub.pkg_id || '' });
   if (l.status === 'pending') fail(409, 'طلب هذا الرقم ما زال قيد التنفيذ — جرّب بعد قليل.');
   if (q("SELECT 1 FROM tasks WHERE line_id = ? AND type = 'renew' AND status = 'open'").get(l.id)) fail(409, 'تمديد هذا الرقم قيد التنفيذ الآن.');
   return l;
@@ -367,7 +371,18 @@ function renewalOptions(l) {
   return q(`SELECT p.*, c.name AS company_name FROM packages p JOIN companies c ON c.id = p.company_id
             WHERE p.active = 1 AND p.shop_price > 0 ${l.company_id ? 'AND p.company_id = ?' : ''} ORDER BY p.shop_price, p.id`)
     .all(...(l.company_id ? [l.company_id] : []))
-    .filter((p) => !renewalProblem(l.package_ref, p.art_card_id) && !/^(qln|lyn|tcn|ay:bill|ay:esim):/.test(p.art_card_id || ''));
+    .filter((p) => !renewalProblem(l.package_ref, p.art_card_id) && !/^(qln|lyn|tcn|ay:bill|ay:esim):/.test(p.art_card_id || ''))
+    .filter((p) => fromItsSupplier(l, p.art_card_id));
+}
+// A line whose package we could not tell (added from a supplier's list) is not renewed at another supplier, and at its
+// own on its own package when the supplier gave its id (QuickLine, telecom). A package carried out by hand stays.
+function fromItsSupplier(l, ref) {
+  const { supplierOfRef } = require('../quickline');
+  if (!l.sub_supplier || supplierOfRef(l.package_ref).supplier) return true;
+  const p = supplierOfRef(ref);
+  if (!p.supplier) return true;
+  if (p.supplier !== l.sub_supplier) return false;
+  return !(l.sub_pkg && ['ql', 'tc'].includes(p.supplier)) || String(p.qlPackage) === String(l.sub_pkg);
 }
 function renewalView(l) {
   return {
