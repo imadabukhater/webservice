@@ -1,6 +1,7 @@
 # robots.txt for https://www.hotesim.shop/
 User-agent: *
 Allow: /
+Allow: /package/
 Allow: /shop
 Allow: /shop.html
 Allow: /css/

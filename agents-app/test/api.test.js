@@ -189,11 +189,11 @@ test('the packages page: every eSIM package, one toggle, the shop price = suppli
   assert.deepEqual(view(ql), { id: ql, name: 'رزمة qln:1:30', companyId: co, companyName: 'سلكوم', supplier: 'ql', supplierPrice: 50, shopPrice: null, inShop: false, available: true, dataGb: null, days: null });
   assert.deepEqual([view(qlHidden).available, view(gone).available, view(ayEsim).supplier, view(ayEsim).supplierPrice, view(ayEsim).dataGb, view(ayEsim).days], [true, false, 'ay', 38, 400, 30], 'Aylol: what it really takes');
 
-  // On: shop price = supplier price × 1.2, the package shown again; off: no shop price, still shown.
+  // On: shop price = supplier price × 1.2 rounded to the nearest whole shekel; off: no shop price, still shown.
   const on = await ok(call(admin, 'PUT', `/api/packages/${qlHidden}`, { inShop: true }));
   assert.deepEqual([on.inShop, on.shopPrice], [true, 60]);
   assert.equal(q('SELECT active FROM packages WHERE id = ?').get(qlHidden).active, 1);
-  assert.equal((await ok(call(admin, 'PUT', `/api/packages/${ayEsim}`, { inShop: true }))).shopPrice, 45.6);
+  assert.equal((await ok(call(admin, 'PUT', `/api/packages/${ayEsim}`, { inShop: true }))).shopPrice, 46);
   assert.equal((await call(admin, 'PUT', `/api/packages/${gone}`, { inShop: true })).status, 409);
   assert.equal((await call(admin, 'PUT', `/api/packages/${card}`, { inShop: true })).status, 404);
   assert.equal((await call(admin, 'PUT', `/api/packages/${ql}`, { shopPrice: 99 })).status, 400, 'the toggle is the only change');
@@ -207,9 +207,9 @@ test('the packages page: every eSIM package, one toggle, the shop price = suppli
   assert.equal((await ok(call(admin, 'PUT', '/api/settings', { shopMarkup: 30 }))).shopMarkup, 30);
   cat = await ok(call(admin, 'GET', '/api/catalog'));
   assert.equal(cat.markup, 30);
-  assert.equal(view(ayEsim).shopPrice, 49.4, '38 × 1.3');
-  assert.equal(q('SELECT shop_price FROM packages WHERE id = ?').get(ayEsim).shop_price, 49.4);
+  assert.equal(view(ayEsim).shopPrice, 49, 'Math.round(38 × 1.3)');
+  assert.equal(q('SELECT shop_price FROM packages WHERE id = ?').get(ayEsim).shop_price, 49);
   await ok(call(admin, 'PUT', '/api/settings', { shopMarkup: 20 }));
-  assert.equal(q('SELECT shop_price FROM packages WHERE id = ?').get(ayEsim).shop_price, 45.6);
+  assert.equal(q('SELECT shop_price FROM packages WHERE id = ?').get(ayEsim).shop_price, 46);
   await ok(call(admin, 'PUT', `/api/packages/${ayEsim}`, { inShop: false }));
 });

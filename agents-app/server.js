@@ -23,6 +23,7 @@ require('./src/cloudbackup');
 require('./src/autosync');
 const { dispatch } = require('./src/router');
 const { ApiError } = require('./src/util');
+const seo = require('./src/seo');
 
 const PORT = Number(process.env.PORT) || 3000;
 const PUBLIC_DIR = path.join(__dirname, 'public');
@@ -59,6 +60,28 @@ function serveStatic(req, res, pathname) {
   if (pathname.split('/').some((seg) => seg.startsWith('.') && seg !== '.')) {
     res.writeHead(403);
     return res.end();
+  }
+  // Dynamic XML sitemap with live /package/:id entries for Google Search.
+  if (pathname === '/sitemap.xml') {
+    const xml = seo.renderSitemapXml({ siteUrl: seo.siteOrigin(req) });
+    res.writeHead(200, {
+      'Content-Type': 'application/xml; charset=utf-8',
+      'Cache-Control': 'public, max-age=600',
+      ...SECURITY_HEADERS,
+    });
+    return res.end(req.method === 'HEAD' ? undefined : xml);
+  }
+  // Server-rendered SEO package pages (/package/:id) with tailored meta, JSON-LD & pre-rendered Arabic/English content.
+  const pkgMatch = pathname.match(/^\/package\/(\d+)(?:\/.*)?$/);
+  if (pkgMatch) {
+    const { status, html } = seo.renderPackageHtml(pkgMatch[1], { siteUrl: seo.siteOrigin(req) });
+    res.writeHead(status, {
+      'Content-Type': 'text/html; charset=utf-8',
+      'Cache-Control': 'no-cache',
+      'Content-Security-Policy': CSP,
+      ...SECURITY_HEADERS,
+    });
+    return res.end(req.method === 'HEAD' ? undefined : html);
   }
   // Main site / root ('/') is the customer shop (Hot eSIM storefront).
   // The manager's portal is served on /portal, /admin, /agent, /agents, or /index.html.

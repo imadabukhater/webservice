@@ -37,10 +37,10 @@ const directCompany = (companyId) => q('SELECT activation FROM companies WHERE i
 // What the supplier takes: Aylol's real cost when known, else the supplier's current price (refreshed by every sync),
 // else the cost.
 const supplierPrice = (p) => Number(p?.supplier_cost ?? p?.art_price ?? p?.cost) || 0;
-// Rounded to the agora (2 decimals, util.round: Math.round(x * 100) / 100); null when the supplier price is unknown.
+// Rounded to the nearest whole shekel (Math.round); null when the supplier price is unknown.
 const shopPriceOf = (p, markup = getSettings().shopMarkup) => {
   const sp = supplierPrice(p);
-  return sp > 0 ? round(sp * (1 + Number(markup) / 100)) : null;
+  return sp > 0 ? Math.round(sp * (1 + Number(markup) / 100)) : null;
 };
 // packages.shop_price is kept by the server only: the shop price while the package is in the shop, else NULL
 // (the shop sells what has shop_price > 0). id: one package; none: all of them.

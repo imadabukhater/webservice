@@ -1,5 +1,5 @@
 // App shell cache: pages and code load instantly and work offline; API calls always go to the network.
-const CACHE = 'esim-admin-shell-v40';
+const CACHE = 'esim-admin-shell-v41';
 const SHELL = [
   '/portal',
   '/css/app.css',
@@ -31,7 +31,7 @@ self.addEventListener('activate', (e) => {
 });
 self.addEventListener('fetch', (e) => {
   const url = new URL(e.request.url);
-  if (e.request.method !== 'GET' || url.origin !== location.origin || url.pathname.startsWith('/api/') || url.pathname === '/' || /^\/shop(\/|$)/.test(url.pathname)) return;
+  if (e.request.method !== 'GET' || url.origin !== location.origin || url.pathname.startsWith('/api/') || url.pathname === '/' || /^\/(shop|package)(\/|$)/.test(url.pathname) || url.pathname === '/sitemap.xml') return;
   // Network first so updates show up at once; the cache answers when offline.
   e.respondWith(
     fetch(e.request)

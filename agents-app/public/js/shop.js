@@ -1,7 +1,7 @@
 // Customer Storefront (/shop): Authentic eSIM & Telecom Plan Storefront.
 // Uses ES module imports from ./core.js — zero emojis, crisp vector SVGs, full pages & sheets.
 import {
-  esc, icon, fmtMoney, fmtNum, fmtDateTime, fmtDate, fmtTime, specs, companyLogo,
+  esc, icon, fmtNum, fmtDateTime, fmtDate, fmtTime, specs, companyLogo,
   fileToDataUrl, copyText, toast, fmtPhone, sheet, closeSheet, go,
 } from './core.js';
 
@@ -80,6 +80,48 @@ function waHref(wa, text = '') {
 
 function notify(msg, isErr = false) {
   toast(msg, { error: Boolean(isErr) });
+}
+
+function fmtShekel(n) {
+  const v = Math.round((Number(n) || 0) * 100) / 100;
+  return `${fmtNum(v)} ₪`;
+}
+
+const CARRIER_SEO = [
+  { re: /سلكوم|cellcom/i, en: 'Cellcom', about: 'تتميّز شبكة سلكوم (Cellcom) بتغطية قوية وسرعات إنترنت عالية تدعم الجيل الخامس 5G في قطاع غزة وفلسطين مع استقرار ممتاز للمكالمات والإنترنت.' },
+  { re: /هوت|hot/i, en: 'Hot Mobile', about: 'تُعدّ شبكة هوت موبايل (Hot Mobile) من أكثر الشبكات طلباً لشرائح eSIM في غزة وفلسطين بفضل عروضها المرنة لمدة 30 يوماً و90 يوماً وأسعارها الاقتصادية.' },
+  { re: /بيلفون|pelephone/i, en: 'Pelephone', about: 'توفّر شبكة بيلفون (Pelephone) أداءً قوياً على شبكات 4G و5G مع جودة اتصال عالية وتغطية واسعة ومناسبة للاستخدام اليومي المكثّف.' },
+  { re: /بارتنر|partner/i, en: 'Partner', about: 'تقدّم شبكة بارتنر (Partner) باقات إنترنت كبيرة بسرعات 5G فائقة ومناسبة للتصفح، البث، والعمل عن بُعد في قطاع غزة وفلسطين.' },
+  { re: /\bwe\b|وي|wecom/i, en: 'WE (Wecom)', about: 'تتميّز باقات وي (WE / Wecom) بأكبر سعات الإنترنت مقابل السعر مع خيارات توفير شهرية وعروض 90 يوماً.' },
+  { re: /019/i, en: '019 Mobile', about: 'توفّر 019 موبايل (019 Mobile) باقات eSIM سريعة وموثوقة مع تفعيل فوري وأسعار منافسة.' },
+  { re: /aloha|الوها|ألوها/i, en: 'ALOHA', about: 'تتيح شرائح ALOHA تفعيل eSIM فوري وسهل مع باقات إنترنت ومكالمات مناسبة للاستخدام اليومي.' },
+  { re: /جولان|golan/i, en: 'Golan Telecom', about: 'توفّر جولان تليكوم (Golan Telecom) باقات eSIM مرنة بتغطية جيدة وسرعات إنترنت عالية.' },
+  { re: /رامي|rami/i, en: 'Rami Levy', about: 'تقدّم رامي ليفي (Rami Levy) باقات اتصال وإنترنت اقتصادية بتفعيل eSIM فوري.' },
+];
+function carrierSeoInfo(name = '') {
+  return CARRIER_SEO.find((c) => c.re.test(name)) || {
+    en: name || 'Hot eSIM',
+    about: `توفّر شبكة ${name || 'Hot eSIM'} اتصال إنترنت سريعاً ومكالمات مستقرة عبر شريحة eSIM إلكترونية فورية في قطاع غزة وفلسطين.`,
+  };
+}
+
+function setPageMeta({ title, description, canonicalPath = '/' }) {
+  if (title) document.title = title;
+  if (description) {
+    let md = document.querySelector('meta[name="description"]');
+    if (!md) { md = document.createElement('meta'); md.setAttribute('name', 'description'); document.head.appendChild(md); }
+    md.setAttribute('content', description);
+  }
+  const canon = document.querySelector('link[rel="canonical"]');
+  if (canon) canon.setAttribute('href', `${location.origin}${canonicalPath}`);
+}
+
+function openPackagePage(id) {
+  const target = `/package/${encodeURIComponent(String(id))}`;
+  if (location.pathname !== target || location.hash) {
+    history.pushState(null, '', target);
+  }
+  route();
 }
 
 const S = {
@@ -240,13 +282,14 @@ function shell(body, { sub = '' } = {}) {
   const wa = waHref(S.data?.supportWhatsapp, `مرحباً، أحتاج مساعدة في ${name}`);
   const dark = document.documentElement.dataset.theme === 'dark';
   const hash = location.hash.replace(/^#\/?/, '').split('?')[0];
-  const onHome = !hash;
+  const onPackagePath = /^\/package\/\d+/.test(location.pathname);
+  const onHome = !hash && !onPackagePath;
   const onLegal = hash === 'terms' || hash === 'esim-policy' || hash === 'guarantee';
 
   root.innerHTML = `
     <header class="shop-top">
       <div class="shop-top-inner">
-        <a href="#/" class="shop-brand" data-act="nav-esim" aria-label="${esc(name)}">
+        <a href="/" class="shop-brand" data-act="nav-esim" aria-label="${esc(name)}">
           <span class="shop-brand-mark">${brandLogoSvg('hsim-logo-svg')}</span>
           <span class="shop-brand-text">
             <span class="shop-brand-title-row">
@@ -353,6 +396,11 @@ function switchCatalogTab(_kind, { scroll = false } = {}) {
   if (S.companyId !== 'all' && !packages.some((p) => String(p.companyId) === String(S.companyId))) {
     S.companyId = 'all';
   }
+  if (/^\/package\//.test(location.pathname)) {
+    history.pushState(null, '', '/');
+    route();
+    return;
+  }
   if (location.hash && location.hash !== '#/') {
     location.hash = '#/';
   } else {
@@ -362,6 +410,13 @@ function switchCatalogTab(_kind, { scroll = false } = {}) {
 }
 
 function bindGlobalTriggers(scope) {
+  scope.querySelectorAll('[data-pkg-link]').forEach((a) => {
+    a.onclick = (e) => {
+      if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
+      e.preventDefault();
+      openPackagePage(a.dataset.pkgLink);
+    };
+  });
   scope.querySelectorAll('[data-act="theme"]').forEach((b) => {
     b.onclick = () => {
       const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
@@ -959,7 +1014,7 @@ async function viewTrackPage(seq) {
                       </div>
                     </div>
                     <div style="text-align:end;display:grid;gap:4px;justify-items:end">
-                      <b class="mono">${fmtMoney(o.amount)}</b>
+                      <b class="mono">${fmtShekel(o.amount)}</b>
                       <span class="pill ${pillCls}">${esc(pillLabel)}</span>
                     </div>
                   </div>
@@ -1103,63 +1158,366 @@ function renderInfoTabContent(tab) {
   `;
 }
 
-function openPackDetailsSheet(pk, co) {
+async function viewPackage(id, seq) {
+  const companies = S.data?.companies || [];
+  const livePackages = S.data?.packages || [];
+  const coMap = new Map(companies.map((c) => [c.id, c]));
+
+  let pk = livePackages.find((p) => String(p.id) === String(id));
+  let co = pk ? (coMap.get(pk.companyId) || { id: pk.companyId, name: pk.companyName }) : null;
+  let available = Boolean(pk && S.data?.enabled);
+  let related = pk
+    ? [
+        ...livePackages.filter((r) => r.id !== pk.id && r.companyId === pk.companyId),
+        ...livePackages.filter((r) => r.id !== pk.id && r.companyId !== pk.companyId),
+      ].slice(0, 6)
+    : [];
+
+  if (!pk) {
+    shell(`<div class="card empty"><p class="muted">جارٍ تحميل تفاصيل الباقة...</p></div>`, { sub: 'تفاصيل الباقة' });
+    try {
+      const res = await jfetch(`/api/shop/package/${encodeURIComponent(id)}`);
+      if (seq !== S.seq) return;
+      pk = res.package;
+      co = res.company || { id: pk.companyId, name: pk.companyName };
+      available = Boolean(res.available);
+      related = Array.isArray(res.related) ? res.related : [];
+    } catch {
+      if (seq !== S.seq) return;
+      setPageMeta({ title: `الباقة غير متوفرة | ${S.data?.shopTitle || 'Hot eSIM'}`, canonicalPath: '/' });
+      shell(`
+        <div class="card empty">
+          ${icon('alert')}
+          <p>هذه الباقة غير متوفرة حالياً — يمكنك اختيار باقة أخرى متوفرة الآن.</p>
+          <a href="/" class="btn primary" data-act="nav-esim">${icon('qr')}<span>تصفّح جميع الباقات</span></a>
+        </div>
+      `, { sub: 'الباقة غير متوفرة' });
+      return;
+    }
+  }
+  if (seq !== S.seq) return;
+
+  const shopName = S.data?.shopTitle || 'Hot eSIM';
   const sp = extractPackageSpecs(pk, co);
+  const cm = carrierSeoInfo(sp.companyName);
   const qrFee = Number(pk.esimFee ?? co?.esimFee ?? S.data?.esimFee ?? 0);
   const total = pkgTotalPrice(pk, co);
+  const featured = isFeaturedPkg(pk);
+  const cleanName = String(pk.name || '').trim();
+  const headline = cleanName && !cleanName.toLowerCase().startsWith(sp.companyName.toLowerCase())
+    ? `${sp.companyName} ${cleanName}`
+    : (cleanName || `${sp.companyName} ${sp.mainCap}`);
+  const banks = Array.isArray(S.data?.jawwalBanks) ? S.data.jawwalBanks : [];
+  const payBadges = S.data?.jawwalDirect
+    ? ['Jawwal Pay', ...banks.map((b) => b.name)].join(' · ')
+    : 'Jawwal Pay · PalPay';
+  const wa = waHref(S.data?.supportWhatsapp, `مرحباً، أستفسر عن باقة ${headline} (${fmtShekel(total)})`);
 
-  sheet({
-    title: sp.companyName,
-    subtitle: `${sp.mainCap} · تفاصيل شريحة eSIM`,
-    body: `
-      <div class="shop-breakdown-box">
-        <div class="shop-bd-row">
-          <span>الشركة / الشبكة</span>
-          <b>${esc(sp.companyName)}</b>
-        </div>
-        <div class="shop-bd-row">
-          <span>الإنترنت</span>
-          <b>${esc(sp.dataLabel)}</b>
-        </div>
-        <div class="shop-bd-row">
-          <span>الدقائق والرسائل</span>
-          <b>${esc(sp.callsLabel)}</b>
-        </div>
-        <div class="shop-bd-row">
-          <span>مدة الصلاحية</span>
-          <b>${fmtNum(sp.days)} يوماً</b>
-        </div>
-        ${sp.extraBonus ? `
-          <div class="shop-bd-row">
-            <span>مزايا إضافية</span>
-            <b>${esc(sp.extraBonus)}</b>
-          </div>
-        ` : ''}
-        <div class="shop-bd-row">
-          <span>سعر الباقة</span>
-          <b class="mono">${fmtMoney(pk.price)}</b>
-        </div>
-        <div class="shop-bd-row">
-          <span>رسوم شريحة eSIM QR</span>
-          <b class="mono">${qrFee > 0 ? fmtMoney(qrFee) : 'مجاناً'}</b>
-        </div>
-        <div class="shop-bd-total">
-          <span>الإجمالي</span>
-          <b class="mono">${fmtMoney(total)}</b>
-        </div>
-      </div>
-      <div class="row" style="gap:10px;margin-top:16px;flex-wrap:wrap">
-        <a class="btn primary grow" href="#/buy/${pk.id}?esim=1" data-buy-go>${icon('qr')}<span>شراء شريحة eSIM · ${fmtNum(total)} ₪</span></a>
-      </div>
-    `,
-    footer: `<button type="button" class="btn ghost" data-close>إغلاق</button>`,
-    onMount: (_form, el) => {
-      el.querySelector('[data-buy-go]')?.addEventListener('click', (e) => {
-        e.preventDefault();
-        go(`#/buy/${pk.id}?esim=1`);
-      });
+  const feeText = qrFee > 0
+    ? `يشمل سعر الباقة (${fmtShekel(pk.price)}) بالإضافة إلى رسوم إصدار شريحة eSIM QR (${fmtShekel(qrFee)}) بدون أي رسوم مخفية.`
+    : 'يشمل كود eSIM QR مجاناً بدون أي رسوم إضافية.';
+
+  const pkgFaqs = [
+    {
+      q: `كم سعر باقة ${headline} شاملة شريحة eSIM؟`,
+      a: `السعر الإجمالي لباقة ${headline} هو ${fmtShekel(total)} فقط، و${feeText}`,
     },
+    {
+      q: `ماذا تشمل باقة ${sp.companyName}${sp.gb ? ` ${fmtNum(sp.gb)} جيجا` : ''} وكم مدة صلاحيتها؟`,
+      a: `تشمل الباقة ${sp.dataLabel} و${sp.callsLabel}، وتعمل على شريحة eSIM برقم جديد صالحة لمدة ${fmtNum(sp.days)} يوماً في قطاع غزة وفلسطين.`,
+    },
+    {
+      q: `كيف أحصل على كود QR لتفعيل باقة ${sp.companyName} في غزة وفلسطين؟`,
+      a: `بعد إتمام الطلب والدفع الآمن عبر ${payBadges} في متجر ${shopName}، يظهر لك كود QR وكود التفعيل اليدوي (LPA) تلقائياً خلال ثوانٍ، ويمكنك مسحه من إعدادات هاتفك أثناء الاتصال بشبكة Wi-Fi.`,
+    },
+    {
+      q: 'هل يتغيّر رقم واتساب (WhatsApp) عند إضافة شريحة eSIM الجديدة؟',
+      a: 'لا، يحتفظ هاتفك بحسابك ورقمك الحالي على واتساب كما هو تماماً دون أي تغيير، وتعمل شريحة eSIM كخط إنترنت واتصال إضافي على نفس الجهاز.',
+    },
+    {
+      q: `كيف أتأكد أن هاتفي يدعم شريحة eSIM لباقة ${sp.companyName}؟`,
+      a: 'اطلب الكود *#06# من لوحة اتصال هاتفك؛ إذا ظهر رقم EID فجهازك متوافق مع شريحة eSIM (معظم أجهزة iPhone XS والأحدث، سامسونج Galaxy S20–S25، و Google Pixel).',
+    },
+  ];
+
+  setPageMeta({
+    title: `باقة ${headline} eSIM (${fmtNum(sp.days)} يوم) بسعر ${fmtShekel(total)} | ${shopName}`,
+    description: `اشترِ باقة ${headline} (${cm.en}) شريحة eSIM لقطاع غزة وفلسطين: ${sp.dataLabel}، ${sp.callsLabel}، صالحة ${fmtNum(sp.days)} يوماً بسعر ${fmtShekel(total)} شامل كود QR فوري.`,
+    canonicalPath: `/package/${pk.id}`,
   });
+
+  let openFaq = 0;
+
+  function renderPage() {
+    shell(`
+      <div class="pkg-page">
+        <div class="pkg-breadcrumb-bar">
+          <nav class="pkg-breadcrumb" aria-label="مسار التنقل">
+            <a href="/" data-act="nav-esim">الرئيسية</a>
+            <span>/</span>
+            <a href="/" data-co-filter="${esc(String(pk.companyId))}">باقات ${esc(sp.companyName)}</a>
+            <span>/</span>
+            <strong aria-current="page">${esc(headline)}</strong>
+          </nav>
+          <a href="/" class="btn ghost btn-sm" data-act="nav-esim">→ كل الباقات</a>
+        </div>
+
+        <!-- 1. Hero Overview & Instant Buy Card -->
+        <section class="pkg-hero" style="--co:${esc(co?.color || '#D9142F')}">
+          <div class="pkg-hero-top">
+            <div class="pkg-hero-badges">
+              <span class="pele-5g-pill" dir="ltr"><i>e</i>SIM${sp.is5G ? ' <b>5G</b>' : ''}</span>
+              ${featured ? '<span class="pele-offer-tag is-pop">الأكثر طلباً</span>' : sp.days >= 60 ? `<span class="pele-offer-tag">عرض ${fmtNum(sp.days)} يوم</span>` : ''}
+              <span class="pkg-stock-pill ${available ? 'is-ok' : 'is-out'}">
+                ${icon(available ? 'checkCircle' : 'clock')}
+                <span>${available ? 'متوفرة الآن للتفعيل الفوري' : 'نفدت الأرقام مؤقتاً'}</span>
+              </span>
+            </div>
+            <div class="pele-superlative">
+              <div>
+                <span>${fmtNum(sp.days)}</span>
+                <span>يوماً</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="pkg-hero-main">
+            <div class="pkg-hero-info">
+              <div class="pkg-carrier-chip">
+                ${companyLogo(co || { name: sp.companyName }, 'sm')}
+                <span>${esc(sp.companyName)}</span>
+                <small class="ltr">${esc(cm.en)}</small>
+              </div>
+              <h1>باقة ${esc(headline)} — شريحة eSIM فورية</h1>
+              <p class="pkg-hero-lead">
+                ${esc(sp.dataLabel)} · ${esc(sp.callsLabel)} · صالحة لمدة ${fmtNum(sp.days)} يوماً برقم جديد وتفعيل تلقائي بكود QR في قطاع غزة وفلسطين.
+              </p>
+              <div class="pkg-hero-highlights">
+                <span>${icon('bolt')}تفعيل فوري بكود QR</span>
+                <span>${icon('phone')}رقم جديد (واتسابك يبقى كما هو)</span>
+                <span>${icon('shield')}دفع آمن: ${esc(payBadges)}</span>
+              </div>
+            </div>
+
+            <div class="pkg-price-box">
+              <div class="pkg-price-cap" dir="ltr">${esc(sp.mainCap)}</div>
+              <div class="pkg-price-val" dir="ltr">${fmtNum(total)}<span>₪</span></div>
+              <div class="pkg-price-note">
+                ${qrFee > 0 ? `شامل الباقة (${fmtShekel(pk.price)}) + شريحة eSIM QR (${fmtShekel(qrFee)})` : 'شامل كود eSIM QR مجاناً بدون رسوم إضافية'}
+              </div>
+              ${available ? `
+                <a class="btn primary lg pkg-buy-cta" id="pkg-buy-btn" href="#/buy/${pk.id}?esim=1">
+                  ${icon('qr')}<span>شراء الآن · ${fmtShekel(total)}</span>
+                </a>
+              ` : `
+                <a class="btn ghost lg pkg-buy-cta" href="/" data-act="nav-esim">
+                  ${icon('search')}<span>تصفّح الباقات المتوفرة الآن</span>
+                </a>
+              `}
+              <div class="pkg-secondary-actions">
+                <button type="button" class="btn ghost btn-sm" data-act="compat-sheet">${icon('chip')}<span>فحص توافق جهازي</span></button>
+                <button type="button" class="btn ghost btn-sm" id="pkg-share-btn">${icon('share')}<span>مشاركة الباقة</span></button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- 2. Structured Package Specifications -->
+        <section class="card pkg-section">
+          <h2 class="pkg-sec-title">${icon('list')}<span>مواصفات باقة ${esc(headline)}</span></h2>
+          <div class="pkg-specs-grid">
+            <div class="pkg-spec-item">
+              <span class="pkg-spec-k">الشبكة / المشغّل</span>
+              <b class="pkg-spec-v">${esc(sp.companyName)} <small class="ltr muted">(${esc(cm.en)})</small></b>
+            </div>
+            <div class="pkg-spec-item">
+              <span class="pkg-spec-k">حزمة الإنترنت</span>
+              <b class="pkg-spec-v">${esc(sp.dataLabel)}</b>
+            </div>
+            <div class="pkg-spec-item">
+              <span class="pkg-spec-k">المكالمات والرسائل</span>
+              <b class="pkg-spec-v">${esc(sp.callsLabel)}</b>
+            </div>
+            <div class="pkg-spec-item">
+              <span class="pkg-spec-k">مدة الصلاحية</span>
+              <b class="pkg-spec-v">${fmtNum(sp.days)} يوماً من التفعيل</b>
+            </div>
+            <div class="pkg-spec-item">
+              <span class="pkg-spec-k">نوع الشريحة</span>
+              <b class="pkg-spec-v">شريحة إلكترونية eSIM برقم جديد</b>
+            </div>
+            <div class="pkg-spec-item">
+              <span class="pkg-spec-k">طريقة الاستلام</span>
+              <b class="pkg-spec-v">كود QR فوري + كود LPA يدوي + إيميل</b>
+            </div>
+            <div class="pkg-spec-item">
+              <span class="pkg-spec-k">طرق الدفع المتاحة</span>
+              <b class="pkg-spec-v">${esc(payBadges)}</b>
+            </div>
+            <div class="pkg-spec-item">
+              <span class="pkg-spec-k">السعر الإجمالي</span>
+              <b class="pkg-spec-v mono">${fmtShekel(total)}${qrFee > 0 ? ` <small class="muted">(${fmtNum(pk.price)} + ${fmtNum(qrFee)})</small>` : ''}</b>
+            </div>
+            ${sp.extraBonus ? `
+              <div class="pkg-spec-item is-wide">
+                <span class="pkg-spec-k">مزايا إضافية</span>
+                <b class="pkg-spec-v">${esc(sp.extraBonus)}</b>
+              </div>
+            ` : ''}
+          </div>
+        </section>
+
+        <!-- 3. Carrier & Gaza/Palestine SEO Guide -->
+        <section class="card pkg-section">
+          <h2 class="pkg-sec-title">${icon('info')}<span>عن باقة ${esc(sp.companyName)} (${esc(cm.en)}) في غزة وفلسطين</span></h2>
+          <p class="pkg-seo-text">${esc(cm.about)}</p>
+          ${pk.description ? `<p class="pkg-seo-text">${esc(pk.description)}</p>` : ''}
+          <div class="pkg-value-grid">
+            <div class="pkg-value-card">
+              <span class="pkg-value-ic">${icon('bolt')}</span>
+              <b>تفعيل تلقائي خلال ثوانٍ</b>
+              <p>يصدر كود QR وكود التفعيل اليدوي (LPA) فور إتمام الدفع مباشرة دون انتظار شريحة بلاستيكية.</p>
+            </div>
+            <div class="pkg-value-card">
+              <span class="pkg-value-ic">${icon('whatsapp')}</span>
+              <b>واتسابك يبقى كما هو</b>
+              <p>تعمل الشريحة الإلكترونية كخط بيانات واتصال إضافي دون أي تأثير على حسابك ورقمك الحالي على واتساب.</p>
+            </div>
+            <div class="pkg-value-card">
+              <span class="pkg-value-ic">${icon('shield')}</span>
+              <b>ضمان التفعيل ودعم 24/7</b>
+              <p>نضمن استلام كود QR فعّال 100% مع دعم مباشر عبر واتساب ومتابعة فورية لأي استفسار.</p>
+            </div>
+          </div>
+        </section>
+
+        <!-- 4. Step-by-Step eSIM Installation Guide -->
+        <section class="card pkg-section">
+          <h2 class="pkg-sec-title">${icon('qr')}<span>طريقة تفعيل شريحة eSIM على هاتفك</span></h2>
+          <div class="shop-qr-guides">
+            <div class="shop-qr-guide-col">
+              <b>على أجهزة Apple iPhone (XS والأحدث):</b>
+              <ol>
+                <li>تأكد من الاتصال بشبكة Wi-Fi وافتح <b>الإعدادات ← خلوي ← إضافة eSIM</b>.</li>
+                <li>اختر <b>استخدام رمز QR</b> (أو التثبيت المباشر على iOS 17.4+ / الإدخال اليدوي بكود LPA).</li>
+                <li>فعّل <b>تجوال البيانات</b> واختر الشريحة الجديدة لبيانات الإنترنت.</li>
+              </ol>
+            </div>
+            <div class="shop-qr-guide-col">
+              <b>على أجهزة Android / Samsung Galaxy / Pixel:</b>
+              <ol>
+                <li>تأكد من الاتصال بشبكة Wi-Fi وافتح <b>الضبط ← الاتصالات ← إدارة SIM ← إضافة eSIM</b>.</li>
+                <li>امسح كود الـ QR أو اختر صورة الـ QR المحفوظة من المعرض أو أدخل كود LPA يدوياً.</li>
+                <li>انتظر ثوانٍ لاكتمال التثبيت واستمتع بالإنترنت فوراً.</li>
+              </ol>
+            </div>
+          </div>
+          <div class="esim-eid-check" style="margin-top:12px">
+            <div class="esim-eid-icon">${icon('phone')}</div>
+            <div class="grow">
+              <strong>تأكّد من توافق جهازك قبل الشراء بـ <kbd dir="ltr">*#06#</kbd></strong>
+              <p class="muted" style="margin:3px 0 0;font-size:.85rem">إذا ظهر رقم <b>EID</b> على الشاشة فجهازك يدعم شريحة eSIM. يمكنك أيضاً استخدام <a href="#/compat">أداة فحص توافق الأجهزة</a>.</p>
+            </div>
+          </div>
+        </section>
+
+        <!-- 5. Package-Specific FAQ Accordion -->
+        <section class="pele-faq">
+          <h2>أسئلة شائعة حول باقة ${esc(headline)}</h2>
+          <div class="pele-faq-inner">
+            ${pkgFaqs.map((item, idx) => {
+              const isOpen = openFaq === idx;
+              return `
+                <div class="pele-faq-question ${isOpen ? 'open' : ''}" role="button" tabindex="0" data-pfaq-idx="${idx}" is-open="${isOpen ? 'yes' : 'no'}">
+                  <span>${esc(item.q)}</span>
+                  <i class="pele-faq-arrow">${icon('chevL')}</i>
+                </div>
+                <div class="pele-faq-answer ${isOpen ? 'open' : ''}">
+                  <span>${esc(item.a)}</span>
+                </div>
+              `;
+            }).join('')}
+          </div>
+        </section>
+
+        <!-- 6. Related Packages (Internal Links for SEO & Easy Comparison) -->
+        ${related.length ? `
+          <section class="card pkg-section">
+            <div class="row between" style="flex-wrap:wrap;gap:8px;margin-bottom:12px">
+              <h2 class="pkg-sec-title" style="margin:0">${icon('grid')}<span>باقات eSIM أخرى قد تهمك</span></h2>
+              <a href="/" class="btn ghost btn-sm" data-act="nav-esim">عرض الكل</a>
+            </div>
+            <div class="pkg-related-grid">
+              ${related.map((r) => {
+                const rCo = coMap.get(r.companyId) || { name: r.companyName };
+                const rSp = extractPackageSpecs(r, rCo);
+                const rTotal = pkgTotalPrice(r, rCo);
+                return `
+                  <a class="pkg-rel-card" href="/package/${r.id}" data-pkg-link="${esc(String(r.id))}">
+                    <div class="pkg-rel-top">
+                      <span class="pkg-rel-co">${companyLogo(rCo, 'sm')}<b>${esc(rSp.companyName)}</b></span>
+                      <span class="pkg-rel-price" dir="ltr">${fmtNum(rTotal)}₪</span>
+                    </div>
+                    <div class="pkg-rel-meta">
+                      <span>${esc(rSp.dataLabel)}</span>
+                      <span>${fmtNum(rSp.days)} يوماً</span>
+                    </div>
+                  </a>
+                `;
+              }).join('')}
+            </div>
+          </section>
+        ` : ''}
+
+        <!-- Bottom Sticky-Friendly CTA -->
+        <div class="esim-page-cta">
+          <div>
+            <h3 style="margin:0 0 2px">جاهز لتفعيل باقة ${esc(sp.companyName)} ${esc(sp.mainCap)}؟</h3>
+            <p class="muted" style="margin:0;font-size:.85rem">السعر الإجمالي ${fmtShekel(total)} — استلام فوري لكود QR ودعم متواصل.</p>
+          </div>
+          <div class="row" style="gap:8px;flex-wrap:wrap">
+            ${available ? `<a href="#/buy/${pk.id}?esim=1" class="btn primary lg" data-pkg-buy>${icon('qr')}<span>شراء الآن · ${fmtShekel(total)}</span></a>` : ''}
+            ${wa ? `<a href="${esc(wa)}" target="_blank" rel="noopener" class="btn ghost">${icon('whatsapp')}<span>استفسار عبر واتساب</span></a>` : ''}
+          </div>
+        </div>
+      </div>
+    `, { sub: headline });
+
+    const buyHandler = (e) => {
+      e.preventDefault();
+      go(`#/buy/${pk.id}?esim=1`);
+    };
+    root.querySelectorAll('#pkg-buy-btn, [data-pkg-buy]').forEach((b) => { b.onclick = buyHandler; });
+
+    root.querySelectorAll('[data-co-filter]').forEach((a) => {
+      a.onclick = (e) => {
+        e.preventDefault();
+        S.companyId = a.dataset.coFilter;
+        switchCatalogTab('esim', { scroll: true });
+      };
+    });
+
+    const shareBtn = document.getElementById('pkg-share-btn');
+    if (shareBtn) {
+      shareBtn.onclick = async () => {
+        const shareUrl = `${location.origin}/package/${pk.id}`;
+        if (navigator.share) {
+          try { await navigator.share({ title: `باقة ${headline} — ${fmtShekel(total)}`, url: shareUrl }); return; } catch {}
+        }
+        copyWithFeedback(shareBtn, shareUrl);
+      };
+    }
+
+    root.querySelectorAll('[data-pfaq-idx]').forEach((qEl) => {
+      qEl.onclick = () => {
+        const idx = Number(qEl.dataset.pfaqIdx);
+        openFaq = openFaq === idx ? -1 : idx;
+        renderPage();
+      };
+    });
+  }
+
+  renderPage();
 }
 
 function pkgTotalPrice(pk, co) {
@@ -1451,12 +1809,7 @@ function viewCatalog() {
         updatePacksOnly();
       };
     }
-    packsGrid.querySelectorAll('[data-pack-info]').forEach((b) => {
-      b.onclick = () => {
-        const pk = packages.find((p) => String(p.id) === String(b.dataset.packInfo));
-        if (pk) openPackDetailsSheet(pk, coMap.get(pk.companyId));
-      };
-    });
+    bindGlobalTriggers(packsGrid);
   }
 
   function updatePacksOnly() {
@@ -1734,9 +2087,9 @@ function renderPlanCard(pk, co) {
           شراء الآن · ${fmtNum(total)} ₪
         </a>
       </div>
-      <button type="button" class="pele-lnk-inc" data-pack-info="${esc(String(pk.id))}">
-        تفاصيل إضافية
-      </button>
+      <a class="pele-lnk-inc" href="/package/${pk.id}" data-pkg-link="${esc(String(pk.id))}">
+        المزيد من التفاصيل
+      </a>
     </div>
   `;
 }
@@ -1863,15 +2216,15 @@ async function esimForm(pk, co, seq) {
       <div class="shop-breakdown-box">
         <div class="shop-bd-row">
           <span>سعر الباقة</span>
-          <b class="mono">${fmtMoney(pk.price)}</b>
+          <b class="mono">${fmtShekel(pk.price)}</b>
         </div>
         <div class="shop-bd-row">
           <span>رسوم شريحة eSIM QR</span>
-          <b class="mono">${qrFee > 0 ? fmtMoney(qrFee) : 'مجاناً'}</b>
+          <b class="mono">${qrFee > 0 ? fmtShekel(qrFee) : 'مجاناً'}</b>
         </div>
         <div class="shop-bd-total">
           <span>الإجمالي</span>
-          <b class="mono">${fmtMoney(total)}</b>
+          <b class="mono">${fmtShekel(total)}</b>
         </div>
       </div>
 
@@ -1887,7 +2240,7 @@ async function esimForm(pk, co, seq) {
 
       <button class="btn primary lg" type="submit" ${available ? '' : 'disabled'}>
         ${icon('checkCircle')}
-        <span>متابعة للدفع الآمن (${fmtMoney(total)})</span>
+        <span>متابعة للدفع الآمن (${fmtShekel(total)})</span>
       </button>
     </form>
   `, { sub: pk.name });
@@ -2068,7 +2421,7 @@ function renderDirectPay(o) {
       </div>
       ${sent ? `
         <p class="muted" style="margin:0;font-size:.86rem">
-          ${j.bankName ? `أرسل <b>${esc(j.bankName)}</b>` : 'أرسلنا'} رمز تحقق إلى <bdi dir="ltr" class="mono"><b>${esc(j.mobile || '')}</b></bdi> لدفع <b class="ltr mono">${fmtMoney(o.amount)}</b>.
+          ${j.bankName ? `أرسل <b>${esc(j.bankName)}</b>` : 'أرسلنا'} رمز تحقق إلى <bdi dir="ltr" class="mono"><b>${esc(j.mobile || '')}</b></bdi> لدفع <b class="ltr mono">${fmtShekel(o.amount)}</b>.
           اكتبه هنا لإتمام الدفع — صالح لمدة <b id="jc-countdown" class="ltr mono">${fmtRemaining(j.expiresAt)}</b>.
         </p>
         <form id="jc-f" class="form" style="margin-top:4px" autocomplete="off">
@@ -2076,7 +2429,7 @@ function renderDirectPay(o) {
             <label for="jc-otp">رمز التحقق</label>
             <input id="jc-otp" name="otp" class="input ltr mono" inputmode="numeric" autocomplete="one-time-code" maxlength="8" placeholder="••••••" required>
           </div>
-          <button class="btn primary lg" type="submit">${icon('checkCircle')}<span>تأكيد الدفع ${fmtMoney(o.amount)}</span></button>
+          <button class="btn primary lg" type="submit">${icon('checkCircle')}<span>تأكيد الدفع ${fmtShekel(o.amount)}</span></button>
         </form>
         ${canResend ? `
           <div class="row" style="justify-content:center;gap:8px;flex-wrap:wrap">
@@ -2088,7 +2441,7 @@ function renderDirectPay(o) {
           ${banks.map((b) => `<button type="button" data-jc-bank="${esc(b.code)}" aria-pressed="${via === b.code}">${esc(b.name)}</button>`).join('')}
         </div>` : ''}
         <p class="muted" style="margin:0;font-size:.86rem">
-          ${via ? `اكتب رقم جوالك <b>المسجّل لدى ${esc(viaName)}</b> ويرسل لك البنك رمز تحقق` : 'اكتب رقم جوالك المسجّل في <b>Jawwal Pay</b> وسيصلك رمز تحقق'} لدفع <b class="ltr mono">${fmtMoney(o.amount)}</b> — لا حاجة لتحويل يدوي أو إرسال إشعار.
+          ${via ? `اكتب رقم جوالك <b>المسجّل لدى ${esc(viaName)}</b> ويرسل لك البنك رمز تحقق` : 'اكتب رقم جوالك المسجّل في <b>Jawwal Pay</b> وسيصلك رمز تحقق'} لدفع <b class="ltr mono">${fmtShekel(o.amount)}</b> — لا حاجة لتحويل يدوي أو إرسال إشعار.
         </p>
         <form id="jc-send-f" class="form" style="margin-top:4px">
           <div class="field">
@@ -2238,18 +2591,18 @@ function renderOrder() {
             <small class="muted">${o.customerName && o.customerName !== 'زبون المتجر' ? `${esc(o.customerName)} · ` : ''}${o.number ? `<span class="ltr">${esc(fmtPhone(o.number))}</span>` : 'يظهر الرقم فور تفعيل الطلب'}</small>
           </div>
         </div>
-        <b class="mono shop-amount">${fmtMoney(o.amount)}</b>
+        <b class="mono shop-amount">${fmtShekel(o.amount)}</b>
       </div>
 
       ${isEsim ? `
         <div class="shop-breakdown-box">
           <div class="shop-bd-row">
             <span>سعر الباقة</span>
-            <b class="mono">${fmtMoney(o.packagePrice ?? o.amount)}</b>
+            <b class="mono">${fmtShekel(o.packagePrice ?? o.amount)}</b>
           </div>
           <div class="shop-bd-row">
             <span>رسوم eSIM QR</span>
-            <b class="mono">${Number(o.esimFee) > 0 ? fmtMoney(o.esimFee) : 'مجاناً'}</b>
+            <b class="mono">${Number(o.esimFee) > 0 ? fmtShekel(o.esimFee) : 'مجاناً'}</b>
           </div>
         </div>
       ` : ''}
@@ -2312,7 +2665,7 @@ function renderOrder() {
           <div class="shop-kv shop-copy-card">
             <div class="shop-kv-meta">
               <span>المبلغ المطلوب</span>
-              <b class="ltr mono shop-kv-val">${fmtMoney(o.amount)}</b>
+              <b class="ltr mono shop-kv-val">${fmtShekel(o.amount)}</b>
             </div>
             <button type="button" class="btn ghost btn-sm shop-copy-btn" data-copy="${esc(String(o.amount))}">${icon('copy')}<span>نسخ المبلغ</span></button>
           </div>
@@ -2561,7 +2914,7 @@ function renderOrder() {
   const shareOrderBtn = document.getElementById('share-order-btn');
   if (shareOrderBtn) {
     shareOrderBtn.onclick = async () => {
-      const url = `${location.origin}${location.pathname}#/order/${encodeURIComponent(o.code)}`;
+      const url = `${location.origin}/#/order/${encodeURIComponent(o.code)}`;
       if (navigator.share) {
         try { await navigator.share({ title: `طلب eSIM ${o.code}`, url }); return; } catch {}
       }
@@ -2660,9 +3013,16 @@ async function route() {
   const [pathPart, queryPart] = rawHash.split('?');
   const params = new URLSearchParams(queryPart || '');
   const [head, arg] = pathPart.split('/');
+  const pathPkgMatch = !rawHash && location.pathname.match(/^\/package\/(\d+)/);
+
+  if (rawHash && /^\/package\//.test(location.pathname)) {
+    history.replaceState(null, '', `/#/${rawHash}`);
+  }
 
   window.scrollTo({ top: 0, behavior: 'instant' });
 
+  if (pathPkgMatch) return viewPackage(pathPkgMatch[1], seq);
+  if (head === 'package' && arg) return viewPackage(arg, seq);
   if (head === 'compat') return viewCompatPage();
   if (head === 'terms') return viewLegalPage('terms');
   if (head === 'esim-policy') return viewLegalPage('esim');
@@ -2681,8 +3041,13 @@ async function route() {
     try { decoded = decodeURIComponent(arg); } catch {}
     return viewOrder(decoded, seq);
   }
+  setPageMeta({
+    title: `${S.data?.shopTitle || 'Hot eSIM'} | شرائح eSIM وباقات الإنترنت في غزة وفلسطين`,
+    canonicalPath: '/',
+  });
   viewCatalog();
 }
 
 window.addEventListener('hashchange', route);
+window.addEventListener('popstate', route);
 route();

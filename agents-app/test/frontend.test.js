@@ -213,4 +213,11 @@ test('storefront UX polish: 4-col mobile dock, no /portal footer link, partial s
   const shopHtml = fs.readFileSync(path.join(ROOT, '..', 'shop.html'), 'utf8');
   assert.doesNotMatch(shopHtml, /#buy\/\d+/);
   assert.match(shopHtml, /#\/buy\/\d+\?esim=1/);
+
+  // Dedicated package details page routing & SEO crawlability
+  assert.match(shop, /async function viewPackage\(id, seq\)/);
+  assert.match(shop, /href="\/package\/\$\{pk\.id\}"/);
+  assert.match(shop, /window\.addEventListener\('popstate', route\)/);
+  const robots = fs.readFileSync(path.join(ROOT, '..', 'robots.txt'), 'utf8');
+  assert.match(robots, /Allow:\s*\/package\//);
 });

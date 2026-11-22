@@ -659,3 +659,60 @@ test('Storefront polish: publicPackageName, packageLabel deduping, and /api/shop
     q('DELETE FROM packages WHERE id = ?').run(dirtyId);
   }
 });
+
+test('Nearest-shekel rounding, SSR /package/:id SEO pages, /api/shop/package/:id, and dynamic /sitemap.xml', async () => {
+  const { q } = require('../src/db');
+  const { shopPriceOf } = require('../src/domain');
+
+  // 1) Nearest whole shekel rounding
+  assert.equal(shopPriceOf({ cost: 33.55 }, 20), 40); // 40.26 -> 40
+  assert.equal(shopPriceOf({ cost: 39.65 }, 20), 48); // 47.58 -> 48
+  assert.equal(shopPriceOf({ cost: 25.42 }, 20), 31); // 30.504 -> 31
+
+  // 2) Public single-package API (/api/shop/package/:id)
+  const apiPkg = await ok(call(null, 'GET', `/api/shop/package/${qlPkg.id}`));
+  assert.equal(apiPkg.package.id, qlPkg.id);
+  assert.equal(apiPkg.package.price, Math.round(apiPkg.package.price));
+  assert.equal(apiPkg.package.total, apiPkg.package.price + apiPkg.package.esimFee);
+  assert.equal(apiPkg.available, true);
+  assert.equal((await call(null, 'GET', '/api/shop/package/999999')).status, 404);
+
+  // 3) Server-side rendered SEO page at /package/:id (HTML + canonical + 3 JSON-LD schemas + zero supplier leaks)
+  const rawGet = (p) => new Promise((resolve, reject) => {
+    const req = http.request(`${base}${p}`, { method: 'GET' }, (res) => {
+      let data = '';
+      res.on('data', (c) => { data += c; });
+      res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, body: data }));
+    });
+    req.on('error', reject);
+    req.end();
+  });
+
+  const page = await rawGet(`/package/${qlPkg.id}`);
+  assert.equal(page.status, 200);
+  assert.match(page.headers['content-type'], /text\/html/);
+  assert.match(page.body, new RegExp(`<link rel="canonical" href="[^"]*/package/${qlPkg.id}">`));
+  assert.match(page.body, /<meta name="description" content="[^"]+">/);
+  assert.match(page.body, /<meta name="keywords" content="[^"]+">/);
+  assert.doesNotMatch(page.body, /QuickLine|Aylol|ليان/i);
+  const ldBlocks = [...page.body.matchAll(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/g)].map((m) => JSON.parse(m[1]));
+  assert.equal(ldBlocks.length, 3, 'Product + BreadcrumbList + FAQPage JSON-LD');
+  const prod = ldBlocks.find((b) => b['@type'] === 'Product');
+  assert.ok(prod && prod.offers && prod.offers.priceCurrency === 'ILS');
+  assert.equal(Number(prod.offers.price), apiPkg.package.total);
+  assert.ok(ldBlocks.some((b) => b['@type'] === 'BreadcrumbList'));
+  const faq = ldBlocks.find((b) => b['@type'] === 'FAQPage');
+  assert.ok(faq && faq.mainEntity.length >= 4);
+
+  // Unknown package returns HTTP 404 with noindex
+  const missing = await rawGet('/package/999999');
+  assert.equal(missing.status, 404);
+  assert.match(missing.body, /noindex/);
+
+  // 4) Dynamic /sitemap.xml includes / and /package/:id with no invalid # fragment URLs
+  const sm = await rawGet('/sitemap.xml');
+  assert.equal(sm.status, 200);
+  assert.match(sm.headers['content-type'], /application\/xml/);
+  assert.match(sm.body, new RegExp(`<loc>[^<]*/package/${qlPkg.id}</loc>`));
+  assert.doesNotMatch(sm.body, /#/);
+});

@@ -198,7 +198,7 @@ export default {
           <div style="display:flex;gap:8px;align-items:center">
             <input class="input ltr" id="shop-markup" name="shopMarkup" type="number" min="0" max="500" step="0.5" inputmode="decimal" value="${esc(V.markup)}" style="max-width:140px">
             <button class="btn btn-primary" type="submit">${icon('check')}حفظ</button></div>
-          <span class="hint">سعر المتجر لكل رزمة = سعر المورّد + هذه النسبة. يتحدّث كل سعر في المتجر عند الحفظ.</span></div>
+          <span class="hint">سعر المتجر لكل رزمة = سعر المورّد + هذه النسبة (مقرّباً لأقرب شيكل). يتحدّث كل سعر في المتجر عند الحفظ.</span></div>
       </form>
       <div class="segmented" id="cat-tabs" role="group" aria-label="عرض الرزم">${tabsHtml()}</div>
       <div class="search-box">${icon('search', 'i lead')}<input class="input" id="pkg-q" type="search" placeholder="ابحث باسم الرزمة أو الشركة أو المورّد…" value="${esc(V.q)}" aria-label="بحث في الرزم"></div>

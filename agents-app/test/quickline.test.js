@@ -227,7 +227,7 @@ test('QuickLine: new lines sync at the supplier’s price; the shop price follow
   await ok(call(admin, 'PUT', '/api/settings', { shopEnabled: true, jawwalpayNumber: '0599000000' }));
   const shopIds = async () => (await ok(call(null, 'GET', '/api/shop'))).packages.map((p) => p.id);
   assert.ok(!(await shopIds()).includes(newLine.id));
-  assert.equal((await ok(call(admin, 'PUT', `/api/packages/${newLine.id}`, { inShop: true }))).shopPrice, 74.4);
+  assert.equal((await ok(call(admin, 'PUT', `/api/packages/${newLine.id}`, { inShop: true }))).shopPrice, 74);
   await require('../src/routes/shop').refreshStock();
   assert.ok((await shopIds()).includes(newLine.id), 'on sale');
 
@@ -249,7 +249,7 @@ test('QuickLine: new lines sync at the supplier’s price; the shop price follow
   assert.ok((await shopIds()).includes(newLine.id), 'back on sale');
   fake.cost = 62;
   await ok(call(admin, 'POST', '/api/quickline/sync', { kind: 'invoice' }));
-  assert.equal(row(newLine.id).shop_price, 74.4);
+  assert.equal(row(newLine.id).shop_price, 74);
 
   // Removed paths.
   for (const url of ['/api/numbers/free', '/api/numbers/port-companies', '/api/quickline/lines', '/api/quickline/pending', '/api/quickline/reprice']) {

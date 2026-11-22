@@ -241,6 +241,21 @@ if (process.env.NODE_ENV === 'production' || process.env.SHOP_STOCK === '1') {
 }
 
 // ---------- public ----------
+function publicPackageView(p, s = getSettings()) {
+  const esimFee = p.company_esim_fee === null || p.company_esim_fee === undefined ? s.esimFee : round(p.company_esim_fee);
+  const price = round(p.shop_price);
+  return {
+    id: p.id, companyId: p.company_id, companyName: p.company_name, name: publicPackageName(p.name), price,
+    oldPrice: p.old_price ? round(p.old_price) : null, popular: !!p.popular, featured: !!p.popular,
+    kind: 'esim', esim: true,
+    dataGb: p.data_gb, gb: p.data_gb, minutes: p.minutes, sms: p.sms, tag: forAgent(p.tag || ''), description: forAgent(p.description || ''), days: p.days || null,
+    // An Aylol line is registered in the customer's name, so it is asked (the first name is enough).
+    fullName: shopKind(p) === 'line',
+    esimFee,
+    total: round(price + esimFee),
+  };
+}
+
 // The catalog as last known (ensureStock first, for fresh numbers): eSIMs with a number free now.
 function shopCatalogResponse() {
   const s = getSettings();
@@ -266,15 +281,7 @@ function shopCatalogResponse() {
       id: c.id, name: c.name, color: c.color, logo: c.logo,
       esimFee: c.esim_fee === null || c.esim_fee === undefined ? s.esimFee : round(c.esim_fee),
     })),
-    packages: packages.map((p) => ({
-      id: p.id, companyId: p.company_id, companyName: p.company_name, name: publicPackageName(p.name), price: round(p.shop_price),
-      oldPrice: p.old_price ? round(p.old_price) : null, popular: !!p.popular, featured: !!p.popular,
-      kind: 'esim', esim: true,
-      dataGb: p.data_gb, gb: p.data_gb, minutes: p.minutes, sms: p.sms, tag: forAgent(p.tag || ''), description: forAgent(p.description || ''), days: p.days || null,
-      // An Aylol line is registered in the customer's name, so it is asked (the first name is enough).
-      fullName: shopKind(p) === 'line',
-      esimFee: p.company_esim_fee === null || p.company_esim_fee === undefined ? s.esimFee : round(p.company_esim_fee),
-    })),
+    packages: packages.map((p) => publicPackageView(p, s)),
   };
 }
 async function shopCatalog() {
@@ -283,6 +290,34 @@ async function shopCatalog() {
 }
 route('GET', '/api/shop', null, shopCatalog);
 route('GET', '/api/shop/catalog', null, shopCatalog);
+
+// Single package details for dedicated /package/:id pages (works even if stock is temporarily empty so SEO landing pages still guide visitors).
+route('GET', '/api/shop/package/:id', null, async ({ params }) => {
+  const s = getSettings();
+  const id = Number(params.id);
+  if (!Number.isInteger(id) || id <= 0) fail(404, 'الباقة غير موجودة');
+  const p = q(`SELECT p.*, c.name AS company_name, c.color AS company_color, c.logo AS company_logo, c.esim_fee AS company_esim_fee
+               FROM packages p JOIN companies c ON c.id = p.company_id
+               WHERE p.id = ? AND p.active = 1 AND p.shop_price > 0`).get(id);
+  if (!p || !shopKind(p)) fail(404, 'الباقة غير متوفرة');
+  await ensureStock();
+  const held = new Set(heldNumbers().map((h) => h.number));
+  const available = s.shopEnabled && inStock(p.id, held);
+  const allLive = s.shopEnabled ? shopRows().filter((r) => r.id !== p.id && inStock(r.id, held)) : [];
+  const related = [
+    ...allLive.filter((r) => r.company_id === p.company_id),
+    ...allLive.filter((r) => r.company_id !== p.company_id),
+  ].slice(0, 6).map((r) => publicPackageView(r, s));
+  return {
+    package: publicPackageView(p, s),
+    company: {
+      id: p.company_id, name: p.company_name, color: p.company_color, logo: p.company_logo,
+      esimFee: p.company_esim_fee === null || p.company_esim_fee === undefined ? s.esimFee : round(p.company_esim_fee),
+    },
+    available,
+    related,
+  };
+});
 
 // The free eSIM numbers of a package at its supplier (remembered there, so a sale can use one), without the ones other
 // customers hold: [{ id, phone, sim, qr }]. QuickLine's come with their eSIM and QR code; Layan's get theirs when
@@ -927,4 +962,4 @@ route('GET', '/api/shop/admin/summary', ADMIN, () => ({
 // The WhatsApp chat pays an order directly too: the order as the page would find it (direct payment on, holds expired).
 const directOrderByCode = (code) => directOrder(code);
 module.exports = { shopCatalogResponse, shopCatalog, ensureStock, submitProof, orderView, byCode, createOrder, cancelOrder, refreshStock,
-  jcSendCode, jcConfirmCode, directOrderByCode, _resetThrottle: () => hits.clear() };
+  jcSendCode, jcConfirmCode, directOrderByCode, shopKind, shopRows, publicPackageView, _resetThrottle: () => hits.clear() };
