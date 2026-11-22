@@ -2,7 +2,7 @@
 // Customer shop: public catalog and orders (/api/shop/...), and the manager's side (/api/shop/admin/...).
 const crypto = require('node:crypto');
 const { q, getSettings, qlCredentials } = require('../db');
-const { fail, now, round, str, normalizePhone, validPhone, normalizeIccid, validIccid, imageOrEmpty } = require('../util');
+const { fail, now, round, str, normalizePhone, validPhone, imageOrEmpty } = require('../util');
 const D = require('../domain');
 const shop = require('../shop');
 const ql = require('../quickline');
@@ -41,7 +41,7 @@ function esimPackage(id) {
 
 // The shop sells eSIMs only, each on a number its supplier has free: 'esim' for a supplier's eSIM (QuickLine, Layan,
 // telecom's ALOHA, Aylol's eSIMs), 'line' for an Aylol new line sold as an eSIM. Nothing else is sold: no line on a
-// SIM card, no recharge of an existing number, no eSIM without a supplier's number.
+// SIM card, no eSIM without a supplier's number.
 function shopKind(p) {
   const art = p?.art_card_id || '';
   if (/^ay:bill:/.test(art)) {
@@ -93,15 +93,9 @@ const maskMobile = (m) => (m && m.length >= 7 ? `${m.slice(0, 3)}${'•'.repeat(
 // What the customer sees: one stage that combines payment and activation.
 function stage(o, line) {
   if (o.status !== 'paid') return o.status;
+  // The manager refused the activation (src/routes/tasks.js clears the line and says why).
+  if (!line && /^رُفض التفعيل/.test(o.error || '')) return 'failed';
   if (!line) return o.error ? 'paid_issue' : 'processing';
-  if (o.kind === 'recharge') {
-    // A renewal: done once the extension is carried out (its task at the supplier or the manager), refused → failed.
-    const t = q("SELECT status FROM tasks WHERE line_id = ? AND type = 'renew' AND created_at >= ? ORDER BY id DESC LIMIT 1")
-      .get(line.id, (o.paid_at || o.created_at) - 60_000);
-    if (t?.status === 'open') return 'processing';
-    if (t?.status === 'rejected') return 'failed';
-    return 'done';
-  }
   if (line.status === 'pending') return 'processing';
   if (line.status === 'disconnected') return 'failed';
   return 'done';
@@ -349,80 +343,13 @@ route('POST', '/api/shop/orders', null, ({ body, ip, req }) => {
   return createOrder(body, { ip, clientId: str(req?.headers?.['x-client-id'] || body.clientId || '', 64) });
 });
 
-// ---------- renewing a number (any line in the system) ----------
-// The line behind a number, and the packages that may renew it at the shop's price: its company's, priced for the shop
-// (shop_price), and that its supplier extends (quickline.renewalProblem: a QuickLine / Layan / telecom line only on its
-// own package's extension). What the customer sees: the company, the package, the expiry — never whose it is.
-function renewalLine(numberInput) {
-  let number = '';
-  try { number = validPhone(normalizePhone(toLatinDigits(String(numberInput || '')))); } catch { fail(400, 'اكتب رقم الخط اللي بدك تمدّده (10 أرقام يبدأ بـ 05)'); }
-  // Only a number a supplier lists (read every hour: src/supsubs.js), whose line the same reading keeps in our system.
-  const sub = require('../supsubs').renewable(number);
-  const l = sub && q(`${D.LINE_SELECT} WHERE l.number = ? AND l.status != 'disconnected' ORDER BY l.id DESC LIMIT 1`).get(number);
-  if (!l) fail(404, 'هذا الرقم غير مسجّل عند مزوّدينا — للتمديد تواصل مع الدعم.');
-  if (sub.end_at) l.expires_at = sub.end_at;
-  Object.assign(l, { sub_supplier: sub.supplier, sub_pkg: sub.pkg_id || '' });
-  if (l.status === 'pending') fail(409, 'طلب هذا الرقم ما زال قيد التنفيذ — جرّب بعد قليل.');
-  if (q("SELECT 1 FROM tasks WHERE line_id = ? AND type = 'renew' AND status = 'open'").get(l.id)) fail(409, 'تمديد هذا الرقم قيد التنفيذ الآن.');
-  return l;
-}
-function renewalOptions(l) {
-  const { renewalProblem } = require('../quickline');
-  return q(`SELECT p.*, c.name AS company_name FROM packages p JOIN companies c ON c.id = p.company_id
-            WHERE p.active = 1 AND p.shop_price > 0 ${l.company_id ? 'AND p.company_id = ?' : ''} ORDER BY p.shop_price, p.id`)
-    .all(...(l.company_id ? [l.company_id] : []))
-    .filter((p) => !renewalProblem(l.package_ref, p.art_card_id) && !/^(qln|lyn|tcn|ay:bill|ay:esim):/.test(p.art_card_id || ''))
-    .filter((p) => fromItsSupplier(l, p.art_card_id));
-}
-// A line whose package we could not tell (added from a supplier's list) is not renewed at another supplier, and at its
-// own on its own package when the supplier gave its id (QuickLine, telecom). A package carried out by hand stays.
-function fromItsSupplier(l, ref) {
-  const { supplierOfRef } = require('../quickline');
-  if (!l.sub_supplier || supplierOfRef(l.package_ref).supplier) return true;
-  const p = supplierOfRef(ref);
-  if (!p.supplier) return true;
-  if (p.supplier !== l.sub_supplier) return false;
-  return !(l.sub_pkg && ['ql', 'tc'].includes(p.supplier)) || String(p.qlPackage) === String(l.sub_pkg);
-}
-function renewalView(l) {
-  return {
-    number: l.number, company: l.company_name || '', packageLabel: l.package_label || '', expiresAt: l.expires_at || null,
-    status: l.status, options: renewalOptions(l).map((p) => ({ id: p.id, name: p.name, label: D.packageLabel(p), price: round(p.shop_price), days: p.days || 30 })),
-  };
-}
-route('GET', '/api/shop/renew', null, ({ query, ip }) => {
-  enabled();
-  throttle(ip, 'renew_lookup', 30);
-  return renewalView(renewalLine(query.number));
-});
-route('POST', '/api/shop/renewals', null, ({ body, ip, req }) => {
-  throttle(ip, 'order', 20);
-  return createRenewal(body, { ip, clientId: str(req?.headers?.['x-client-id'] || body.clientId || '', 64) });
-});
-// A renewal order (kind 'recharge'): paid like any order (directly, or by transfer while that is on); once paid the shop's
-// account renews the line (shop.fulfil → lines.renewLine), carried out by its supplier when it is one we automate.
-function createRenewal(body, { ip, clientId = '' }) {
-  const l = renewalLine(body.number);
-  const p = renewalOptions(l).find((x) => x.id === Number(body.packageId));
-  if (!p) fail(404, 'هذه الرزمة لا تصلح لتمديد هذا الرقم — اختر من القائمة');
-  orderGuards({ number: l.number, contactPhone: body.contactPhone }, { ip, clientId });
-  let contact = '';
-  try { contact = body.contactPhone ? validPhone(normalizePhone(toLatinDigits(String(body.contactPhone)))) : ''; } catch {}
-  const code = newCode();
-  const t = now();
-  q(`INSERT INTO shop_orders (code, package_id, package_label, kind, number, sim, customer_name, contact_phone, amount, esim_fee, ip, client_id, created_at, updated_at, esim)
-     VALUES (?, ?, ?, 'recharge', ?, '', ?, ?, ?, 0, ?, ?, ?, ?, 0)`)
-    .run(code, p.id, /تمديد/.test(p.name) ? D.packageLabel(p) : `تمديد ${D.packageLabel(p)}`, l.number, '', contact, round(p.shop_price), ip, clientId, t, t); // not the line's owner's name: whoever has the order sees it
-  return orderView(byCode(code));
-}
-
 // A new order, with every check the web page's orders get (also made over WhatsApp, where ip and clientId name the chat).
 async function createOrder(body, { ip, clientId = '' }) {
   const s = orderGuards(body, { ip, clientId });
   // eSIMs only (whatever the request asks for): a supplier's eSIM, or an Aylol new line as an eSIM.
   return newOrder(body, { ip, clientId, s });
 }
-// What every customer order is checked against first (an eSIM or a renewal): the hourly limit, one order waiting at a
+// What every customer order is checked against first: the hourly limit, one order waiting at a
 // time per customer and per number, and per network. Returns the settings.
 function orderGuards(body, { ip, clientId = '' }) {
   // At most so many orders an hour from one customer (their browser or chat, or their contact phone).
@@ -898,7 +825,6 @@ route('POST', '/api/shop/admin/orders/:id/retry', ADMIN, ({ params, body }) => {
   const o = adminOrder(params.id);
   if (o.status !== 'paid' || o.line_id) fail(400, 'هذا الطلب لا يحتاج إعادة');
   if (body.number) q('UPDATE shop_orders SET number = ? WHERE id = ?').run(validPhone(normalizePhone(body.number)), o.id);
-  if (body.sim && o.kind === 'new') q('UPDATE shop_orders SET sim = ? WHERE id = ?').run(validIccid(normalizeIccid(body.sim)), o.id);
   shop.fulfil(o.id);
   const fresh = adminOrder(o.id);
   if (!fresh.line_id) fail(400, fresh.error || 'تعذّر التنفيذ');
@@ -975,11 +901,9 @@ route('GET', '/api/shop/admin/ai/status', ADMIN, () => ({ ...shop.aiState, ready
 
 route('GET', '/api/shop/admin/summary', ADMIN, () => ({
   open: q("SELECT COUNT(*) AS n FROM shop_orders WHERE status IN ('verifying','review') OR (status = 'paid' AND line_id IS NULL)").get().n,
-  agentId: shop.shopAgent().id,
 }));
 
 // The WhatsApp chat pays an order directly too: the order as the page would find it (direct payment on, holds expired).
 const directOrderByCode = (code) => directOrder(code);
 module.exports = { shopCatalogResponse, shopCatalog, ensureStock, submitProof, orderView, byCode, createOrder, cancelOrder, refreshStock,
-  renewalLine, renewalOptions, renewalView, createRenewal,
   jcSendCode, jcConfirmCode, directOrderByCode, _resetThrottle: () => hits.clear() };

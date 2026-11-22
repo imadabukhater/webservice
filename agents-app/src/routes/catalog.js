@@ -1,14 +1,20 @@
 'use strict';
+// The manager's companies and eSIM packages (the shop sells them at their customer price, shop_price).
 const { q } = require('../db');
-const { fail, now, round, str, num, int, isBlank, dateOrNull, imageOrEmpty } = require('../util');
-const { LIVE_OFFER, priceFor, notify, prefixesOf, AGENT_PRICE_SQL, AGENT_PRICE_JOINS } = require('../domain');
-const { route, ADMIN, ANY } = require('../router');
+const { fail, round, str, num, int, isBlank, imageOrEmpty } = require('../util');
+const { route, ADMIN } = require('../router');
 
-const companyView = (c, admin) => ({
+const prefixesOf = (c) => String(c.iccid_prefixes || '').split(/[\s,]+/).filter(Boolean);
+const companyView = (c) => ({
   id: c.id, name: c.name, sort: c.sort, color: c.color, logo: c.logo, prefixes: prefixesOf(c), activation: c.activation || 'manual',
   esimFee: c.esim_fee === null || c.esim_fee === undefined ? null : round(c.esim_fee),
-  ...(admin ? { packageCount: c.package_count ?? 0 } : {}),
+  packageCount: c.package_count ?? 0,
 });
+
+// The packages that can be sold as an eSIM: a supplier's eSIM (QuickLine, Layan, telecom, Aylol), an Aylol new line
+// sold as an eSIM, or a package the manager added by hand with eSIM on. Recharge cards and extensions are not sold.
+const ESIM_SQL = `(p.art_card_id LIKE 'qln:%' OR p.art_card_id LIKE 'lyn:%' OR p.art_card_id LIKE 'tcn:%'
+  OR p.art_card_id LIKE 'ay:esim:%' OR p.art_card_id LIKE 'ay:bill:%' OR (p.art_card_id = '' AND p.esim_enabled = 1))`;
 
 // Unlimited minutes/SMS are stored as -1.
 function amount(v, label) {
@@ -19,80 +25,62 @@ function amount(v, label) {
   return Math.round(n);
 }
 
-// What every screen needs to sell a package. The supplier behind it (who activates it) is the manager's only, so an
-// agent gets what the selling screens need, never a name: auto (a supplier carries it out for "auto" companies),
-// pool (its number is picked from a list of free numbers) and waits (never activated directly: it waits for the supplier).
 // Aylol bill lines sold automatically: only for the site's companies whose order form is known (see aylol.js).
 const ayBillAuto = (p) => require('../aylol').billAuto(p.art_card_id, p.supplier_company);
-const packageAttrs = (p, admin = false) => {
+const packageAttrs = (p) => {
   const ref = p.art_card_id || '';
   return {
     dataGb: p.data_gb, minutes: p.minutes, sms: p.sms, tag: p.tag, description: p.description,
-    kind: p.kind === 'card' ? 'card' : 'invoice', days: p.days ?? null,
+    kind: 'invoice', days: p.days ?? null,
     popular: !!p.popular,
     oldPrice: p.old_price ? round(p.old_price) : null,
     esimEnabled: !!p.esim_enabled,
-    // ownSim: the number comes with its SIM (a Layan new line), though Layan packages also support eSIM activation (lyEsim).
-    auto: !!ref, pool: /^(qln|lyn):|^ay:esim:/.test(ref) || ayBillAuto(p), waits: /^(qln?|lyn?|tcn?|ay):/.test(ref), ownSim: /^lyn:/.test(ref),
-    // An Aylol bill line: a new number from Aylol's list, on the customer's SIM card (never an eSIM).
-    simOnly: /^ay:bill:/.test(ref),
-    lyEsim: /^lyn:/.test(ref) || !!p.esim_enabled,
-    // Sold as an eSIM only, on a number from the supplier's list (an Aylol new subscription).
+    // auto: a supplier carries it out (for "auto" companies); pool: its number is picked from the supplier's free
+    // numbers; waits: never active before the supplier activated it.
+    auto: !!ref, pool: /^(qln|lyn):|^ay:esim:/.test(ref) || ayBillAuto(p), waits: /^(qln|lyn|tcn|ay):/.test(ref),
     esimOnly: /^ay:esim:/.test(ref),
-    ...(admin ? { art: !!ref, ql: /^qln:/.test(ref), ...require('../quickline').supplierOfRef(ref) } : {}),
+    art: !!ref, ql: /^qln:/.test(ref), ...require('../quickline').supplierOfRef(ref),
   };
 };
-// The supplier's code for a package, shown to the manager. art-topup refs end in the code (ic:12345); QuickLine's
-// carry the package id and the duration (ql:2564:30), and the id is what identifies it there.
+// The supplier's code for a package, shown to the manager. QuickLine's and telecom's refs carry the package id and
+// the duration (qln:2564:30), and the id is what identifies it there; the others end in it.
 const artCode = (ref) => {
   const parts = String(ref || '').split(':').filter(Boolean);
   if (!parts.length) return '';
-  return /^(qln?|tcn?)$/.test(parts[0]) ? parts[1] || '' : parts.slice(-1)[0] || '';
+  return /^(qln|tcn)$/.test(parts[0]) ? parts[1] || '' : parts.slice(-1)[0] || '';
 };
 
-// Agents see their own price (and never the cost); packages without a price are hidden from them.
-function catalogFor(user) {
-  const companies = q(`SELECT c.*, (SELECT COUNT(*) FROM packages p WHERE p.company_id = c.id) AS package_count
+function catalog() {
+  const companies = q(`SELECT c.*, (SELECT COUNT(*) FROM packages p WHERE p.company_id = c.id AND ${ESIM_SQL}) AS package_count
                        FROM companies c ORDER BY c.sort, c.id`).all();
-  if (user.role === 'agent') {
-    const packages = q(`SELECT p.*, c.name AS company_name, ${AGENT_PRICE_SQL} AS agent_price, ap.price IS NOT NULL AS custom
-                        FROM packages p JOIN companies c ON c.id = p.company_id
-                        ${AGENT_PRICE_JOINS}
-                        WHERE p.active = 1 AND p.id NOT IN (SELECT package_id FROM agent_hidden WHERE agent_id = ?)
-                        ORDER BY c.sort, c.id, p.sort, p.id`).all(user.id, user.id, user.id)
-      .filter((p) => p.agent_price > 0)
-      .map((p) => ({ id: p.id, name: p.name, companyId: p.company_id, companyName: p.company_name, price: round(p.agent_price), custom: !!p.custom, active: true, ...packageAttrs(p) }));
-    return { companies: companies.map((c) => companyView(c, false)), packages };
-  }
   const packages = q(`SELECT p.*, c.name AS company_name FROM packages p JOIN companies c ON c.id = p.company_id
-                      ORDER BY c.sort, c.id, p.sort, p.id`).all()
+                      WHERE ${ESIM_SQL} ORDER BY c.sort, c.id, p.sort, p.id`).all()
     .map((p) => ({ id: p.id, name: p.name, companyId: p.company_id, companyName: p.company_name, cost: round(p.cost), price: round(p.price), shopPrice: p.shop_price === null ? null : round(p.shop_price), active: !!p.active, sort: p.sort,
       artCode: artCode(p.art_card_id), edited: !!p.edited, gone: !!p.gone_at, artPrice: p.art_price === null ? null : round(p.art_price),
       supplierCost: p.supplier_cost === null || p.supplier_cost === undefined ? null : round(p.supplier_cost),
       // The supplier's price changed and the manager has not decided yet.
       artPending: p.art_price !== null && round(p.art_price) !== round(p.cost) && (p.art_ack === null || round(p.art_ack) !== round(p.art_price)),
-      ...packageAttrs(p, true) }));
-  return { companies: companies.map((c) => companyView(c, true)), packages };
+      ...packageAttrs(p) }));
+  return { companies: companies.map(companyView), packages };
 }
 
-route('GET', '/api/catalog', ANY, ({ user }) => catalogFor(user));
+route('GET', '/api/catalog', ADMIN, () => catalog());
 
-// The same new line on offer from two suppliers (same company, same data, same duration): the manager is told which
-// is cheaper to activate, and can keep that one for the agents. Only new lines compare: a recharge card (art-topup,
-// any prepaid number) and an extension (QuickLine, only its own lines) are not the same service.
+// The same eSIM on offer from two suppliers (same company, same data, same duration): the manager is told which
+// is cheaper to activate, and can keep that one on sale.
 // A group is listed while acting on it saves something: a pricier one is on sale, or the cheapest is hidden.
 route('GET', '/api/catalog/similar', ADMIN, () => {
   const rows = q(`SELECT p.id, p.name, p.cost, p.price, p.active, p.days, p.data_gb, p.art_card_id, p.company_id, c.name AS company_name
                   FROM packages p JOIN companies c ON c.id = p.company_id
                   WHERE p.kind = 'invoice' AND p.cost > 0 AND p.data_gb > 0
-                    AND (p.art_card_id LIKE 'inv:%' OR p.art_card_id LIKE 'qln:%' OR p.art_card_id LIKE 'lyn:%' OR p.art_card_id LIKE 'tcn:%')`).all();
+                    AND (p.art_card_id LIKE 'qln:%' OR p.art_card_id LIKE 'lyn:%' OR p.art_card_id LIKE 'tcn:%')`).all();
   const groups = new Map();
   for (const r of rows) {
     const key = `${r.company_id}|${r.data_gb}|${r.days || 30}`;
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key).push(r);
   }
-  const source = (ref) => (/^qln:/.test(ref) ? 'QuickLine' : /^lyn:/.test(ref) ? 'ليان' : /^tcn:/.test(ref) ? 'telecom' : 'art-topup');
+  const source = (ref) => (/^qln:/.test(ref) ? 'QuickLine' : /^lyn:/.test(ref) ? 'ليان' : 'telecom');
   const out = [];
   for (const [key, list] of groups) {
     if (new Set(list.map((r) => source(r.art_card_id))).size < 2) continue;
@@ -163,7 +151,7 @@ function packageFields(body, existing = {}) {
   if (cost < 0 || price < 0) fail(400, 'الأسعار لا تكون سالبة');
   const dataRaw = pick('dataGb', 'data_gb');
   const dataGb = isBlank(dataRaw) ? null : num(dataRaw, 'حجم الإنترنت');
-  const kind = pick('kind') === 'card' ? 'card' : 'invoice';
+  const kind = 'invoice';
   const daysRaw = pick('days');
   const days = isBlank(daysRaw) ? null : int(Number(daysRaw), 'عدد الأيام', 1, 730);
   const shopRaw = pick('shopPrice', 'shop_price');
@@ -176,7 +164,8 @@ function packageFields(body, existing = {}) {
     companyId, name, cost, price, dataGb, kind, days, shopPrice: shopPrice || null,
     oldPrice: oldPrice || null,
     popular: body.popular === undefined ? (existing.popular ?? 0) : body.popular ? 1 : 0,
-    esimEnabled: body.esimEnabled === undefined ? (existing.esim_enabled ?? 0) : body.esimEnabled ? 1 : 0,
+    // A package added by hand is an eSIM unless the manager says otherwise.
+    esimEnabled: body.esimEnabled === undefined ? (existing.esim_enabled ?? 1) : body.esimEnabled ? 1 : 0,
     minutes: body.minutes === undefined ? existing.minutes ?? null : amount(body.minutes, 'الدقائق'),
     sms: body.sms === undefined ? existing.sms ?? null : amount(body.sms, 'الرسائل'),
     tag: str(pick('tag') ?? '', 30),
@@ -193,7 +182,7 @@ route('POST', '/api/packages', ADMIN, ({ body }) => {
     .run(f.companyId, f.name, f.cost, f.price, f.active, sort, f.dataGb, f.minutes, f.sms, f.tag, f.description, f.kind, f.days, f.shopPrice, f.oldPrice, f.popular, f.esimEnabled).lastInsertRowid) };
 });
 
-// Changing what agents see or pay marks the package as edited, so an art-topup sync keeps the manager's version.
+// Changing what customers see marks the package as edited, so a supplier sync keeps the manager's version.
 // Showing or hiding it alone does not.
 route('PUT', '/api/packages/:id', ADMIN, ({ params, body }) => {
   const p = q('SELECT * FROM packages WHERE id = ?').get(Number(params.id));
@@ -221,10 +210,9 @@ route('POST', '/api/packages/bulk', ADMIN, ({ body }) => {
   const ids = Array.isArray(body.ids) ? body.ids.map(Number).filter((n) => Number.isInteger(n) && n > 0) : [];
   if (!all && !ids.length) fail(400, 'حدد رزمة واحدة على الأقل');
 
-  let where = all ? '1=1' : `id IN (${ids.map(() => '?').join(',')})`;
+  let where = all ? ESIM_SQL.replace(/p\./g, '') : `id IN (${ids.map(() => '?').join(',')})`;
   const args = all ? [] : [...ids];
   if (all && body.companyId) { where += ' AND company_id = ?'; args.push(Number(body.companyId)); }
-  if (all && body.kind && ['invoice', 'card'].includes(body.kind)) { where += ' AND kind = ?'; args.push(body.kind); }
 
   let changed = 0;
   if (action === 'delete') {
@@ -252,65 +240,4 @@ route('POST', '/api/packages/bulk', ADMIN, ({ body }) => {
   return { ok: true, changed, affected: changed };
 });
 
-// ----- offers -----
-route('GET', '/api/offers', ANY, ({ user }) => {
-  const t = now();
-  const agent = user.role === 'agent';
-  const rows = q(`SELECT o.*, p.name AS package_name, p.active AS package_active, p.company_id, p.data_gb, p.minutes, p.sms, p.tag,
-                    c.name AS company_name, c.color AS company_color, c.logo AS company_logo
-                  FROM offers o LEFT JOIN packages p ON p.id = o.package_id LEFT JOIN companies c ON c.id = p.company_id
-                  ${agent ? `WHERE ${LIVE_OFFER}` : ''} ORDER BY o.created_at DESC`).all(...(agent ? [t, t] : []));
-  return rows
-    .filter((o) => !agent || !o.package_id || o.package_active)
-    .map((o) => {
-      const regular = o.package_id && agent ? round(priceFor(user.id, o.package_id).agent_price) : undefined;
-      return {
-        id: o.id, title: o.title, details: o.details, packageId: o.package_id, companyId: o.company_id,
-        packageLabel: o.package_id ? `${o.company_name} ${o.package_name}` : '',
-        companyName: o.company_name || '', companyColor: o.company_color || '', companyLogo: o.company_logo || '',
-        dataGb: o.data_gb, minutes: o.minutes, sms: o.sms, tag: o.tag || '',
-        offerPrice: o.offer_price === null ? null : round(o.offer_price), regularPrice: regular,
-        startsAt: o.starts_at, endsAt: o.ends_at, active: !!o.active,
-        live: !!o.active && (o.starts_at === null || o.starts_at <= t) && (o.ends_at === null || o.ends_at >= t),
-      };
-    });
-});
-
-function offerFields(body, existing = {}) {
-  const title = str(body.title ?? existing.title, 100);
-  if (!title) fail(400, 'اكتب عنوان العرض');
-  const packageId = body.packageId === undefined ? existing.package_id ?? null : body.packageId ? Number(body.packageId) : null;
-  if (packageId && !q('SELECT 1 FROM packages WHERE id = ?').get(packageId)) fail(400, 'الرزمة غير موجودة');
-  const rawPrice = body.offerPrice === undefined ? existing.offer_price : body.offerPrice;
-  const offerPrice = isBlank(rawPrice) ? null : num(rawPrice, 'سعر العرض');
-  if (offerPrice !== null && offerPrice < 0) fail(400, 'السعر لا يكون سالباً');
-  const startsAt = body.startsAt === undefined ? existing.starts_at ?? null : dateOrNull(body.startsAt);
-  const endsAt = body.endsAt === undefined ? existing.ends_at ?? null : dateOrNull(body.endsAt);
-  if (startsAt && endsAt && endsAt < startsAt) fail(400, 'تاريخ النهاية قبل تاريخ البداية');
-  const active = body.active === undefined ? (existing.active ?? 1) : body.active ? 1 : 0;
-  return { title, details: str(body.details ?? existing.details, 1000), packageId, offerPrice, startsAt, endsAt, active };
-}
-
-route('POST', '/api/offers', ADMIN, ({ body }) => {
-  const f = offerFields(body);
-  const id = Number(q(`INSERT INTO offers (title, details, package_id, offer_price, starts_at, ends_at, active, created_at)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).run(f.title, f.details, f.packageId, f.offerPrice, f.startsAt, f.endsAt, f.active, now()).lastInsertRowid);
-  if (f.active) notify({ role: 'agent', kind: 'offer', title: `عرض جديد: ${f.title}`, body: f.details.slice(0, 120), link: '#/offers' });
-  return { id };
-});
-
-route('PUT', '/api/offers/:id', ADMIN, ({ params, body }) => {
-  const o = q('SELECT * FROM offers WHERE id = ?').get(Number(params.id));
-  if (!o) fail(404, 'العرض غير موجود');
-  const f = offerFields(body, o);
-  q('UPDATE offers SET title = ?, details = ?, package_id = ?, offer_price = ?, starts_at = ?, ends_at = ?, active = ? WHERE id = ?')
-    .run(f.title, f.details, f.packageId, f.offerPrice, f.startsAt, f.endsAt, f.active, o.id);
-  return { ok: true };
-});
-
-route('DELETE', '/api/offers/:id', ADMIN, ({ params }) => {
-  q('DELETE FROM offers WHERE id = ?').run(Number(params.id));
-  return { ok: true };
-});
-
-module.exports = { catalogFor };
+module.exports = { catalog };

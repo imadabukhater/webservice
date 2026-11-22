@@ -3,15 +3,13 @@
 export const S = {
   token: null,
   user: null,
-  settings: { appName: 'بوابة الوكلاء', warnDays: 7, lowBalance: 0 },
+  settings: { appName: 'متجر eSIM' },
   badges: { bell: 0, tasks: 0 },
   catalog: null,
   syncOk: true,
   syncing: false,
 };
 try { S.token = localStorage.getItem('agents-token'); } catch { /* storage blocked */ }
-
-export const isAdmin = () => S.user?.role === 'admin';
 
 // ---------- API ----------
 export class ApiError extends Error {
@@ -73,7 +71,6 @@ const nf0 = new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 });
 export const fmtNum = (n) => nf0.format(Number(n) || 0);
 export const fmtMoney = (n) => `${nf2.format(round(n))} ₪`;
 export const money = (n) => `<span class="ltr nowrap">${fmtMoney(n)}</span>`;
-export const signedMoney = (n) => `<span class="ltr nowrap ${n > 0 ? 'plus' : n < 0 ? 'minus' : ''}">${n > 0 ? '+' : n < 0 ? '−' : ''}${fmtMoney(Math.abs(n))}</span>`;
 const p2 = (x) => String(x).padStart(2, '0');
 export const fmtDate = (ts) => { if (!ts) return '—'; const d = new Date(ts); return `${p2(d.getDate())}/${p2(d.getMonth() + 1)}/${d.getFullYear()}`; };
 export const fmtISO = (ts) => { if (!ts) return ''; const d = new Date(ts); return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`; };
@@ -104,7 +101,6 @@ export function arCount(n, [one, two, few, many]) {
 }
 export const monthsText = (m) => arCount(m, ['شهر', 'شهران', 'أشهر', 'شهراً']);
 export const daysText = (d) => arCount(d, ['يوم', 'يومان', 'أيام', 'يوماً']);
-export const simsText = (n) => arCount(n, ['شريحة واحدة', 'شريحتان', 'شرائح', 'شريحة']);
 
 export const fmtPhone = (n) => {
   const d = String(n || '');
@@ -134,27 +130,7 @@ export const initials = (name) => {
 };
 
 // ---------- domain display ----------
-export const STATE = {
-  active: 'فعّال', expiring: 'ينتهي قريباً', expired: 'منتهي', frozen: 'مجمّد', pending: 'قيد التنفيذ', disconnected: 'مفصول',
-};
-export const statePill = (state) => `<span class="pill s-${state}">${STATE[state] || state}</span>`;
 export const TASK_STATUS = { open: 'بانتظار التنفيذ', done: 'تم', rejected: 'مرفوض' };
-export const TASK_TYPE = {
-  topup: 'طلب شحن رصيد', port: 'تحويل رقم', esim: 'تفعيل eSIM', general: 'طلب عام', activate: 'تفعيل خط', recharge: 'زبون دفع مسبق', renew: 'تمديد رزمة',
-};
-export const OP = {
-  activate: 'تفعيل خط', renew: 'تمديد', topup: 'شحن رصيد', deduct: 'خصم رصيد', transfer_in: 'رصيد وارد', transfer_out: 'رصيد صادر',
-  freeze: 'تجميد', unfreeze: 'إلغاء تجميد', disconnect: 'فصل', swap_sim: 'تبديل شريحة', line_move: 'نقل رقم', line_delete: 'حذف خط', line_edit: 'تعديل خط',
-  refund: 'استرجاع', port_done: 'تحويل رقم', esim_done: 'تفعيل eSIM', activate_done: 'تنفيذ تفعيل', renew_done: 'تنفيذ تمديد',
-  supplier_sync: 'عند المورّد',
-};
-export const OP_ICON = {
-  activate: ['plus', 'blue'], renew: ['repeat', 'green'], topup: ['wallet', 'green'], deduct: ['wallet', 'red'],
-  transfer_in: ['swap', 'green'], transfer_out: ['swap', 'red'], freeze: ['snow', 'violet'], unfreeze: ['play', 'green'],
-  disconnect: ['power', 'red'], swap_sim: ['sim', 'amber'], line_move: ['swap', 'amber'], line_delete: ['trash', 'red'], line_edit: ['edit', 'amber'],
-  refund: ['undo', 'green'], port_done: ['repeat', 'cyan'], esim_done: ['qr', 'cyan'], activate_done: ['checkCircle', 'cyan'], renew_done: ['checkCircle', 'cyan'],
-  supplier_sync: ['refresh', 'cyan'],
-};
 
 // Uploaded logo when there is one; otherwise the name as a wordmark (large tiles) or its first letter (small badges).
 export function companyLogo(c, size = '') {
@@ -164,19 +140,6 @@ export function companyLogo(c, size = '') {
     ? `<img src="${esc(c.logo)}" alt="">`
     : `<span class="mono ${word ? 'word' : ''}" style="--co:${esc(c.color || '#475569')}">${esc(word ? c.name : String(c.name).trim()[0] || '؟')}</span>`;
   return `<span class="co-logo ${size}">${inner}</span>`;
-}
-
-export const companyById = (id) => S.catalog?.companies.find((c) => c.id === id) || null;
-
-// Detects the company from an ICCID using the prefixes the manager configured (or the app learned).
-export function detectCompany(iccid) {
-  const d = digits(iccid);
-  let best = null;
-  let len = 0;
-  for (const c of S.catalog?.companies || []) {
-    for (const p of c.prefixes || []) if (d.startsWith(p) && p.length > len) { best = c; len = p.length; }
-  }
-  return best;
 }
 
 export function specs(p, { compact = false } = {}) {

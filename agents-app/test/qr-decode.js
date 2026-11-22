@@ -1,8 +1,8 @@
 'use strict';
-// Test helper (not a test file): reads a QR code drawn by src/qr.js (8-bit grey PNG data URL) with the ZXing library the
-// app already ships for its camera scanner, so tests prove a code is a real, scannable QR.
+// Test helper (not a test file): reads a QR code drawn by src/qr.js (8-bit grey PNG data URL) with the ZXing library
+// (kept under test/vendor for the tests only), so tests prove a code is a real, scannable QR.
 const zlib = require('node:zlib');
-const ZXing = require('../public/js/vendor/zxing.min.js');
+const ZXing = require('./vendor/zxing.min.js');
 
 function decodeQrDataUrl(dataUrl) {
   const m = /^data:image\/png;base64,(.+)$/.exec(String(dataUrl || ''));

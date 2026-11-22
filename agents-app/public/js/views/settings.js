@@ -64,7 +64,7 @@ function waHtml(w) {
   return `
         <section class="card card-pad form">
           <h2 class="dot-title">واتساب المتجر</h2>
-          <p class="muted small">يربط رقم واتساب المتجر بالسيرفر (مثل واتساب ويب). بعدها يرد تلقائياً: <b>الوكيل</b> (رقمه المحفوظ في حسابه) يرى رزمه وأسعاره ورصيده، ويشحن ويفعّل eSIM من رصيده بعد أن يرسل «نعم»، وتصله النتيجة ورمز QR الحقيقي في المحادثة. <b>الزبون</b> يشتري في المحادثة: يختار الشركة ثم الخدمة ثم الباقة، فيُحجز له طلب حقيقي في المتجر، ثم يرسل اسم المحوِّل أو الرقم المرجعي أو صورة الإشعار، فيُفحص التحويل في إشعارات جوال باي، ويصله التفعيل ورمز eSIM في المحادثة. مع المساعد الذكي يرد على الأسئلة الحرة من باقاتك وأسعارك.</p>
+          <p class="muted small">يربط رقم واتساب المتجر بالسيرفر (مثل واتساب ويب). بعدها يرد تلقائياً: <b>الزبون</b> يشتري eSIM في المحادثة: يختار الشركة ثم الخدمة ثم الباقة، فيُحجز له طلب حقيقي في المتجر، ثم يرسل اسم المحوِّل أو الرقم المرجعي أو صورة الإشعار، فيُفحص التحويل في إشعارات جوال باي، ويصله التفعيل ورمز eSIM في المحادثة. مع المساعد الذكي يرد على الأسئلة الحرة من باقاتك وأسعارك.</p>
           <div id="wa-status">${waStatusHtml(w)}</div>
         </section>
         <section class="card card-pad form">
@@ -84,8 +84,7 @@ function waHtml(w) {
 }
 
 export default {
-  admin: true,
-  title: () => ({ title: 'الإعدادات', subtitle: 'اسم التطبيق، الرسوم، الدعم الفني والنسخ الاحتياطي' }),
+  title: () => ({ title: 'الإعدادات', subtitle: 'اسم التطبيق، الرسوم، المورّدون، واتساب والنسخ الاحتياطي' }),
   async load(ctx) {
     if (TABS.some(([k]) => k === ctx?.query?.tab)) V.tab = ctx.query.tab;
     S.settings = await api.get('/api/settings');
@@ -99,18 +98,12 @@ export default {
         <form class="card card-pad form" id="settings-form" novalidate>
           <h2 class="dot-title">عام</h2>
           <div class="field"><label for="st-name">اسم التطبيق</label><input class="input" id="st-name" name="appName" value="${esc(s.appName)}">
-            <span class="hint">يظهر للوكلاء في شاشة الدخول والقائمة.</span></div>
-          <div class="row2 stack-xs">
-            <div class="field"><label for="st-warn">التنبيه قبل انتهاء الرزمة (أيام)</label><input class="input ltr" id="st-warn" name="warnDays" type="number" min="1" max="60" value="${s.warnDays}">
-              <span class="hint">تظهر الأرقام في «قيد الفصل» وفي المهام قبل هذه المدة.</span></div>
-            <div class="field"><label for="st-low">حد الرصيد المنخفض (₪)</label><input class="input ltr" id="st-low" name="lowBalance" type="number" min="0" step="1" value="${s.lowBalance}">
-              <span class="hint">ينبّه الوكيل والمدير عندما ينزل الرصيد المتاح تحته. 0 لإيقاف التنبيه.</span></div>
-          </div>
+            <span class="hint">يظهر في شاشة الدخول والقائمة.</span></div>
           <div class="row2 stack-xs">
             <div class="field"><label for="st-esim">رسوم تفعيل eSIM (₪)</label><input class="input ltr" id="st-esim" name="esimFee" type="number" min="0" step="0.5" value="${s.esimFee}">
-              <span class="hint">تُضاف إلى سعر كل تفعيل eSIM جديد وتُخصم من رصيد الوكيل. 0 لإلغائها.</span></div>
+              <span class="hint">السعر العام لرمز QR، يُضاف إلى سعر الزبون (إلا إن حددت سعراً للشركة). 0 لإلغائها.</span></div>
             <div class="field"><label for="st-wa">واتساب الدعم الفني</label><input class="input ltr" id="st-wa" name="supportWhatsapp" inputmode="tel" placeholder="972567725080" value="${esc(s.supportWhatsapp)}">
-              <span class="hint">بالصيغة الدولية بدون + أو 0 في البداية. يظهر للوكلاء زر واتساب في أعلى الشاشة. اتركه فارغاً لإخفائه.</span></div>
+              <span class="hint">بالصيغة الدولية بدون + أو 0 في البداية. يظهر للزبائن في المتجر وفي رسالة رمز eSIM. اتركه فارغاً لإخفائه.</span></div>
           </div>
           <div id="settings-msg"></div>
           <button class="btn btn-primary" type="submit">${icon('check')}حفظ الإعدادات</button>
@@ -121,24 +114,9 @@ export default {
         </section>
 `,
       suppliers: `
-        <form class="card card-pad form" id="art-form" novalidate autocomplete="off">
-          <h2 class="dot-title">الشحن التلقائي عبر art-topup</h2>
-          <p class="muted small">يشحن السيرفر كروت الشركات المضبوطة على «تلقائي» من حسابك في art-topup، ويُكمل الطلب بنفسه. إن تعذّر، يبقى الطلب عندك.</p>
-          <div class="row2 stack-xs">
-            <div class="field"><label for="art-user">اسم المستخدم في art-topup</label><input class="input ltr" id="art-user" name="artUser" value="${esc(s.artUser || '')}" autocomplete="off"></div>
-            <div class="field"><label for="art-pass">كلمة المرور</label><input class="input ltr" id="art-pass" name="artPass" type="password" autocomplete="new-password" placeholder="${s.artConfigured ? 'محفوظة — اتركها فارغة للإبقاء' : ''}"></div>
-          </div>
-          <div class="msg info">${icon('info')}<span>المزامنة ونسبة الربح منفصلتان لكل نظام: افتح «الشركات والرزم» ← تبويب «كروت الشحن» أو «الفواتير».</span></div>
-          <div id="art-msg"></div>
-          <div class="btn-row">
-            <button class="btn btn-primary" type="submit">${icon('check')}حفظ</button>
-            <button class="btn" type="button" data-action="art-check" ${s.artConfigured ? '' : 'disabled'}>${icon('wallet')}اختبار الاتصال والرصيد</button>
-            <a class="btn" href="#/catalog">${icon('box')}الشركات والرزم</a>
-          </div>
-        </form>
-                  <form class="card card-pad form" id="aylol-form" novalidate autocomplete="off">
-            <h2 class="dot-title">البيع والشحن التلقائي عبر أيلول تيليكوم (Aylol)</h2>
-            <p class="muted small">يشحن السيرفر كروت الشركات، ويفعّل الاشتراكات الجديدة (خطوط الفواتير وشرائح eSIM) من حسابك في أيلول تيليكوم تلقائياً: الرقم يؤخذ من أرقام أيلول الجاهزة ولا يكتبه الزبون. قبل كل عملية يتأكد من سعر أيلول الحالي: إن ارتفع عن المعتمد لا يشتري، ويصلك تنبيه.</p>
+        <form class="card card-pad form" id="aylol-form"                  <form class="card card-pad form" id="aylol-form" novalidate autocomplete="off">
+            <h2 class="dot-title">eSIM عبر أيلول تيليكوم (Aylol)</h2>
+            <p class="muted small">يفعّل السيرفر شرائح eSIM التي يشتريها الزبائن من حسابك في أيلول تيليكوم تلقائياً: الرقم يؤخذ من أرقام أيلول الجاهزة ولا يكتبه الزبون. قبل كل عملية يتأكد من سعر أيلول الحالي: إن ارتفع عن المعتمد لا يشتري، ويصلك تنبيه.</p>
             <div class="row2 stack-xs">
               <div class="field"><label for="aylol-user">البريد في أيلول</label><input class="input ltr" id="aylol-user" name="aylolUser" type="email" value="${esc(s.aylolUser || '')}" autocomplete="off"></div>
               <div class="field"><label for="aylol-pass">كلمة المرور</label><input class="input ltr" id="aylol-pass" name="aylolPass" type="password" autocomplete="new-password" placeholder="${s.aylolConfigured ? 'محفوظة — اتركها فارغة للإبقاء' : ''}"></div>
@@ -148,8 +126,8 @@ export default {
               <span class="hint">أيلول يطلب رمزاً من Google Authenticator بعد كلمة المرور. انسخ المفتاح المكتوب تحت رمز QR عند تفعيل التحقق بخطوتين في أيلول (أو رابط التصدير من التطبيق)، فيصنع السيرفر الرمز بنفسه. يبقى على السيرفر ولا يظهر بعد حفظه.</span></div>
             <div class="field"><label for="aylol-low">نبّهني عندما ينزل رصيد أيلول تحت (₪)</label>
               <input class="input ltr" id="aylol-low" name="aylolLowBalance" type="number" min="0" step="1" inputmode="numeric" value="${s.aylolLowBalance ?? 100}">
-              <span class="hint">يصلك تنبيه في البوابة وعلى واتساب (مرة كل 6 ساعات على الأكثر). وأي طلب لا يكفيه الرصيد يُرفض قبل أن يدفع الزبون أو يُخصم من الوكيل. 0 = بلا تنبيه.</span></div>
-            <div class="msg info">${icon('info')}<span>بعد الحفظ تُزامَن رزم أيلول فوراً، ثم كل ساعتين تلقائياً. الأرقام المتاحة والسعر يُقرآن من أيلول مباشرة عند كل طلب. نسبة الربح لكل نظام في «الشركات والرزم» ← تبويب «أيلول».</span></div>
+              <span class="hint">يصلك تنبيه في البوابة وعلى واتساب (مرة كل 6 ساعات على الأكثر). وأي طلب لا يكفيه الرصيد يُرفض قبل أن يدفع الزبون. 0 = بلا تنبيه.</span></div>
+            <div class="msg info">${icon('info')}<span>بعد الحفظ تُزامَن رزم أيلول فوراً، ثم كل ساعتين تلقائياً. الأرقام المتاحة والسعر يُقرآن من أيلول مباشرة عند كل طلب. الرزم وأسعار الزبائن في «الشركات والرزم» ← تبويب «أيلول».</span></div>
             <div id="aylol-msg"></div>
             <div class="btn-row">
               <button class="btn btn-primary" type="submit">${icon('check')}حفظ</button>
@@ -158,13 +136,13 @@ export default {
             </div>
           </form>
           <form class="card card-pad form" id="ql-form" novalidate autocomplete="off">
-          <h2 class="dot-title">البيع التلقائي عبر QuickLine</h2>
-          <p class="muted small">يمدّد السيرفر خطوط الشركات المضبوطة على «تلقائي» من حسابك في QuickLine، ويُكمل الطلب بنفسه. ويفعّل الخطوط الجديدة هناك (رقم من أرقامهم المتاحة، eSIM، أو تحويل رقم). التمديد يحتاج أن يكون الرقم موجوداً في QuickLine تحت وكالتك.</p>
+          <h2 class="dot-title">eSIM عبر QuickLine</h2>
+          <p class="muted small">يفعّل السيرفر شرائح eSIM التي يشتريها الزبائن من حسابك في QuickLine تلقائياً، على رقم من أرقامهم المتاحة.</p>
           <div class="row2 stack-xs">
             <div class="field"><label for="ql-user">البريد في QuickLine</label><input class="input ltr" id="ql-user" name="qlUser" type="email" value="${esc(s.qlUser || '')}" autocomplete="off"></div>
             <div class="field"><label for="ql-pass">كلمة المرور</label><input class="input ltr" id="ql-pass" name="qlPass" type="password" autocomplete="new-password" placeholder="${s.qlConfigured ? 'محفوظة — اتركها فارغة للإبقاء' : ''}"></div>
           </div>
-          <div class="msg info">${icon('info')}<span>المزامنة ونسبة الربح منفصلتان لكل نظام: افتح «الشركات والرزم» ← تبويب «QuickLine».</span></div>
+          <div class="msg info">${icon('info')}<span>الرزم وأسعار الزبائن في «الشركات والرزم» ← تبويب «QuickLine».</span></div>
           <div id="ql-msg"></div>
           <div class="btn-row">
             <button class="btn btn-primary" type="submit">${icon('check')}حفظ</button>
@@ -173,8 +151,8 @@ export default {
           </div>
         </form>
         <form class="card card-pad form" id="ly-form" novalidate autocomplete="off">
-          <h2 class="dot-title">البيع التلقائي عبر ليان</h2>
-          <p class="muted small">يمدّد السيرفر أرقام الوكالة الفعّالة في ليان، ويفعّل أرقامها الموقوفة كخطوط جديدة، بعد أن يتأكد من السعر. يدخل إلى ليان بنفسه، ويصنع رمز المصادقة من المفتاح السري.</p>
+          <h2 class="dot-title">eSIM عبر ليان</h2>
+          <p class="muted small">يفعّل السيرفر شرائح eSIM التي يشتريها الزبائن من حسابك في ليان، بعد أن يتأكد من السعر. يدخل إلى ليان بنفسه، ويصنع رمز المصادقة من المفتاح السري.</p>
           <div class="row2 stack-xs">
             <div class="field"><label for="ly-user">اسم المستخدم في ليان</label><input class="input ltr" id="ly-user" name="lyUser" value="${esc(s.lyUser || '')}" autocomplete="off"></div>
             <div class="field"><label for="ly-pass">كلمة المرور</label><input class="input ltr" id="ly-pass" name="lyPass" type="password" autocomplete="new-password" placeholder="${s.lyConfigured ? 'محفوظة — اتركها فارغة للإبقاء' : ''}"></div>
@@ -191,7 +169,7 @@ export default {
         </form>
         <form class="card card-pad form" id="tc-form" novalidate autocomplete="off">
           <h2 class="dot-title">telecom.co.il</h2>
-          <p class="muted small">عند الدخول يرسل الموقع رمز تحقق إلى الجيميل. يقرأ السيرفر الرمز بنفسه من ذلك الجيميل بكلمة مرور تطبيق (App password)، دون أن يعلّم الرسائل كمقروءة. يمدّد السيرفر مشتركي الوكالة في telecom تلقائياً بعد أن يتأكد من السعر؛ الخطوط الجديدة تصلك كطلبات. الرزم ونسب الربح في «الشركات والرزم».</p>
+          <p class="muted small">عند الدخول يرسل الموقع رمز تحقق إلى الجيميل. يقرأ السيرفر الرمز بنفسه من ذلك الجيميل بكلمة مرور تطبيق (App password)، دون أن يعلّم الرسائل كمقروءة. يفعّل السيرفر شرائح eSIM (ALOHA) التي يشتريها الزبائن من حسابك في telecom تلقائياً. الرزم وأسعار الزبائن في «الشركات والرزم».</p>
           <div class="row2 stack-xs">
             <div class="field"><label for="tc-user">البريد في telecom</label><input class="input ltr" id="tc-user" name="tcUser" type="email" value="${esc(s.tcUser || '')}" autocomplete="off"></div>
             <div class="field"><label for="tc-pass">كلمة المرور</label><input class="input ltr" id="tc-pass" name="tcPass" type="password" autocomplete="new-password" placeholder="${s.tcConfigured ? 'محفوظة — اتركها فارغة للإبقاء' : ''}"></div>
@@ -221,7 +199,7 @@ export default {
       backup: `
         <section class="card card-pad form">
           <h2 class="dot-title">النسخ الاحتياطي</h2>
-          <p class="muted">كل البيانات (الوكلاء، الأرصدة، الأرقام، السجل) في ملف واحد. نزّل نسخة بانتظام واحفظها في مكان آمن.</p>
+          <p class="muted">كل البيانات (الرزم، الطلبات، المشترون، الإعدادات) في ملف واحد. نزّل نسخة بانتظام واحفظها في مكان آمن.</p>
           <button class="btn" data-action="backup">${icon('download')}تنزيل نسخة احتياطية</button>
           <div class="divider"></div>
           <h2 class="dot-title">النسخ السحابي التلقائي</h2>
@@ -250,18 +228,6 @@ export default {
         } catch {}
       }, 3000);
     }
-    root.querySelector('#art-form')?.addEventListener('submit', async (e) => {
-      e.preventDefault();
-      const form = e.currentTarget;
-      const msg = root.querySelector('#art-msg');
-      try {
-        S.settings = await api.put('/api/settings', { artUser: field(form, 'artUser'), artPass: form.elements.artPass.value });
-        toast('تم حفظ إعدادات art-topup');
-        changed();
-      } catch (err) {
-        msg.innerHTML = `<div class="msg">${icon('alert')}<span>${esc(err.message)}</span></div>`;
-      }
-    });
     root.querySelector('#ly-form')?.addEventListener('submit', async (e) => {
       e.preventDefault();
       const form = e.currentTarget;
@@ -323,8 +289,7 @@ export default {
       msg.innerHTML = '';
       try {
         S.settings = await api.put('/api/settings', {
-          appName: field(form, 'appName'), warnDays: field(form, 'warnDays'), lowBalance: field(form, 'lowBalance'),
-          esimFee: field(form, 'esimFee'), supportWhatsapp: field(form, 'supportWhatsapp'),
+          appName: field(form, 'appName'), esimFee: field(form, 'esimFee'), supportWhatsapp: field(form, 'supportWhatsapp'),
         });
         toast('تم حفظ الإعدادات');
         changed({ keepView: true });
@@ -353,7 +318,7 @@ export default {
     },
     async 'wa-replies'(btn) {
       const on = btn.dataset.on === '1';
-      if (!on && !confirm('إيقاف البوت؟ ما رح يرد على الزباين ولا الوكلاء لحد ما تشغّله، وواتساب بيضل مربوط.')) return;
+      if (!on && !confirm('إيقاف البوت؟ ما رح يرد على الزباين لحد ما تشغّله، وواتساب بيضل مربوط.')) return;
       btn.disabled = true;
       try {
         V.wa = await api.post('/api/whatsapp/replies', { on });
@@ -395,16 +360,6 @@ export default {
       btn.disabled = true;
       try { V.wa = await api.del(`/api/whatsapp/links/${encodeURIComponent(btn.dataset.id)}`); } catch (err) { toast(err.message, { error: true }); }
       document.getElementById('wa-status').innerHTML = waStatusHtml(V.wa);
-    },
-    async 'art-check'(btn) {
-      const box = document.getElementById('art-msg');
-      btn.disabled = true;
-      try {
-        const r = await api.post('/api/art/check');
-        box.innerHTML = `<div class="msg info">${icon('checkCircle')}<span>تم الاتصال بـ art-topup. الرصيد: ${r.balance === null ? 'غير معروف' : `${r.balance} ₪`}</span></div>`;
-      } catch (err) {
-        box.innerHTML = `<div class="msg">${icon('alert')}<span>${esc(err.message)}</span></div>`;
-      } finally { btn.disabled = false; }
     },
     async 'aylol-check'(btn) {
       const box = document.getElementById('aylol-msg');
@@ -471,7 +426,7 @@ export default {
     },
     async backup() {
       const blob = await api.blob('/api/backup');
-      downloadBlob(blob, `agents-backup-${new Date().toISOString().slice(0, 10)}.db`);
+      downloadBlob(blob, `esim-shop-backup-${new Date().toISOString().slice(0, 10)}.db`);
       toast('تم تنزيل النسخة الاحتياطية');
     },
   },

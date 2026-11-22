@@ -2,19 +2,16 @@
 // Customer shop orders paid by JawwalPay (for now eSIMs: a QuickLine number picked by the customer, its QR code shown and
 // e-mailed once active). A transfer is confirmed automatically when an authenticated JawwalPay email
 // in Gmail has the order's exact amount and matches what the customer reported (reference, sender phone or name).
-// Anything else goes to the manager. Paid orders are sold through the "shop" agent account, so they follow the same
-// rules as any agent sale (manual companies become tasks, art-topup recharges run automatically).
-const crypto = require('node:crypto');
-const { q, tx, getSettings, setSetting, gmailCredentials } = require('./db');
+// Anything else goes to the manager. A paid order is recorded as a sale (src/sale.js), whose eSIM is then activated at
+// its supplier automatically (or by the manager, from «المهام»).
+const { q, tx, getSettings, gmailCredentials } = require('./db');
 const { ApiError, now, round } = require('./util');
-const { hashPassword } = require('./passwords');
 const D = require('./domain');
 const mail = require('./mail');
 const aipay = require('./aipay');
 const smtp = require('./smtp');
 const ql = require('./quickline');
 const qr = require('./qr');
-const { createLine } = require('./routes/lines');
 
 const RESERVE_MS = Number(process.env.SHOP_RESERVE_MS) || 10 * 60_000; // 10 minutes to confirm sending payment or order is cancelled
 const FIRST_WINDOW_MS = Number(process.env.SHOP_FIRST_WINDOW_MS) || 5 * 60_000; // 1st check: search emails in last 5 minutes
@@ -34,19 +31,6 @@ const SMTP = {
   secure: process.env.SMTP_SECURE !== '0',
 };
 const MAIL_TRIES = 5;
-
-// ---------- the shop's agent account ----------
-function shopAgent() {
-  const id = Number(q("SELECT value FROM settings WHERE key = 'shop_agent_id'").get()?.value);
-  const u = id && q("SELECT * FROM users WHERE id = ? AND role = 'agent'").get(id);
-  if (u) return u;
-  let username = 'shop';
-  for (let i = 2; q('SELECT 1 FROM users WHERE username = ?').get(username); i++) username = `shop${i}`;
-  const newId = Number(q("INSERT INTO users (role, name, username, password_hash, notes, created_at) VALUES ('agent', 'متجر الزبائن', ?, ?, ?, ?)")
-    .run(username, hashPassword(crypto.randomBytes(18).toString('base64url')), 'حساب طلبات موقع الزبائن', now()).lastInsertRowid);
-  setSetting('shop_agent_id', newId);
-  return D.getUser(newId);
-}
 
 // ---------- matching ----------
 const normRef = (s) => mail.toLatinDigits(String(s || '')).toUpperCase().replace(/[^A-Z0-9]/g, '');
@@ -473,8 +457,6 @@ function aiReview({ asked = false } = {}) {
 }
 
 // ---------- fulfilment ----------
-const ACTOR_NAME = 'موقع الزبائن';
-
 // The eSIM's QR code, drawn from its real activation code (LPA:1$…) as a PNG. No real code, no QR: an eSIM's code
 // comes only from its supplier (QuickLine, Layan, telecom) or from the manager when they carry the order out.
 function makeEsimQr(code) {
@@ -496,46 +478,34 @@ function isMadeUpQr(dataUrl) {
 const realCode = (code) => (code && !isMadeUpCode(code) ? code : '');
 const realQr = (dataUrl) => (dataUrl && !isMadeUpQr(dataUrl) ? dataUrl : '');
 
-// Credits the shop account with the customer's payment and sells the package from it, in one transaction.
-// A refusal (e.g. the number belongs to another agent) leaves the order paid with the reason, for the manager.
+// Records the paid order as a sale (src/sale.js: the pending line and its activation task), in one transaction.
+// A refusal (e.g. the number was taken meanwhile) leaves the order paid with the reason, for the manager.
 function fulfil(orderId) {
-  const o = q("SELECT * FROM shop_orders WHERE id = ? AND status = 'paid' AND line_id IS NULL").get(orderId);
+  const o = q("SELECT * FROM shop_orders WHERE id = ? AND status = 'paid' AND line_id IS NULL AND esim = 1").get(orderId);
   if (!o) return null;
   // An eSIM is sold on the number the customer picked, which the order kept: it goes back on the list of numbers
   // shown, which a sale is checked against (payment may have taken longer than that list lasts).
-  const art = o.esim ? q('SELECT art_card_id FROM packages WHERE id = ?').get(o.package_id)?.art_card_id || '' : '';
+  const art = q('SELECT art_card_id FROM packages WHERE id = ?').get(o.package_id)?.art_card_id || '';
   const qlRef = /^qln:/.test(art) ? ql.parseRef(art) : null;
   const lyRef = /^lyn:/.test(art) ? require('./layan').parseRef(art) : null;
   if (qlRef) require('./routes/quickline').remember(qlRef.packageId, true, [{ id: o.number_id, phone: o.number, sim: o.sim, qr: o.esim_qr }]);
   if (lyRef) require('./routes/layan').rememberEsim(lyRef.packageId, [o.number]);
   const tcRef = /^tcn:/.test(art) ? require('./telecom').parseRef(art) : null;
   if (tcRef) require('./routes/telecom').rememberEsim(tcRef.packageId, [o.number]);
-  if (/^ay:esim:/.test(art)) require('./routes/aylol').rememberEsim(art, [o.number]);
-  // An Aylol line (on the customer's SIM card, or as an eSIM): its number, held for the order, is sold.
-  const lineArt = String(o.number_id || '').startsWith('ayl:') ? q('SELECT art_card_id FROM packages WHERE id = ?').get(o.package_id)?.art_card_id || '' : '';
-  if (/^ay:bill:/.test(lineArt)) require('./routes/aylol').rememberEsim(lineArt, [o.number]);
+  // An Aylol eSIM, or an Aylol line sold as an eSIM: its number, held for the order, is sold.
+  if (/^ay:(esim|bill):/.test(art)) require('./routes/aylol').rememberEsim(art, [o.number]);
   try {
     const r = tx(() => {
-      const agent = shopAgent();
-      D.changeBalance(agent, o.amount, { type: 'topup', actor: { id: null, name: ACTOR_NAME }, detail: `دفعة جوال باي — طلب ${o.code}` });
-      const note = `طلب موقع الزبائن ${o.code}`;
-      const sale = createLine(agent, o.esim
-        ? { kind: 'new', esim: true, number: o.number, qlNumberId: o.number_id, packageId: o.package_id, months: 1, customerName: o.customer_name, customerPrice: o.amount, note,
-          customerEmail: o.email, customerPhone: o.contact_phone }
-        : { kind: o.kind === 'recharge' ? 'external' : 'new', number: o.number, sim: o.sim, packageId: o.package_id, months: 1, customerName: o.customer_name, customerPrice: o.amount, note },
-        // Sold at what the customer paid (the eSIM's fee is added again by the sale), not at an agent's price, which the
-        // manager may not have set (or set above the shop's): the payment the shop account was just credited pays it.
-        // A renewal (kind recharge) may be of any number in the system: paid by the shop's account, the line stays its agent's.
-        { total: Number(o.amount), shopLine: /^ay:bill:/.test(lineArt), renewAny: o.kind === 'recharge' });
-      if (o.esim && o.esim_qr) {
-        q("UPDATE lines SET esim_qr = COALESCE(NULLIF(esim_qr, ''), ?) WHERE id = ?").run(o.esim_qr, sale.line.id);
+      const { lineId } = require('./sale').recordEsimSale(o);
+      if (o.esim_qr) {
+        q("UPDATE lines SET esim_qr = COALESCE(NULLIF(esim_qr, ''), ?) WHERE id = ?").run(o.esim_qr, lineId);
         if (!qlRef && !lyRef && !tcRef) {
-          q("UPDATE lines SET status = 'active', activated_at = COALESCE(activated_at, ?), updated_at = ? WHERE id = ?").run(now(), now(), sale.line.id);
-          q("UPDATE tasks SET status = 'done', resolved_at = ?, response = 'تفعيل فوري تلقائي لرمز QR' WHERE line_id = ? AND status = 'open'").run(now(), sale.line.id);
+          q("UPDATE lines SET status = 'active', activated_at = COALESCE(activated_at, ?), updated_at = ? WHERE id = ?").run(now(), now(), lineId);
+          q("UPDATE tasks SET status = 'done', resolved_at = ?, response = 'تفعيل فوري تلقائي لرمز QR' WHERE line_id = ? AND status = 'open'").run(now(), lineId);
         }
       }
-      q("UPDATE shop_orders SET line_id = ?, error = '', updated_at = ? WHERE id = ?").run(sale.line.id, now(), o.id);
-      return sale;
+      q("UPDATE shop_orders SET line_id = ?, error = '', updated_at = ? WHERE id = ?").run(lineId, now(), o.id);
+      return { lineId };
     });
     D.notify({ role: 'admin', kind: 'line', title: `طلب زبون مدفوع ${o.code}`, body: `${o.package_label} — ${o.number} — ${o.amount} ₪`, link: '#/shop' });
     return r;
@@ -714,5 +684,5 @@ timer.unref();
 
 module.exports = {
   RESERVE_MS, FIRST_WINDOW_MS, RETRY_WINDOW_MS, VERIFY_MS, WAIT_REVIEW_MS, CHECK_COOLDOWN_MS,
-  shopAgent, namesMatch, matchReason, findMail, claim, tryMatch, payWith, jcLog, invoiceMismatch, settleVerified, invoiceState, aiReview, aiState, fulfil, settleDirect, reconcileDirect, checkMail, escalate, expireUnconfirmed, saveMail, deliverQr, makeEsimQr, isMadeUpCode, isMadeUpQr, realCode, realQr,
+  namesMatch, matchReason, findMail, claim, tryMatch, payWith, jcLog, invoiceMismatch, settleVerified, invoiceState, aiReview, aiState, fulfil, settleDirect, reconcileDirect, checkMail, escalate, expireUnconfirmed, saveMail, deliverQr, makeEsimQr, isMadeUpCode, isMadeUpQr, realCode, realQr,
 };

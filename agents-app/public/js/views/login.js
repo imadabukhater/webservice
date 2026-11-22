@@ -13,20 +13,20 @@ export async function renderLogin(onDone) {
   <div class="login">
     <section class="login-art">
       <div class="brand" style="padding:0"><span class="brand-mark">${icon('logo')}</span>
-        <div><b>${esc(appName)}</b><small>بوابة المبيعات للوكلاء</small></div></div>
+        <div><b>${esc(appName)}</b><small>لوحة متجر eSIM</small></div></div>
       <div>
-        <h1>كل خطوطك وأرصدتك في مكان واحد</h1>
-        <p>فعّل الخطوط، مدّد الرزم، تابع الأرقام التي تقترب من الفصل، واطلب شحن رصيدك من هاتفك.</p>
+        <h1>متجر eSIM في مكان واحد</h1>
+        <p>طلبات الزبائن ودفعاتهم، تفعيل الشرائح عند المورّدين، والرزم وأسعارها — من هاتفك.</p>
       </div>
       <div class="login-feats">
-        <div><span class="tile sm">${icon('scan')}</span>مسح باركود الشريحة بالكاميرا ومعرفة الشركة تلقائياً</div>
-        <div><span class="tile sm">${icon('calX')}</span>تنبيه قبل انتهاء رزمة أي زبون</div>
+        <div><span class="tile sm">${icon('card')}</span>تأكيد الدفع تلقائياً من جوال باي</div>
+        <div><span class="tile sm">${icon('qr')}</span>تفعيل eSIM ورمز QR للزبون تلقائياً</div>
         <div><span class="tile sm">${icon('chart')}</span>تقارير جاهزة للتصدير إلى Excel وPDF</div>
       </div>
     </section>
     <section class="login-form">
       <form class="login-card" id="login-form" autocomplete="on" novalidate>
-        <div><h2>تسجيل الدخول</h2><p>أدخل اسم المستخدم وكلمة المرور التي أعطاك إياها المدير.</p></div>
+        <div><h2>تسجيل الدخول</h2><p>دخول مدير المتجر.</p></div>
         <div class="field"><label for="login-user">اسم المستخدم</label>
           <input class="input ltr" id="login-user" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" required></div>
         <div class="field"><label for="login-pass">كلمة المرور</label>

@@ -1,117 +1,57 @@
 import {
-  api, esc, icon, isAdmin, fmtMoney, fmtDate, phone, sheet, field, changed, fileToDataUrl, relTime, TASK_STATUS, TASK_TYPE, empty, daysText, copyText,
+  api, esc, icon, fmtMoney, phone, sheet, field, changed, fileToDataUrl, relTime, TASK_STATUS, empty, copyText,
 } from '../core.js';
-import { openRenew } from './renew.js';
-import { openLine } from './subscribers.js';
-import { openTopupRequest } from './payments.js';
 
-const V = { tasks: [], due: [], tab: 'open' };
-const TYPE_ICON = {
-  topup: ['wallet', 'green'], port: ['repeat', 'amber'], esim: ['qr', 'cyan'], general: ['msg', ''],
-  activate: ['userPlus', ''], recharge: ['card', 'green'], renew: ['repeat', 'green'],
-};
-// Sales the manager carries out on the company's site; rejecting refunds the agent in full.
-const SALE_TASKS = ['port', 'esim', 'activate', 'recharge', 'renew'];
+// eSIM activations of paid shop orders: carried out by the supplier automatically, or by the manager when that did
+// not work (attach the QR code) — or rejected with a reason.
+const V = { tasks: [], tab: 'open' };
 
-function taskCard(t) {
-  const [ic, color] = TYPE_ICON[t.type];
-  const admin = isAdmin();
-  return `<article class="item">
-    <div class="item-top"><span class="tile sm ${color}">${icon(ic)}</span>
-      <div class="grow"><b class="item-title">${TASK_TYPE[t.type]}${t.amount !== null ? ` · <span class="ltr">${fmtMoney(t.amount)}</span>` : ''}</b>
-        <div class="item-sub">${admin ? `<span>${esc(t.agentName)}</span>` : ''}<span>${relTime(t.createdAt)}</span>${t.lineNumber ? `<span>${phone(t.lineNumber)}</span>` : ''}${admin && t.source ? `<span>جهة التفعيل: ${esc(t.source)}</span>` : ''}</div></div>
-      <span class="pill s-${t.status}">${TASK_STATUS[t.status]}</span></div>
-    ${t.note ? `<p class="small" style="color:var(--ink-2)">${esc(t.note)}</p>` : ''}
-    ${admin && t.autoStatus ? autoBox(t) : ''}
-    ${!admin && t.status === 'open' && t.autoState ? agentAutoBox(t) : ''}
-    ${t.response ? `<p class="small muted">الرد: ${esc(t.response)}${t.resolvedBy ? ` — ${esc(t.resolvedBy)}` : ''}</p>` : ''}
-    <div class="item-actions">
-      ${admin && t.status === 'open' && SALE_TASKS.includes(t.type) ? `<button class="btn btn-sm" data-action="copy-task" data-id="${t.id}">${icon('copy')}نسخ التفاصيل</button>` : ''}
-      ${admin && t.lineId ? `<button class="btn btn-sm" data-action="open-line" data-id="${t.lineId}">${icon('phone')}تفاصيل الخط</button>` : ''}
-      ${t.hasAttachment ? `<button class="btn btn-sm" data-action="attachment" data-id="${t.id}">${icon('image')}عرض المرفق</button>` : ''}
-      ${admin && t.status === 'open' && !running(t) ? `<button class="btn btn-sm btn-good" data-action="resolve" data-id="${t.id}">${icon('check')}تنفيذ</button>
-        <button class="btn btn-sm btn-danger" data-action="reject" data-id="${t.id}">${icon('x')}رفض</button>` : ''}
-      ${!admin && t.status === 'open' && ['topup', 'general'].includes(t.type) ? `<button class="btn btn-sm btn-ghost" data-action="cancel" data-id="${t.id}">إلغاء الطلب</button>` : ''}
-    </div></article>`;
-}
-
-// What the supplier (art-topup or QuickLine — the note says which) did with a request. failed/unknown need the manager;
-// while it is sending or sent there is nothing to do but wait.
+// What the supplier did with an activation. failed/unknown need the manager; while sending or sent, wait.
 const AUTO = {
   sending: ['clock', 'info', 'يُرسل الآن إلى المورّد…'], sent: ['clock', 'info', 'أُرسل — بانتظار تأكيد المورّد'],
-  done: ['checkCircle', 'info', 'نُفّذ تلقائياً'], failed: ['alert', '', 'لم ينجح التنفيذ التلقائي — نفّذه يدوياً أو ارفضه ليُسترد المبلغ'],
+  done: ['checkCircle', 'info', 'نُفّذ تلقائياً'], failed: ['alert', '', 'لم ينجح التفعيل التلقائي — نفّذه يدوياً (أرفق رمز QR) أو ارفضه'],
   unknown: ['alert', 'warn', 'غير مؤكد — افحص عند المورّد قبل أي تنفيذ يدوي'],
 };
 const running = (t) => ['sending', 'sent'].includes(t.autoStatus);
-// Open requests that wait for the manager: everything not being carried out right now.
 const needsYou = (t) => t.status === 'open' && !running(t);
+
 function autoBox(t) {
   const [ic, cls, label] = AUTO[t.autoStatus] || AUTO.sent;
   return `<div class="msg ${cls}">${icon(ic)}<span><b>${label}</b>${t.autoNote ? `<br><small>${esc(t.autoNote)}</small>` : ''}</span></div>`;
 }
-// The agent's view of the same: plain words, no supplier details.
-function agentAutoBox(t) {
-  return t.autoState === 'running'
-    ? `<div class="msg info">${icon('clock')}<span><b>يُنفَّذ تلقائياً الآن</b> — يصلك تنبيه عند الانتهاء.</span></div>`
-    : `<div class="msg warn">${icon('clock')}<span><b>يراجعه المدير</b> — يُكمله أو يُرجع لك المبلغ كاملاً.</span></div>`;
+
+function taskCard(t) {
+  return `<article class="item">
+    <div class="item-top"><span class="tile sm cyan">${icon('qr')}</span>
+      <div class="grow"><b class="item-title">تفعيل eSIM${t.amount !== null && t.amount !== undefined ? ` · <span class="ltr">${fmtMoney(t.amount)}</span>` : ''}</b>
+        <div class="item-sub"><span>${relTime(t.createdAt)}</span>${t.lineNumber ? `<span>${phone(t.lineNumber)}</span>` : ''}${t.source ? `<span>المورّد: ${esc(t.source)}</span>` : ''}</div></div>
+      <span class="pill s-${t.status}">${TASK_STATUS[t.status] || t.status}</span></div>
+    ${t.note ? `<p class="small" style="color:var(--ink-2)">${esc(t.note)}</p>` : ''}
+    ${t.autoStatus ? autoBox(t) : ''}
+    ${t.response ? `<p class="small muted">الرد: ${esc(t.response)}${t.resolvedBy ? ` — ${esc(t.resolvedBy)}` : ''}</p>` : ''}
+    <div class="item-actions">
+      ${t.status === 'open' && t.note ? `<button class="btn btn-sm" data-action="copy-task" data-id="${t.id}">${icon('copy')}نسخ التفاصيل</button>` : ''}
+      ${t.hasAttachment ? `<button class="btn btn-sm" data-action="attachment" data-id="${t.id}">${icon('image')}رمز QR</button>` : ''}
+      ${needsYou(t) ? `<button class="btn btn-sm btn-good" data-action="resolve" data-id="${t.id}">${icon('check')}تم التفعيل</button>
+        <button class="btn btn-sm btn-danger" data-action="reject" data-id="${t.id}">${icon('x')}رفض</button>` : ''}
+    </div></article>`;
 }
 
-function dueCard(l) {
-  return `<article class="item"><div class="item-top"><span class="co-dot" style="--co:${esc(l.companyColor)}"></span>
-    <div class="grow">${phone(l.number)}<div class="item-sub"><span>${esc(l.customerName || 'بدون اسم')}</span><span>${esc(l.packageLabel)}</span></div></div>
-    <span class="pill s-${l.state}">${l.daysLeft >= 0 ? `بعد ${daysText(l.daysLeft)}` : `منذ ${daysText(-l.daysLeft)}`}</span></div>
-    <div class="item-top" style="justify-content:space-between"><span class="small muted">${l.daysLeft >= 0 ? 'تنتهي' : 'انتهت'} ${fmtDate(l.expiresAt)}</span>
-      <button class="btn btn-soft btn-sm" data-action="renew" data-id="${l.id}">${icon('repeat')}تمديد</button></div></article>`;
-}
-
-function newRequest() {
-  sheet({
-    title: 'طلب جديد',
-    body: `<div class="action-list">
-      <button type="button" data-kind="topup"><span class="tile sm green">${icon('wallet')}</span>طلب شحن رصيد</button>
-      <button type="button" data-kind="general"><span class="tile sm">${icon('msg')}</span>طلب عام للمدير</button></div>`,
-    onMount(form, el) {
-      el.querySelector('[data-kind="topup"]').addEventListener('click', () => openTopupRequest());
-      el.querySelector('[data-kind="general"]').addEventListener('click', () => sheet({
-        title: 'رسالة للمدير',
-        body: `<div class="field"><label for="gq-note">ماذا تحتاج؟</label><textarea class="input" id="gq-note" name="note" rows="4" placeholder="مثال: أحتاج 20 شريحة سلكوم جديدة"></textarea></div>`,
-        submit: 'إرسال',
-        async onSubmit(f) {
-          if (!field(f, 'note')) throw new Error('اكتب تفاصيل الطلب');
-          await api.post('/api/tasks', { type: 'general', note: field(f, 'note') });
-          changed();
-          return 'أُرسل الطلب إلى المدير';
-        },
-      }));
-    },
-  });
-}
-
-async function resolveTask(t) {
+function resolveTask(t) {
   let qr = '';
-  const body = {
-    topup: `<div class="field"><label for="rs-amount">المبلغ المضاف إلى رصيد ${esc(t.agentName)} (₪)</label>
-        <input class="input ltr big" id="rs-amount" name="amount" type="number" min="0" step="0.01" inputmode="decimal" value="${t.amount ?? ''}"></div>`,
-    esim: `<div class="field"><label for="rs-code">رمز تفعيل eSIM (LPA)</label><textarea class="input ltr" id="rs-code" name="esimCode" rows="2" placeholder="LPA:1$…"></textarea></div>
-      <label class="upload" for="rs-qr"><span class="tile sm cyan">${icon('qr')}</span><span class="grow"><b>صورة رمز QR</b><br><small class="muted">يراها الوكيل في تفاصيل الرقم ليعرضها على الزبون</small></span>
-        <img id="rs-qr-prev" alt="" hidden><input id="rs-qr" type="file" accept="image/*"></label>`,
-    port: `<p class="muted">بعد إتمام التحويل لدى الشركة يصبح الرقم فعّالاً، ويبدأ احتساب مدة الرزمة من الآن.</p>`,
-    activate: '<p class="muted">فعّل الخط على موقع الشركة أولاً. بعد الضغط على «تم التنفيذ» يصبح الرقم فعّالاً عند الوكيل وتبدأ مدة الرزمة من الآن.</p>',
-    recharge: '<p class="muted">اشحن الكرت على موقع الشركة أولاً. بعد الضغط على «تم التنفيذ» يظهر الرقم فعّالاً عند الوكيل لمدة شهر من الآن.</p>',
-    renew: '<p class="muted">مدّد الرزمة على موقع الشركة أولاً. بعد الضغط على «تم التنفيذ» تُضاف المدة إلى الخط عند الوكيل.</p>',
-    general: '',
-  }[t.type];
-  const details = SALE_TASKS.includes(t.type) && t.note
-    ? `<div class="msg info" style="align-items:center">${icon('info')}<span class="grow">${esc(t.note)}</span>
-        <button type="button" class="btn btn-sm" data-copy-note>${icon('copy')}نسخ</button></div>` : '';
   sheet({
-    title: `تنفيذ: ${TASK_TYPE[t.type]}`,
-    subtitle: `${esc(t.agentName)}${t.lineNumber ? ` · ${esc(t.lineNumber)}` : ''}`,
-    body: `${details}${body}<div class="field"><label for="rs-resp">ملاحظة للوكيل <span class="opt">(اختياري)</span></label><input class="input" id="rs-resp" name="response"></div>`,
-    submit: 'تم التنفيذ',
+    title: 'تنفيذ تفعيل eSIM',
+    subtitle: t.lineNumber ? esc(t.lineNumber) : '',
+    body: `${t.note ? `<div class="msg info" style="align-items:center">${icon('info')}<span class="grow">${esc(t.note)}</span>
+        <button type="button" class="btn btn-sm" data-copy-note>${icon('copy')}نسخ</button></div>` : ''}
+      <div class="field"><label for="rs-code">رمز تفعيل eSIM (LPA) <span class="opt">(اختياري)</span></label><textarea class="input ltr" id="rs-code" name="esimCode" rows="2" placeholder="LPA:1$…"></textarea></div>
+      <label class="upload" for="rs-qr"><span class="tile sm cyan">${icon('qr')}</span><span class="grow"><b>صورة رمز QR</b><br><small class="muted">تظهر للزبون في صفحة طلبه وتُرسل إلى بريده</small></span>
+        <img id="rs-qr-prev" alt="" hidden><input id="rs-qr" type="file" accept="image/*"></label>
+      <div class="field"><label for="rs-resp">ملاحظة <span class="opt">(اختياري)</span></label><input class="input" id="rs-resp" name="response"></div>`,
+    submit: 'تم التفعيل',
     onMount(form) {
       form.querySelector('[data-copy-note]')?.addEventListener('click', () => copyText(t.note));
-      form.querySelector('#rs-qr')?.addEventListener('change', async (e) => {
+      form.querySelector('#rs-qr').addEventListener('change', async (e) => {
         const f = e.target.files[0];
         if (!f) return;
         qr = await fileToDataUrl(f, { max: 700, type: 'image/png' });
@@ -120,77 +60,56 @@ async function resolveTask(t) {
       });
     },
     async onSubmit(form) {
-      const payload = { status: 'done', response: field(form, 'response') };
-      if (t.type === 'topup') payload.amount = field(form, 'amount');
-      if (t.type === 'esim') { payload.esimCode = field(form, 'esimCode'); payload.attachment = qr; }
-      await api.post(`/api/tasks/${t.id}/resolve`, payload);
+      await api.post(`/api/tasks/${t.id}/resolve`, { status: 'done', response: field(form, 'response'), esimCode: field(form, 'esimCode'), attachment: qr });
       changed();
-      return t.type === 'topup' ? 'تم شحن رصيد الوكيل' : 'تم تنفيذ الطلب';
+      return 'تم تفعيل الـ eSIM';
     },
   });
 }
 
 export default {
-  title: () => ({ title: 'المهام', subtitle: isAdmin() ? 'طلبات الوكلاء بانتظار التنفيذ' : 'تجديدات مستحقة وطلباتك' }),
+  title: () => ({ title: 'التفعيلات', subtitle: 'تفعيل شرائح eSIM للطلبات المدفوعة' }),
   async load() {
-    const [tasks, lines] = await Promise.all([api.get('/api/tasks'), isAdmin() ? [] : api.get('/api/lines?status=active')]);
-    V.tasks = tasks;
-    V.due = lines.filter((l) => l.state === 'expiring' || (l.state === 'expired' && l.daysLeft > -30)).sort((a, b) => a.expiresAt - b.expiresAt);
+    V.tasks = await api.get('/api/tasks');
   },
   render() {
-    if (isAdmin()) {
-      // Three groups: what needs the manager, what a supplier is carrying out now, and what is finished.
-      const mine = V.tasks.filter(needsYou);
-      const auto = V.tasks.filter((t) => t.status === 'open' && running(t));
-      const closed = V.tasks.filter((t) => t.status !== 'open');
-      const tab = ['open', 'auto', 'closed'].includes(V.tab) ? V.tab : 'open';
-      const list = { open: mine, auto, closed }[tab];
-      const none = {
-        open: ['checkCircle', 'لا شيء يحتاج تدخلك', 'الطلبات اليدوية، وما لم ينجح تلقائياً، تظهر هنا.'],
-        auto: ['clock', 'لا شيء يُنفَّذ الآن', 'ما يُرسل إلى art-topup أو QuickLine يظهر هنا حتى يكتمل.'],
-        closed: ['checkCircle', 'لا توجد مهام منجزة', ''],
-      }[tab];
-      return `
-        <div class="segmented"><button data-action="tab" data-tab="open" aria-pressed="${tab === 'open'}">تحتاج تدخلك (${mine.length})</button>
-          <button data-action="tab" data-tab="auto" aria-pressed="${tab === 'auto'}">يُنفَّذ تلقائياً (${auto.length})</button>
-          <button data-action="tab" data-tab="closed" aria-pressed="${tab === 'closed'}">المنجزة</button></div>
-        ${list.length ? `<div class="grid-cards">${list.map(taskCard).join('')}</div>` : empty(...none)}`;
-    }
+    const mine = V.tasks.filter(needsYou);
+    const auto = V.tasks.filter((t) => t.status === 'open' && running(t));
+    const closed = V.tasks.filter((t) => t.status !== 'open');
+    const tab = ['open', 'auto', 'closed'].includes(V.tab) ? V.tab : 'open';
+    const list = { open: mine, auto, closed }[tab];
+    const none = {
+      open: ['checkCircle', 'لا شيء يحتاج تدخلك', 'التفعيلات التي لم تنجح تلقائياً تظهر هنا.'],
+      auto: ['clock', 'لا شيء يُنفَّذ الآن', 'ما يُرسل إلى المورّد يظهر هنا حتى يكتمل.'],
+      closed: ['checkCircle', 'لا توجد تفعيلات منجزة', ''],
+    }[tab];
     return `
-      <section class="list"><div class="section-title"><h2 class="dot-title">تجديدات مستحقة</h2><span class="muted small">${V.due.length}</span></div>
-        ${V.due.length ? `<div class="grid-cards">${V.due.map(dueCard).join('')}</div>` : empty('checkCircle', 'لا توجد رزم تنتهي قريباً', 'سنذكّرك هنا قبل انتهاء رزمة أي زبون.')}</section>
-      <section class="list"><div class="section-title"><h2 class="dot-title">طلباتي</h2><button class="btn btn-primary btn-sm" data-action="new-request">${icon('plus')}طلب جديد</button></div>
-        ${V.tasks.length ? `<div class="grid-cards">${V.tasks.map(taskCard).join('')}</div>` : empty('send', 'لا توجد طلبات', 'اطلب شحن الرصيد أو أرسل رسالة للمدير.')}</section>`;
+      <div class="segmented"><button data-action="tab" data-tab="open" aria-pressed="${tab === 'open'}">تحتاج تدخلك (${mine.length})</button>
+        <button data-action="tab" data-tab="auto" aria-pressed="${tab === 'auto'}">يُنفَّذ تلقائياً (${auto.length})</button>
+        <button data-action="tab" data-tab="closed" aria-pressed="${tab === 'closed'}">المنجزة</button></div>
+      ${list.length ? `<div class="grid-cards">${list.map(taskCard).join('')}</div>` : empty(...none)}`;
   },
   actions: {
     tab(btn, e, ctx) { V.tab = btn.dataset.tab; ctx.rerender(); },
-    renew: (btn) => openRenew(V.due.find((l) => l.id === Number(btn.dataset.id))),
-    'new-request': newRequest,
     async attachment(btn) {
       const t = await api.get(`/api/tasks/${btn.dataset.id}`);
-      sheet({ title: 'المرفق', body: `<img class="thumb" style="max-height:70vh" src="${esc(t.attachment)}" alt="مرفق الطلب">` });
+      sheet({ title: 'رمز QR', body: `<img class="thumb" style="max-height:70vh" src="${esc(t.attachment)}" alt="رمز QR">` });
     },
     resolve: (btn) => resolveTask(V.tasks.find((t) => t.id === Number(btn.dataset.id))),
-    // The line behind a request: its activation source, and the form to change it.
-    'open-line': (btn) => openLine(Number(btn.dataset.id)),
     'copy-task': (btn) => copyText(V.tasks.find((t) => t.id === Number(btn.dataset.id)).note),
     reject(btn) {
       const t = V.tasks.find((x) => x.id === Number(btn.dataset.id));
       sheet({
-        title: `رفض: ${TASK_TYPE[t.type]}`,
-        body: `${SALE_TASKS.includes(t.type) ? `<div class="msg info">${icon('info')}<span>يُسترد للوكيل المبلغ كاملاً (${fmtMoney(t.amount)})${t.type === 'renew' ? ' ولا يُمدَّد الخط' : ' ويُحذف الرقم من قائمته'}.</span></div>` : ''}
-          <div class="field"><label for="rj-reason">السبب</label><input class="input" id="rj-reason" name="response" placeholder="يظهر للوكيل"></div>`,
-        submit: 'رفض الطلب', danger: true,
+        title: 'رفض تفعيل eSIM',
+        body: `<div class="msg info">${icon('info')}<span>الطلب مدفوع: بعد الرفض راجع إرجاع المبلغ للزبون من «متجر الزبائن».</span></div>
+          <div class="field"><label for="rj-reason">السبب</label><input class="input" id="rj-reason" name="response"></div>`,
+        submit: 'رفض', danger: true,
         async onSubmit(form) {
           await api.post(`/api/tasks/${t.id}/resolve`, { status: 'rejected', response: field(form, 'response') });
           changed();
-          return 'تم رفض الطلب';
+          return 'تم الرفض';
         },
       });
-    },
-    async cancel(btn) {
-      await api.post(`/api/tasks/${btn.dataset.id}/cancel`);
-      changed();
     },
   },
 };

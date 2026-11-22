@@ -1,41 +1,25 @@
 import {
-  S, api, esc, icon, toast, isAdmin, setToken, onUnauthorized, fmtMoney, initials,
+  S, api, esc, icon, toast, setToken, onUnauthorized, initials,
   sheet, closeAllSheets, navigate, go, relTime, field, skeleton, pushOverlayState, overlayBack, registerDrawer, setDrawerOpen,
-  tz, loadCatalog, supportHref,
+  loadCatalog,
 } from './core.js';
 import { renderLogin } from './views/login.js';
 import home from './views/home.js';
-import wizard from './views/wizard.js';
-import renew from './views/renew.js';
-import subscribers from './views/subscribers.js';
-import tasks from './views/tasks.js';
-import reports from './views/reports.js';
-import offers from './views/offers.js';
-import payments, { openTopupRequest, openAgentBalance } from './views/payments.js';
-import messages from './views/messages.js';
-import agents from './views/agents.js';
-import catalog from './views/catalog.js';
-import settings from './views/settings.js';
-import invoices from './views/invoices.js';
 import shop from './views/shop.js';
+import buyers from './views/buyers.js';
+import tasks from './views/tasks.js';
+import catalog from './views/catalog.js';
+import reports from './views/reports.js';
+import settings from './views/settings.js';
 
-const VIEWS = { home, new: wizard, renew, subscribers, tasks, messages, reports, offers, payments, agents, catalog, settings, invoices, shop };
+// The manager's panel of the eSIM shop (only the manager signs in).
+const VIEWS = { home, shop, buyers, tasks, catalog, reports, settings };
 
-const NAV = {
-  agent: [
-    ['home', 'الرئيسية', 'grid'], ['tasks', 'المهام', 'tasks', 'tasks'], ['messages', 'الرسائل', 'msg', 'messages'], ['reports', 'التقارير', 'chart'],
-    ['subscribers', 'المشتركون', 'phone'], ['offers', 'العروض', 'percent'], ['payments', 'المدفوعات', 'wallet'], ['invoices', 'الفواتير', 'file'],
-  ],
-  admin: [
-    ['home', 'الرئيسية', 'grid'], ['tasks', 'المهام', 'tasks', 'tasks'], ['messages', 'الرسائل', 'msg', 'messages'], ['reports', 'التقارير', 'chart'],
-    ['subscribers', 'المشتركون', 'phone'], ['agents', 'الوكلاء', 'users'], ['catalog', 'الشركات والرزم', 'box'],
-    ['offers', 'العروض', 'percent'], ['payments', 'المدفوعات', 'wallet'], ['invoices', 'الفواتير', 'file'], ['shop', 'متجر الزبائن', 'card'], ['settings', 'الإعدادات', 'sliders'],
-  ],
-};
-const TABS = {
-  agent: [['home', 'الرئيسية', 'home'], ['subscribers', 'المشتركون', 'phone'], ['new', '', 'plus'], ['reports', 'التقارير', 'chart'], ['menu', 'القائمة', 'menu']],
-  admin: [['home', 'الرئيسية', 'home'], ['agents', 'الوكلاء', 'users'], ['new', '', 'plus'], ['tasks', 'المهام', 'tasks'], ['menu', 'القائمة', 'menu']],
-};
+const NAV = [
+  ['home', 'الرئيسية', 'grid'], ['shop', 'متجر الزبائن', 'card'], ['buyers', 'المشترون', 'users'], ['tasks', 'التفعيلات', 'qr', 'tasks'],
+  ['catalog', 'الشركات والرزم', 'box'], ['reports', 'التقارير', 'chart'], ['settings', 'الإعدادات', 'sliders'],
+];
+const TABS = [['home', 'الرئيسية', 'home'], ['shop', 'المتجر', 'card'], ['buyers', 'المشترون', 'users'], ['tasks', 'التفعيلات', 'qr'], ['menu', 'القائمة', 'menu']];
 
 // ---------- theme ----------
 const THEMES = ['auto', 'light', 'dark'];
@@ -55,33 +39,14 @@ applyTheme(theme);
 matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change', () => applyTheme(theme));
 
 // ---------- shell ----------
-const role = () => (isAdmin() ? 'admin' : 'agent');
 
 function drawerHtml() {
   return `
     <div class="brand"><span class="brand-mark">${icon('logo')}</span>
-      <div><b>${esc(S.settings.appName)}</b><small>${isAdmin() ? 'لوحة المدير' : 'بوابة المبيعات'}</small></div></div>
-    <nav class="nav">${NAV[role()].map(([r, label, ic, badge]) => `
+      <div><b>${esc(S.settings.appName)}</b><small>لوحة متجر eSIM</small></div></div>
+    <nav class="nav">${NAV.map(([r, label, ic, badge]) => `
       <a href="#/${r}" data-action="nav" data-route="${r}">${icon(ic)}<span>${label}</span>${badge ? `<span class="badge" data-badge="${badge}" hidden></span>` : ''}</a>`).join('')}
-    </nav>
-    <div class="drawer-foot" id="drawer-wallet"></div>`;
-}
-
-function walletHtml() {
-  if (isAdmin()) {
-    const t = S.adminTotals;
-    return `<div class="wallet-mini">
-      <span>مجموع أرصدة الوكلاء</span><b class="ltr">${t ? fmtMoney(t.balances) : '—'}</b>
-      <div class="row"><span>ديون الوكلاء</span><span class="ltr">${t ? fmtMoney(t.debt) : '—'}</span></div>
-      <button class="btn btn-sm" data-action="agent-balance">${icon('plus')}شحن رصيد وكيل</button></div>`;
-  }
-  const u = S.user;
-  const used = u.creditLimit > 0 ? Math.min(100, Math.round((Math.max(0, -u.balance) / u.creditLimit) * 100)) : 0;
-  return `<div class="wallet-mini">
-    <span>الرصيد المتاح</span><b class="ltr">${fmtMoney(u.available)}</b>
-    <div class="meter"><i style="width:${used}%"></i></div>
-    <div class="row"><span>من سقف <span class="ltr">${fmtMoney(u.creditLimit)}</span></span><span>مستخدم ${used}%</span></div>
-    <button class="btn btn-sm" data-action="topup-request">${icon('plus')}شحن الرصيد</button></div>`;
+    </nav>`;
 }
 
 function renderShell() {
@@ -96,7 +61,6 @@ function renderShell() {
         <div class="top-actions">
           <button class="icon-btn" id="sync-btn" data-action="refresh" aria-label="تحديث البيانات">${icon('refresh')}<span class="dot"></span></button>
           <button class="icon-btn hide-xs" id="theme-btn" data-action="theme" aria-label="تبديل المظهر"></button>
-          ${!isAdmin() && supportHref() ? `<a class="icon-btn wa-btn" href="${esc(supportHref())}" target="_blank" rel="noopener" aria-label="الدعم الفني عبر واتساب" title="الدعم الفني">${icon('whatsapp')}</a>` : ''}
           <button class="icon-btn" data-action="notifications" aria-label="التنبيهات">${icon('bell')}<span class="badge" data-badge="bell" hidden></span></button>
           <button class="avatar" data-action="account" aria-label="الحساب">${esc(initials(S.user.name))}</button>
         </div>
@@ -104,19 +68,12 @@ function renderShell() {
       <div class="offline-bar" id="offline-bar" hidden>لا يوجد اتصال بالإنترنت — تُعرض آخر بيانات محمّلة</div>
       <main class="content" id="view"></main>
     </div>
-    <nav class="tabbar" aria-label="تنقل سريع">${TABS[role()].map(([r, label, ic]) => r === 'new'
-      ? `<button data-action="new-menu" aria-label="بيع جديد"><span class="fab">${icon(ic)}</span></button>`
-      : r === 'menu' ? `<button data-action="open-drawer">${icon(ic)}<span>${label}</span></button>`
-        : `<a href="#/${r}" data-route="${r}">${icon(ic)}<span>${label}</span></a>`).join('')}</nav>
+    <nav class="tabbar" aria-label="تنقل سريع">${TABS.map(([r, label, ic]) => (r === 'menu'
+      ? `<button data-action="open-drawer">${icon(ic)}<span>${label}</span></button>`
+      : `<a href="#/${r}" data-route="${r}">${icon(ic)}<span>${label}</span></a>`)).join('')}</nav>
   </div>`;
   applyTheme(theme);
-  updateWallet();
   updateBadges();
-}
-
-function updateWallet() {
-  const box = document.getElementById('drawer-wallet');
-  if (box && S.user) box.innerHTML = walletHtml();
 }
 
 function updateBadges() {
@@ -193,7 +150,8 @@ async function route() {
   if (!S.user) return;
   const r = parseHash();
   const view = VIEWS[r.name];
-  if (!view || (view.admin && !isAdmin())) return navigate('#/home');
+  // Unknown pages (e.g. links in older notifications to pages that are gone) open the home page.
+  if (!view) return navigate('#/home');
   const my = ++seq;
   const ctx = {
     ...r,
@@ -222,7 +180,7 @@ async function refresh({ quiet = false } = {}) {
   try {
     await Promise.all([
       refreshBadges(),
-      api.get('/api/me').then((r) => { S.user = r.user; S.settings = r.settings; updateWallet(); }),
+      api.get('/api/me').then((r) => { S.user = r.user; S.settings = r.settings; }),
       current.ctx?.reload(),
     ]);
     if (!quiet) toast('تم التحديث');
@@ -239,10 +197,6 @@ async function refreshBadges() {
     const n = await api.get('/api/notifications');
     S.notifications = n;
     S.badges = n.badges;
-    if (isAdmin()) {
-      S.adminTotals = await api.get(`/api/dashboard?tz=${tz()}`);
-      updateWallet();
-    }
   } catch { /* offline: keep the last badges */ }
   updateBadges();
 }
@@ -252,8 +206,8 @@ async function openNotifications() {
   let n = S.notifications;
   try { n = await api.get('/api/notifications'); } catch { /* show cached */ }
   if (!n) return;
-  const alertIcon = { expiring: ['calX', 'amber'], expired: ['alert', 'red'], balance: ['wallet', 'red'], tasks: ['tasks', 'blue'], message: ['msg', 'green'] };
-  const kindIcon = { offer: ['gift', 'red'], balance: ['wallet', 'green'], task: ['tasks', 'blue'], line: ['phone', 'cyan'] };
+  const alertIcon = { tasks: ['qr', 'cyan'], shop: ['card', 'amber'] };
+  const kindIcon = { task: ['tasks', 'blue'], line: ['qr', 'cyan'] };
   const tile = ([ic, color]) => `<span class="tile sm ${color === 'blue' ? '' : color}">${icon(ic)}</span>`;
   sheet({
     title: 'التنبيهات',
@@ -263,7 +217,7 @@ async function openNotifications() {
         ${tile(alertIcon[a.kind] || ['info', 'blue'])}<span class="grow"><b>${esc(a.title)}</b><small>${esc(a.body)}</small></span>${icon('chevL')}</a>`).join('')}</div>` : ''}
       ${n.items.length ? `<div class="list" style="gap:4px">${n.items.map((i) => `<a class="notif ${i.unread ? 'unread' : ''}" href="${esc(i.link || '#/home')}" data-go="${esc(i.link || '#/home')}">
         ${tile(kindIcon[i.kind] || ['bell', 'blue'])}<span class="grow"><b>${esc(i.title)}</b>${i.body ? `<p>${esc(i.body)}</p>` : ''}<time>${relTime(i.ts)}</time></span></a>`).join('')}</div>`
-        : n.alerts.length ? '' : `<div class="empty"><span class="tile">${icon('bell')}</span><b>لا توجد تنبيهات</b><span>ستظهر هنا تنبيهات الرصيد والعروض والطلبات.</span></div>`}`,
+        : n.alerts.length ? '' : `<div class="empty"><span class="tile">${icon('bell')}</span><b>لا توجد تنبيهات</b><span>ستظهر هنا تنبيهات طلبات المتجر والتفعيلات.</span></div>`}`,
     onMount(form) {
       form.querySelectorAll('[data-go]').forEach((a) => a.addEventListener('click', (e) => { e.preventDefault(); go(a.dataset.go); }));
     },
@@ -283,7 +237,7 @@ function openAccount() {
     title: 'الحساب',
     body: `
       <div class="item-top"><span class="avatar lg">${esc(initials(u.name))}</span>
-        <div class="grow"><b class="item-title">${esc(u.name)}</b><div class="item-sub"><span class="ltr">@${esc(u.username)}</span><span>${isAdmin() ? 'المدير' : 'وكيل'}</span></div></div></div>
+        <div class="grow"><b class="item-title">${esc(u.name)}</b><div class="item-sub"><span class="ltr">@${esc(u.username)}</span><span>المدير</span></div></div></div>
       <div class="field"><span class="label">المظهر</span>
         <div class="segmented" id="theme-seg">${[['auto', 'تلقائي'], ['light', 'فاتح'], ['dark', 'داكن']].map(([k, l]) => `<button type="button" data-theme-pick="${k}" aria-pressed="${theme === k}">${l}</button>`).join('')}</div></div>
       <div class="divider"></div>
@@ -319,24 +273,8 @@ async function logout() {
   renderLogin(onLoggedIn);
 }
 
-// The "+" in the tab bar: the three ways to sell, so none is hidden away on the home page.
-function openNewMenu() {
-  const items = [
-    ['#/new', 'userPlus', '', 'اشتراك فاتورة جديدة', 'خط جديد بشريحة، أو eSIM، أو تحويل رقم'],
-    ['#/new?type=external', 'card', 'green', 'زبون دفع مسبق', 'شحن رقم مسبق الدفع'],
-    ['#/renew', 'repeat', 'amber', 'تمديد زبون قائم', 'تمديد رزمة رقم مفعّل'],
-  ];
-  sheet({
-    title: isAdmin() ? 'بيع لوكيل' : 'بيع جديد',
-    body: `<div class="action-list">${items.map(([href, ic, color, label, hint]) => `<button type="button" data-go="${href}">
-      <span class="tile sm ${color}">${icon(ic)}</span><span class="grow"><b>${label}</b><br><small class="muted">${hint}</small></span></button>`).join('')}</div>`,
-    onMount(form, el) { el.querySelectorAll('[data-go]').forEach((b) => b.addEventListener('click', () => go(b.dataset.go))); },
-  });
-}
-
 // ---------- global actions ----------
 const GLOBAL = {
-  'new-menu': openNewMenu,
   'open-drawer': openDrawer,
   'close-drawer': closeDrawer,
   async nav(a) {
@@ -347,8 +285,6 @@ const GLOBAL = {
   refresh: () => refresh(),
   notifications: openNotifications,
   account: openAccount,
-  async 'topup-request'() { await closeDrawer(); openTopupRequest(() => refresh({ quiet: true })); },
-  async 'agent-balance'() { await closeDrawer(); openAgentBalance(null, () => refresh({ quiet: true })); },
 };
 
 document.addEventListener('click', async (e) => {
@@ -371,12 +307,11 @@ document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible' && S.user) refresh({ quiet: true });
 });
 setInterval(() => { if (document.visibilityState === 'visible' && S.user) refreshBadges(); }, 60_000);
-// Fired by sheets after any change: refresh the open page, the badges and the wallet.
+// Fired by sheets after any change: refresh the open page and the badges.
 window.addEventListener('app:changed', (e) => {
   if (!S.user) return;
   if (!e.detail?.keepView) current.ctx?.reload().catch(() => {});
   refreshBadges();
-  api.get('/api/me').then((r) => { S.user = r.user; updateWallet(); }).catch(() => {});
 });
 
 onUnauthorized(() => {

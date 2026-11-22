@@ -167,16 +167,26 @@ test.before(async () => {
 });
 test.after(() => { app.close(); server.close(); fs.rmSync(dataDir, { recursive: true, force: true }); });
 
-// The manager prices Aylol's packages: a synced package has no agents' price until then (here, cost + the system's %).
-const priceAylol = () => {
-  const { q, getSettings } = require('../src/db');
-  const s = getSettings();
-  q("UPDATE packages SET price = ROUND(cost * (1 + ? / 100.0), 2) WHERE art_card_id LIKE 'ay:%' AND kind = 'card' AND price = 0").run(s.aylolMarkupCard);
-  q("UPDATE packages SET price = ROUND(cost * (1 + ? / 100.0), 2) WHERE art_card_id LIKE 'ay:%' AND kind != 'card' AND price = 0").run(s.aylolMarkupInvoice);
-};
+// A paid shop order for an Aylol eSIM number the shop offered (and so remembered), then sold (shop.fulfil's part).
+let seq = 0;
+function sellEsim(pkgId, phone, name) {
+  const { q, tx } = require('../src/db');
+  const { recordEsimSale } = require('../src/sale');
+  const art = q('SELECT art_card_id FROM packages WHERE id = ?').get(pkgId).art_card_id;
+  require('../src/routes/aylol').rememberEsim(art, [phone]);
+  const t = Date.now();
+  const id = Number(q(`INSERT INTO shop_orders (code, package_id, package_label, kind, number, customer_name, amount, status, paid_at, created_at, updated_at, esim)
+                       VALUES (?, ?, 'eSIM', 'new', ?, ?, 50, 'paid', ?, ?, ?, 1)`).run(`AY${++seq}`, pkgId, phone, name, t, t, t).lastInsertRowid);
+  return tx(() => {
+    const r = recordEsimSale(q('SELECT * FROM shop_orders WHERE id = ?').get(id));
+    q('UPDATE shop_orders SET line_id = ? WHERE id = ?').run(r.lineId, id);
+    return r;
+  });
+}
 
-test('Aylol: credentials only from the settings, real supplier catalog, eSIM numbers picked without buying, sale carried out with a real QR', async () => {
+test('Aylol: credentials only from the settings, real supplier catalog (new lines only), an eSIM sold in the shop carried out with a real QR', async () => {
   const admin = (await ok(call(null, 'POST', '/api/login', { username: 'admin', password: 'admin-pass' }))).token;
+  const { q: dbq, tx } = require('../src/db');
 
   // Nothing is set up: nothing is tried, no account is made up.
   assert.equal((await call(admin, 'POST', '/api/aylol/check')).status, 400);
@@ -191,111 +201,52 @@ test('Aylol: credentials only from the settings, real supplier catalog, eSIM num
   const check = await ok(call(admin, 'POST', '/api/aylol/check'));
   assert.deepEqual([check.user, check.balance], ['dealer@example.com', 412.5]);
 
-  // Sync: only what the site lists, at its price (the signature is checked by the fake site).
-  const card = await ok(call(admin, 'POST', '/api/aylol/sync', { kind: 'card' }));
+  // Sync: only what the site lists, at its price (the signature is checked by the fake site). No top-up cards.
+  assert.equal((await call(admin, 'POST', '/api/aylol/sync', { kind: 'card' })).status, 400);
   const invoice = await ok(call(admin, 'POST', '/api/aylol/sync', { kind: 'invoice' }));
-  assert.deepEqual([card.total, invoice.total], [1, 3]);
+  assert.equal(invoice.total, 3);
   assert.equal(site.badSignatures, 0);
   const cat = await ok(call(admin, 'GET', '/api/catalog'));
   const ayPkgs = cat.packages.filter((p) => p.supplier === 'ay');
-  assert.deepEqual(ayPkgs.map((p) => p.cost).sort((a, b) => a - b), [30, 35, 40, 47.5]);
+  assert.deepEqual(ayPkgs.map((p) => p.cost).sort((a, b) => a - b), [30, 35, 40]);
   assert.equal(ayPkgs.some((p) => /empty|استرداد/i.test(p.name)), false, 'no made-up packages');
   const esimPkg = ayPkgs.find((p) => p.esimEnabled && p.cost === 40);
   assert.ok(esimPkg);
-  // No agents' price of its own yet: the manager sets it, and agents do not see the package until then.
-  assert.deepEqual(ayPkgs.map((p) => p.price), [0, 0, 0, 0]);
-  priceAylol();
+  assert.equal(esimPkg.pool, true);
+  assert.equal(dbq("SELECT COUNT(*) AS n FROM packages WHERE art_card_id LIKE 'ay:credit:%'").get().n, 0);
 
   // The cookie jar lives beside the data, never in the app folder.
   assert.ok(fs.existsSync(path.join(dataDir, 'cookies.txt')));
   assert.equal(fs.existsSync(path.join(__dirname, '..', 'aylol-data')), false);
+  assert.equal((await call(admin, 'GET', `/api/numbers/free?packageId=${esimPkg.id}&esim=1`)).status, 404, 'no agent number lookup');
 
-  // An agent sees the eSIM numbers: no purchase, no eSIM code, and never the supplier's name.
-  await ok(call(admin, 'POST', '/api/agents', { name: 'وكيل', username: 'agent-ay', password: 'secret1', balance: 500 }));
-  const agent = (await ok(call(null, 'POST', '/api/login', { username: 'agent-ay', password: 'secret1' }))).token;
-  const agentCat = await ok(call(agent, 'GET', '/api/catalog'));
-  const seen = agentCat.packages.find((p) => p.id === esimPkg.id);
-  assert.equal(seen.pool, true);
-  assert.equal(JSON.stringify(agentCat).includes('أيلول') || JSON.stringify(agentCat).includes('ay:'), false);
-  const free = await ok(call(agent, 'GET', `/api/numbers/free?packageId=${esimPkg.id}&esim=1`));
-  assert.deepEqual(free, [{ id: STOCK.phone, phone: STOCK.phone }, { id: STOCK2.phone, phone: STOCK2.phone }]);
+  // The eSIM numbers the shop offers: looking buys nothing.
+  const art = dbq('SELECT art_card_id FROM packages WHERE id = ?').get(esimPkg.id).art_card_id;
+  const free = await require('../src/routes/aylol').freeNumbers(art);
+  assert.deepEqual(free.map((n) => n.phone), [STOCK.phone, STOCK2.phone]);
   assert.equal(site.purchases.length, 0, 'looking at numbers buys nothing');
-  assert.equal((await call(agent, 'GET', '/api/aylol/available-numbers?packageId=1')).status, 404, 'the old lookup that could buy is gone');
 
   // A number the list did not show is refused.
-  assert.equal((await call(agent, 'POST', '/api/lines', { kind: 'new', esim: true, packageId: esimPkg.id, number: '0539999999', customerName: 'زبون' })).status, 400);
+  assert.throws(() => tx(() => require('../src/sale').recordEsimSale({ esim: 1, package_id: esimPkg.id, number: '0539999999', customer_name: 'زبون', amount: 50, code: 'X' })),
+    /قائمة الأرقام المتاحة/);
 
-  // The sale: the agent pays, the site sells the eSIM, the customer gets the real code as a scannable QR.
-  const sold = await ok(call(agent, 'POST', '/api/lines', { kind: 'new', esim: true, packageId: esimPkg.id, number: STOCK.phone, customerName: 'زبون هوت' }));
-  const task = await until(async () => (await ok(call(admin, 'GET', '/api/tasks'))).find((t) => t.lineId === sold.line.id && t.status === 'done'));
+  // The sale: paid in the shop, the site sells the eSIM, the customer gets the real code as a scannable QR.
+  const sold = sellEsim(esimPkg.id, STOCK.phone, 'زبون هوت');
+  const task = await until(async () => (await ok(call(admin, 'GET', '/api/tasks'))).find((t) => t.lineId === sold.lineId && t.status === 'done'));
+  assert.equal(task.source, 'أيلول');
   assert.equal(site.purchases.length, 1);
   assert.deepEqual(site.purchases[0], { category_id: 10, purchase_type: 'loaded_esim', package_id: '501' });
-  assert.ok(task);
-  const { line } = await ok(call(agent, 'GET', `/api/lines/${sold.line.id}`));
+  const line = dbq('SELECT * FROM lines WHERE id = ?').get(sold.lineId);
   assert.equal(line.status, 'active');
-  assert.equal(line.esimCode, 'LPA:1$smdp.hot.example$ACT-900');
-  assert.equal(decodeQrDataUrl(line.esimQr), 'LPA:1$smdp.hot.example$ACT-900');
-  assert.ok((await ok(call(agent, 'GET', '/api/me'))).user.balance < 500, 'the agent paid for the sale');
-
-  // A top-up card on a customer's number goes to the site's charge form with that number.
-  const cardPkg = ayPkgs.find((p) => p.kind === 'card');
-  const topup = await ok(call(agent, 'POST', '/api/lines', { kind: 'external', packageId: cardPkg.id, number: '0529998877' }));
-  await until(async () => (await ok(call(admin, 'GET', '/api/tasks'))).find((t) => t.lineId === topup.line.id && t.status === 'done'));
-  const sent = site.subscribes.at(-1);
-  assert.deepEqual([sent.phone, sent.package_id, sent.company_id, sent.action], ['0529998877', '41', '10', 'recharge']);
-
-  // The site's price is read before every purchase: when it rose above the approved price, nothing is bought there
-  // and the request waits for the manager, who is told why.
-  site.cardPrice = 60;
-  const before = site.subscribes.length;
-  const dear = await ok(call(agent, 'POST', '/api/lines', { kind: 'external', packageId: cardPkg.id, number: '0527776655' }));
-  const held = await until(async () => (await ok(call(admin, 'GET', '/api/tasks'))).find((t) => t.lineId === dear.line.id && t.autoStatus === 'failed'));
-  assert.match(held.autoNote, /60/);
-  assert.equal(held.status, 'open');
-  assert.equal(site.subscribes.length, before, 'nothing bought above the approved price');
-  // The same when the site no longer lists the package.
-  site.cardPrice = 47.5;
-  site.cardListed = false;
-  const gone = await ok(call(agent, 'POST', '/api/lines', { kind: 'external', packageId: cardPkg.id, number: '0527776644' }));
-  await until(async () => (await ok(call(admin, 'GET', '/api/tasks'))).find((t) => t.lineId === gone.line.id && t.autoStatus === 'failed'));
-  assert.equal(site.subscribes.length, before);
-  site.cardListed = true;
-
-  // A bill line: a new number on the customer's SIM card, as the site sells it (its company 7): one of the numbers the
-  // site offers for the package, the SIM's number and the customer's first and family names. Never an eSIM.
-  const billPkg = ayPkgs.find((p) => p.kind === 'invoice' && p.cost === 35);
-  const billSeen = (await ok(call(agent, 'GET', '/api/catalog'))).packages.find((p) => p.id === billPkg.id);
-  assert.deepEqual([billSeen.pool, billSeen.simOnly, billSeen.esimOnly, billSeen.esimEnabled], [true, true, false, false]);
-  const SIM = '8997210000000000777';
-  const freeBill = await ok(call(agent, 'GET', `/api/numbers/free?packageId=${billPkg.id}&esim=0`));
-  assert.deepEqual(freeBill.map((n) => n.phone), ['0512000001', '0512000002', '0512000003']);
-  const purchases = site.purchases.length;
-  assert.equal((await call(agent, 'POST', '/api/lines', { kind: 'new', esim: true, packageId: billPkg.id, number: '0512000001', customerName: 'Moataz Abukhater' })).status, 400, 'never an eSIM');
-  assert.equal((await call(agent, 'POST', '/api/lines', { kind: 'new', packageId: billPkg.id, number: '0531234567', sim: SIM, customerName: 'Moataz Abukhater' })).status, 400, 'a typed number is refused');
-  assert.equal((await call(agent, 'POST', '/api/lines', { kind: 'new', packageId: billPkg.id, number: '0512000002', sim: SIM, customerName: 'Moataz' })).status, 400, 'first and family names');
-  const subs = site.subscribes.length;
-  const bill = await ok(call(agent, 'POST', '/api/lines', { kind: 'new', packageId: billPkg.id, number: '0512000002', sim: SIM, customerName: 'Moataz Abukhater' }));
-  await until(async () => (await ok(call(admin, 'GET', '/api/tasks'))).find((t) => t.lineId === bill.line.id && t.status === 'done'));
-  assert.equal(site.subscribes.length, subs + 1);
-  const order = site.subscribes.at(-1);
-  assert.deepEqual(
-    [order.action, order.package_id, order.company_id, order.category_id, order.phone, order.company7_available_number_id, order.sim_number,
-      order.first_name, order.last_name, order.duration, order.customer_price, order.price, order.company7_number_option, order.customer_paid, order.esim],
-    ['subscription', '77', '7', '12', '0512000002', 'k-2', SIM, 'Moataz', 'Abukhater', '1', '35', '35', 'new', 'true', undefined]);
-  assert.equal(site.purchases.length, purchases, 'no eSIM is bought for a bill line');
-  const billLine = (await ok(call(agent, 'GET', `/api/lines/${bill.line.id}`))).line;
-  assert.deepEqual([billLine.status, billLine.number, billLine.sim, billLine.esim], ['active', '0512000002', SIM, false]);
-  // The manager's own sale goes to Aylol too, never active before it is carried out there.
-  const own = await ok(call(admin, 'POST', '/api/lines', { kind: 'new', agentId: (await ok(call(admin, 'GET', '/api/agents'))).find((a) => a.username === 'agent-ay').id,
-    packageId: billPkg.id, number: '0512000001', sim: '8997210000000000778', customerName: 'Moataz Abukhater' }));
-  assert.notEqual(own.line.status, 'active');
+  assert.equal(line.esim_code, 'LPA:1$smdp.hot.example$ACT-900');
+  assert.equal(decodeQrDataUrl(line.esim_qr), 'LPA:1$smdp.hot.example$ACT-900');
 
   // The shop sells eSIMs only: a new line on the customer's own SIM card is never on sale there, nor ordered — Aylol's
   // lines reach the shop only as eSIMs (below), while eSIM lines are off here.
-  const { q: dbq } = require('../src/db');
+  const billPkg = ayPkgs.find((p) => p.cost === 35);
   await ok(call(admin, 'PUT', '/api/settings', { shopEnabled: true, jawwalpayNumber: '0599000000', jawwalpayName: 'المتجر' }));
   dbq('UPDATE packages SET shop_price = 39 WHERE id = ?').run(billPkg.id);
-  const pelePkg = (await ok(call(admin, 'GET', '/api/catalog'))).packages.find((p) => p.supplier === 'ay' && p.cost === 30);
+  const pelePkg = ayPkgs.find((p) => p.cost === 30);
   dbq('UPDATE packages SET shop_price = 45 WHERE id = ?').run(pelePkg.id);
   const onSale = (await ok(call(null, 'GET', '/api/shop'))).packages;
   assert.equal(onSale.some((p) => p.id === billPkg.id || p.id === pelePkg.id), false, 'not on sale on a SIM card');
@@ -305,14 +256,10 @@ test('Aylol: credentials only from the settings, real supplier catalog, eSIM num
   }
   assert.equal(site.subscribes.length, subsBefore, 'nothing at Aylol');
 
-  // An agent's Pelephone sale (no SIM known before the number) stays a request for the manager.
-  const peleSeen = (await ok(call(agent, 'GET', '/api/catalog'))).packages.find((p) => p.id === pelePkg.id);
-  assert.equal(peleSeen ? peleSeen.pool : false, false);
-
   // The password, the tokens and the customers' details never appear on curl's command line.
   const argv = fs.readFileSync(path.join(dataDir, 'argv.log'), 'utf8');
   assert.ok(argv.includes('/login'), 'the wrapper saw the requests');
-  for (const secret of ['right-pass', 'wrong-pass', 'CSRF-LOGIN', '0529998877', 'زبون', 'Abukhater', SIM]) assert.equal(argv.includes(secret), false, `${secret} on the command line`);
+  for (const secret of ['right-pass', 'wrong-pass', 'CSRF-LOGIN', 'زبون']) assert.equal(argv.includes(secret), false, `${secret} on the command line`);
 });
 
 // A new line in the shop on Aylol's company 7, as its page sells it — as an eSIM only (the shop sells eSIMs only), once
@@ -325,7 +272,7 @@ test('Aylol lines in the shop: as an eSIM only, with its QR; not on sale while e
   site.hotEsim = true;
   await ok(call(admin, 'POST', '/api/aylol/sync', { kind: 'invoice' }));
   const cat = await ok(call(admin, 'GET', '/api/catalog'));
-  const billPkg = cat.packages.find((p) => p.supplier === 'ay' && p.kind === 'invoice' && p.cost === 35);
+  const billPkg = cat.packages.find((p) => p.supplier === 'ay' && p.cost === 35);
   const hotPkg = cat.packages.find((p) => p.supplier === 'ay' && p.cost === 25);
   assert.ok(billPkg && hotPkg);
   assert.equal(dbq('SELECT supplier_sim_type FROM packages WHERE id = ?').get(hotPkg.id).supplier_sim_type, 'esim', 'kept as the site says');
@@ -345,9 +292,6 @@ test('Aylol lines in the shop: as an eSIM only, with its QR; not on sale while e
   // The first name is enough: Aylol gets it as first and family name.
   assert.deepEqual(require('../src/aylol').splitName('Lina'), { first: 'Lina', last: 'Lina' });
   assert.deepEqual(require('../src/aylol').splitName('Lina Haddad'), { first: 'Lina', last: 'Haddad' });
-  // An agent still sells these lines on a SIM card only.
-  const agent = (await ok(call(null, 'POST', '/api/login', { username: 'agent-ay', password: 'secret1' }))).token;
-  assert.equal((await call(agent, 'POST', '/api/lines', { kind: 'new', esim: true, packageId: billPkg.id, number: '0513000001', customerName: 'Lina Haddad' })).status, 400);
 
   // The eSIM order: no SIM asked, a random eSIM number held, the eSIM fee added; nothing at the site before payment.
   const fee = Number(shopBill.esimFee) || 0;

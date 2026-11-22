@@ -1,5 +1,5 @@
 'use strict';
-// Requests that must not hurt the server, and what an agent must never be sent.
+// Requests that must not hurt the server, and what the manager's settings never carry.
 const net = require('node:net');
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -58,21 +58,18 @@ test('a malformed address is refused and the server stays up; nothing outside pu
   assert.equal(({}).polluted, undefined);
 });
 
-test('an agent is sent only the settings its screens need', async () => {
+test('the manager’s settings: never a password, and nothing of the removed features', async () => {
   const admin = (await call(null, 'POST', '/api/login', { username: 'admin', password: 'admin-pass' })).body.token;
-  await call(admin, 'PUT', '/api/settings', { qlUser: 'dealer@example.com', qlPass: 'secret-pass', qlMarkupCard: 25, artUser: 'ag1', artPass: 'p', supportWhatsapp: '972567725080' });
-  await call(admin, 'POST', '/api/agents', { name: 'وكيل', username: 'agent1', password: 'secret1', balance: 10 });
-  const login = (await call(null, 'POST', '/api/login', { username: 'agent1', password: 'secret1' })).body;
-  for (const s of [login.settings, (await call(login.token, 'GET', '/api/me')).body.settings]) {
-    assert.deepEqual(Object.keys(s).sort(), ['appName', 'esimFee', 'lowBalance', 'supportWhatsapp', 'warnDays']);
-    assert.ok(!JSON.stringify(s).includes('dealer@example.com'));
+  await call(admin, 'PUT', '/api/settings', { qlUser: 'dealer@example.com', qlPass: 'secret-pass', qlMarkupInvoice: 25, artUser: 'ag1', artPass: 'p', warnDays: 9, supportWhatsapp: '972567725080' });
+  const login = (await call(null, 'POST', '/api/login', { username: 'admin', password: 'admin-pass' })).body;
+  for (const all of [login.settings, (await call(admin, 'GET', '/api/me')).body.settings, (await call(admin, 'GET', '/api/settings')).body]) {
+    assert.equal(all.qlUser, 'dealer@example.com');
+    assert.equal(all.qlMarkupInvoice, 25);
+    for (const k of ['artUser', 'artConfigured', 'warnDays', 'lowBalance', 'qlMarkupCard']) assert.equal(all[k], undefined, k);
+    assert.ok(!JSON.stringify(all).includes('secret-pass'));
   }
-  assert.equal((await call(login.token, 'GET', '/api/settings')).status, 403);
-  // The manager still gets everything (but never a password).
-  const all = (await call(admin, 'GET', '/api/settings')).body;
-  assert.equal(all.qlUser, 'dealer@example.com');
-  assert.equal(all.qlMarkupCard, 25);
-  assert.ok(!JSON.stringify(all).includes('secret-pass'));
+  const { q } = require('../src/db');
+  assert.equal(q("SELECT value FROM settings WHERE key = 'art_user'").get(), undefined, 'art-topup settings are not saved');
 });
 
 test('telecom: the password and the Gmail App password are never sent back', async () => {

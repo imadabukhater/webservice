@@ -148,76 +148,25 @@ test('a wrong password or a wrong code is refused with a clear message', async (
   await assert.rejects(tc.check({ ...creds, user: '' }), /أدخل بريد telecom/);
 });
 
-test('reads a subscriber: its package, end date and the price an extension starts from', async () => {
-  const found = await tc.findLead(creds, '0554661392');
-  assert.equal(found.leadId, 465562);
-  assert.deepEqual(await tc.lead(creds, found.leadId),
-    { leadId: 465562, number: '0554661392', packageId: 719, endDate: '2026-10-23', supplierPrice: 35.64, provider: 'rami-levi', special: false });
-  assert.deepEqual([30, 90, 7, 14].map((d) => tc.extensionPrice(35.64, d)), [35.64, 106.92, 10.32, null]);
-});
-
-test('through the app: sync, an agent extends a subscriber, and it is carried out automatically', async () => {
+test('through the app: sync its new lines (no extensions)', async () => {
   const admin = await login('admin', 'admin-pass');
   const s = await ok(call(admin, 'PUT', '/api/settings', {
-    tcUser: 'dealer@example.com', tcPass: 'tc-pass', tcMailUser: 'box@gmail.com', tcMailPass: 'app-pass', tcMarkupCard: 20, tcMarkupInvoice: 10,
+    tcUser: 'dealer@example.com', tcPass: 'tc-pass', tcMailUser: 'box@gmail.com', tcMailPass: 'app-pass', tcMarkupInvoice: 10,
   }));
-  assert.deepEqual([s.tcReady, s.tcMarkupCard, s.tcMarkupInvoice], [true, 20, 10]);
+  assert.deepEqual([s.tcReady, s.tcMarkupInvoice, s.tcMarkupCard], [true, 10, undefined]);
   assert.deepEqual(await ok(call(admin, 'POST', '/api/telecom/check')), { ok: true, balance: 86.48, subscribers: 3, active: 2 });
 
-  // ----- sync: extensions take regular packages a month at a time; new lines also the offers, for their months -----
-  const sc = await ok(call(admin, 'POST', '/api/telecom/sync', { kind: 'card' }));
+  // ----- sync: new lines, the offers for their months -----
+  assert.equal((await call(admin, 'POST', '/api/telecom/sync', { kind: 'card' })).status, 400, 'no extensions');
   const si = await ok(call(admin, 'POST', '/api/telecom/sync', { kind: 'invoice' }));
-  assert.deepEqual([sc.total, si.total], [2, 3]);
+  assert.equal(si.total, 3);
   const cat = (await ok(call(admin, 'GET', '/api/catalog'))).packages.filter((p) => p.supplier === 'tc');
-  const extRami = cat.find((p) => p.kind === 'card' && p.artCode === '719');
-  const newRami = cat.find((p) => p.kind === 'invoice' && p.artCode === '719');
-  const offer = cat.find((p) => p.kind === 'invoice' && p.artCode === '728');
-  assert.deepEqual([extRami.cost, extRami.price, extRami.days, newRami.price, offer.cost, offer.days], [35.64, 42.77, 30, 39.2, 99, 90]);
-  assert.match(extRami.name, /رامي ليفي 200 جيجا 5G/);
+  const newRami = cat.find((p) => p.artCode === '719');
+  const offer = cat.find((p) => p.artCode === '728');
+  assert.deepEqual([newRami.price, offer.cost, offer.days], [39.2, 99, 90]);
+  assert.match(newRami.name, /رامي ليفي 200 جيجا 5G/);
   assert.match(offer.name, /عرض 3 أشهر/);
   // A second sync adds nothing and keeps the prices.
-  assert.deepEqual((await ok(call(admin, 'POST', '/api/telecom/sync', { kind: 'card' }))).added, 0);
-
-  // ----- an agent with a telecom subscriber's number extends it -----
-  await ok(call(admin, 'POST', '/api/agents', { name: 'وكيل', username: 'agent1', password: 'secret1', balance: 500 }));
-  const t = await login('agent1', 'secret1');
-  const sold = await ok(call(t, 'POST', '/api/lines', { kind: 'external', packageId: extRami.id, number: '0554661392' }));
-  const task = await until(async () => (await ok(call(admin, 'GET', '/api/tasks'))).find((x) => x.lineId === sold.line.id && x.status === 'done'));
-  assert.deepEqual(site.renewed, [{ leadId: '465562', renew_type: '1_month', date_choice: '' }]);
-  assert.equal(task.source, 'telecom');
-  assert.match(task.autoNote, /telecom: تم التمديد حتى 23\/11\/2026/);
-  assert.equal(site.leads[0].end, '23/11/2026');
-
-  // ----- the price on the site went up: nothing is sent, the manager is told -----
-  site.leads[0].price = '40.00';
-  const sold2 = await ok(call(t, 'POST', `/api/lines/${sold.line.id}/renew`, { packageId: extRami.id }));
-  assert.equal(sold2.pending, true);
-  const failed = await until(async () => (await ok(call(admin, 'GET', '/api/tasks'))).find((x) => x.lineId === sold.line.id && x.autoStatus === 'failed'));
-  assert.match(failed.autoNote, /سعر telecom الآن 40 ₪ وهو أعلى من المعتمد 35.64 ₪/);
-  assert.equal(site.renewed.length, 1, 'not sent');
-  site.leads[0].price = '35.64';
-
-  // ----- a disconnected subscriber is not extended; a refusal reaches the manager -----
-  const off = await ok(call(t, 'POST', '/api/lines', { kind: 'external', packageId: extRami.id, number: '0555623670' }));
-  const offTask = await until(async () => (await ok(call(admin, 'GET', '/api/tasks'))).find((x) => x.lineId === off.line.id && x.autoStatus === 'failed'));
-  assert.match(offTask.autoNote, /ניתוק קבוע/);
-  site.refuse = 'אין מספיק קרדיט';
-  const extWe = cat.find((p) => p.kind === 'card' && p.artCode === '853');
-  const we = await ok(call(t, 'POST', '/api/lines', { kind: 'external', packageId: extWe.id, number: '0515316032' }));
-  const refused = await until(async () => (await ok(call(admin, 'GET', '/api/tasks'))).find((x) => x.lineId === we.line.id && x.autoStatus === 'failed'));
-  assert.match(refused.autoNote, /رفض telecom التمديد: .*אין מספיק קרדיט/);
-  site.refuse = '';
-
-  // ----- a new line on a telecom package waits for the manager -----
-  const nl = await ok(call(t, 'POST', '/api/lines', { kind: 'new', packageId: newRami.id, number: '0551112233', sim: '8912345678901234567', customerName: 'زبون' }));
-  assert.equal(nl.line.status, 'pending');
-  const nlTask = (await ok(call(admin, 'GET', '/api/tasks'))).find((x) => x.lineId === nl.line.id);
-  assert.deepEqual([nlTask.status, nlTask.autoStatus || ''], ['open', '']);
-  assert.equal((await call(t, 'POST', '/api/lines', { kind: 'external', packageId: newRami.id, number: '0551112234' })).status, 400, 'a new-line package is not an extension');
-
-  // ----- the agent never learns it is telecom -----
-  for (const url of ['/api/catalog', '/api/lines', `/api/lines/${sold.line.id}`, '/api/tasks', '/api/notifications', '/api/ops']) {
-    const body = JSON.stringify((await ok(call(t, 'GET', url))));
-    assert.ok(!/telecom|"supplier"\s*:|"source"\s*:/i.test(body), `${url} names the supplier`);
-  }
+  assert.deepEqual((await ok(call(admin, 'POST', '/api/telecom/sync', { kind: 'invoice' }))).added, 0);
+  assert.equal(require('../src/db').q("SELECT COUNT(*) AS n FROM packages WHERE art_card_id LIKE 'tc:%'").get().n, 0);
 });

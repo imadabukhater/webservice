@@ -1,8 +1,8 @@
 import {
-  api, esc, icon, fmtMoney, fmtDateTime, relTime, phone, sheet, field, changed, empty, copyText, toast,
+  api, esc, icon, fmtMoney, fmtDateTime, relTime, phone, sheet, field, changed, empty, toast,
 } from '../core.js';
 
-const V = { tab: 'orders', filter: 'open', orders: [], mails: [], keys: [], settings: null, agents: [] };
+const V = { tab: 'orders', filter: 'open', orders: [], mails: [], settings: null };
 
 const STAGE = {
   awaiting_payment: ['بانتظار التحويل', ''], verifying: ['يتحقق تلقائياً', 'open'], review: ['تحقق يدوي', 'open'],
@@ -18,7 +18,7 @@ function orderCard(o) {
   return `<article class="item">
     <div class="item-top"><span class="tile sm ${o.stage === 'done' ? 'green' : o.stage === 'review' || o.stage === 'paid_issue' ? 'red' : 'amber'}">${icon('card')}</span>
       <div class="grow"><b class="item-title">${esc(o.packageLabel)} · <span class="ltr">${fmtMoney(o.amount)}</span></b>
-        <div class="item-sub"><span class="ltr">${esc(o.code)}</span>${phone(o.number)}<span>${o.esim ? 'eSIM' : o.kind === 'new' ? 'خط جديد' : 'شحن'}</span><span>${relTime(o.createdAt)}</span></div></div>
+        <div class="item-sub"><span class="ltr">${esc(o.code)}</span>${phone(o.number)}<span>eSIM</span><span>${relTime(o.createdAt)}</span></div></div>
       <span class="pill s-${cls}">${label}</span></div>
     ${o.customerName ? `<p class="small">الزبون: ${esc(o.customerName)}${o.contactPhone && o.contactPhone !== o.number ? ` · تواصل ${phone(o.contactPhone)}` : ''}</p>` : ''}
     ${proof ? `<p class="small" style="color:var(--ink-2)">${proof}</p>` : ''}
@@ -41,29 +41,12 @@ function mailRow(m) {
     <div class="item-actions"><button class="btn btn-sm" data-action="open-mail" data-id="${m.id}">${icon('eye')}نص الإشعار</button></div></article>`;
 }
 
-function keyRow(k) {
-  return `<article class="item"><div class="item-top"><span class="tile sm cyan">${icon('share')}</span>
-    <div class="grow"><b class="item-title">${esc(k.name)}</b><div class="item-sub"><span>الوكيل: ${esc(k.agentName)}</span><span class="ltr">${esc(k.prefix)}…</span>
-      <span>${k.lastUsedAt ? `آخر استخدام ${relTime(k.lastUsedAt)}` : 'لم يُستخدم بعد'}</span></div></div></div>
-    <div class="item-actions"><button class="btn btn-sm btn-danger" data-action="del-key" data-id="${k.id}">${icon('trash')}إلغاء المفتاح</button></div></article>`;
-}
-
 function setupNote() {
   const s = V.settings;
   const manual = s.mailPay || !s.jcReady;
   const missing = [!s.shopEnabled && 'المتجر مغلق', manual && !(s.jawwalpayNumber || s.palpayNumber) && 'رقم المحفظة (جوال باي / بال باي)', manual && !s.gmailConfigured && 'ربط Gmail'].filter(Boolean);
   if (!missing.length) return '';
   return `<div class="msg warn">${icon('info')}<span>لإكمال الإعداد: ${missing.join('، ')}. <button class="btn btn-sm btn-soft" data-action="settings">${icon('sliders')}الإعدادات</button></span></div>`;
-}
-
-function syncDocs() {
-  const origin = location.origin;
-  return `<section class="card card-pad"><h3>ربط موقع آخر</h3>
-    <p class="small muted">كل مفتاح مرتبط بحساب وكيل: طلبات الموقع تُخصم من رصيده بأسعاره، وتظهر عنده كأي عملية بيع. أرسل المفتاح في الترويسة <span class="ltr">X-Api-Key</span> من خادم الموقع فقط.</p>
-    <pre class="ltr small" style="white-space:pre-wrap;overflow-wrap:anywhere;background:var(--surface-2);padding:12px;border-radius:12px">GET  ${origin}/api/v1/catalog
-GET  ${origin}/api/v1/balance
-POST ${origin}/api/v1/orders  {"packageId":1,"number":"0521234567","kind":"recharge","customerName":"","reference":"W-1"}
-GET  ${origin}/api/v1/orders/:id</pre></section>`;
 }
 
 function openSettings() {
@@ -220,63 +203,32 @@ async function openOrder(id) {
   });
 }
 
-async function openKeyForm() {
-  const agents = (await api.get('/api/agents')).filter((a) => a.active);
-  sheet({
-    title: 'مفتاح ربط موقع',
-    subtitle: 'أنشئ حساب وكيل للموقع أولاً من «الوكلاء» وحدد رصيده وأسعاره',
-    body: `
-      <div class="field"><label for="k-name">اسم الموقع</label><input class="input" id="k-name" name="name" placeholder="مثال: example.com" required></div>
-      <div class="field"><label for="k-agent">حساب الوكيل</label><select class="input" id="k-agent" name="agentId" required><option value="">اختر الوكيل</option>
-        ${agents.map((a) => `<option value="${a.id}">${esc(a.name)} — ${fmtMoney(a.balance)}</option>`).join('')}</select></div>`,
-    submit: 'إنشاء المفتاح',
-    async onSubmit(form) {
-      if (!field(form, 'agentId')) throw new Error('اختر الوكيل');
-      const r = await api.post('/api/sync-keys', { name: field(form, 'name'), agentId: Number(field(form, 'agentId')) });
-      changed({ keepView: true });
-      setTimeout(() => sheet({
-        title: 'انسخ المفتاح الآن',
-        body: `<div class="msg warn">${icon('lock')}<span>لن يظهر هذا المفتاح مرة أخرى. احفظه في إعدادات خادم الموقع.</span></div>
-          <pre class="ltr" style="white-space:pre-wrap;overflow-wrap:anywhere">${esc(r.key)}</pre>`,
-        submit: 'نسخ المفتاح',
-        async onSubmit() { await copyText(r.key); return ''; },
-        onClose: () => changed(),
-      }), 350);
-      return 'تم إنشاء المفتاح';
-    },
-  });
-}
-
 const byId = (list, btn) => list.find((x) => x.id === Number(btn.dataset.id));
 
 export default {
-  admin: true,
   title: () => ({ title: 'متجر الزبائن', subtitle: 'طلبات الزبائن ودفعات جوال باي' }),
   async load() {
     const filter = V.filter === 'all' ? '' : V.filter;
-    const [orders, mails, keys, settings] = await Promise.all([
-      api.get(`/api/shop/admin/orders?filter=${filter}`), api.get('/api/shop/admin/mails'), api.get('/api/sync-keys'), api.get('/api/settings'),
+    const [orders, mails, settings] = await Promise.all([
+      api.get(`/api/shop/admin/orders?filter=${filter}`), api.get('/api/shop/admin/mails'), api.get('/api/settings'),
     ]);
-    Object.assign(V, { orders, mails, keys, settings });
+    Object.assign(V, { orders, mails, settings });
   },
   render() {
-    const tabs = [['orders', 'الطلبات'], ['mails', 'إشعارات جوال باي'], ['sites', 'المواقع المرتبطة']];
+    const tabs = [['orders', 'الطلبات'], ['mails', 'إشعارات جوال باي']];
     let body = '';
     if (V.tab === 'orders') {
       body = `<div class="chips">${[['open', 'تحتاج إجراء'], ['waiting', 'بانتظار التحويل'], ['all', 'الكل']]
         .map(([k, l]) => `<button class="chip" data-action="filter" data-f="${k}" aria-pressed="${V.filter === k}">${l}</button>`).join('')}</div>
         ${V.orders.length ? `<div class="grid-cards">${V.orders.map(orderCard).join('')}</div>`
     : empty('card', V.filter === 'open' ? 'لا توجد طلبات تحتاج إجراء' : 'لا توجد طلبات', 'الطلبات المدفوعة والمطابقة تلقائياً تُنفَّذ دون تدخلك.')}`;
-    } else if (V.tab === 'mails') {
+    } else {
       body = V.mails.length ? `<div class="grid-cards">${V.mails.map(mailRow).join('')}</div>`
         : empty('msg', 'لا توجد إشعارات', V.settings.gmailConfigured ? 'يُقرأ البريد كل دقيقة ما دامت هناك طلبات بانتظار الدفع.' : 'اربط Gmail من الإعدادات.');
-    } else {
-      body = `${V.keys.length ? `<div class="grid-cards">${V.keys.map(keyRow).join('')}</div>` : empty('share', 'لا توجد مواقع مرتبطة', 'أنشئ مفتاحاً لكل موقع يبيع باقاتك.')}
-        ${syncDocs()}`;
     }
     return `
       <div class="page-head"><div><h2 class="dot-title">متجر الزبائن</h2><p>رابط المتجر: <a class="ltr" href="/" target="_blank" rel="noopener">${esc(location.origin)}/</a></p></div>
-        <div class="btn-row">${V.tab === 'sites' ? `<button class="btn btn-primary" data-action="add-key">${icon('plus')}مفتاح جديد</button>` : ''}
+        <div class="btn-row">
           <button class="btn${V.settings.mailPay ? '' : ' btn-primary'}" data-action="toggle-mail-pay" title="الدفع بالتحويل اليدوي، المؤكَّد من إشعارات الإيميل">${icon('power')}${V.settings.mailPay ? 'إيقاف الدفع عبر الإيميل' : 'تفعيل الدفع عبر الإيميل'}</button>
           <button class="btn" data-action="check-mail">${icon('refresh')}فحص البريد</button><button class="btn" data-action="settings">${icon('sliders')}الإعدادات</button></div></div>
       ${V.settings.mailPay ? '' : `<div class="msg">${icon('info')}<span>الدفع عبر الإيميل (التحويل اليدوي) <b>متوقف</b>: الزبائن يدفعون مباشرة من جوال باي برمز تحقق فقط.</span></div>`}
@@ -318,10 +270,10 @@ export default {
         title: `إعادة تنفيذ ${o.code}`,
         body: `<div class="msg">${icon('alert')}<span>${esc(o.error)}</span></div>
           <div class="field"><label for="rt-n">الرقم</label><input class="input ltr" id="rt-n" name="number" value="${esc(o.number)}"></div>
-          ${o.kind === 'new' ? `<div class="field"><label for="rt-s">الشريحة</label><input class="input ltr" id="rt-s" name="sim" value="${esc(o.sim)}"></div>` : ''}`,
+`,
         submit: 'إعادة التنفيذ',
         async onSubmit(form) {
-          await api.post(`/api/shop/admin/orders/${o.id}/retry`, { number: field(form, 'number'), sim: form.elements.sim ? field(form, 'sim') : undefined });
+          await api.post(`/api/shop/admin/orders/${o.id}/retry`, { number: field(form, 'number') });
           changed();
           return 'تم تنفيذ الطلب';
         },
@@ -335,14 +287,6 @@ export default {
           <div class="field"><label for="rj">السبب</label><input class="input" id="rj" name="response" placeholder="يظهر للزبون"></div>`,
         submit: 'رفض الطلب', danger: true,
         async onSubmit(form) { await api.post(`/api/shop/admin/orders/${o.id}/reject`, { response: field(form, 'response') }); changed(); return 'تم رفض الطلب'; },
-      });
-    },
-    'add-key': openKeyForm,
-    'del-key'(btn) {
-      const k = byId(V.keys, btn);
-      sheet({
-        title: 'إلغاء المفتاح', body: `<p>سيتوقف الموقع «${esc(k.name)}» عن الوصول فوراً.</p>`, submit: 'إلغاء المفتاح', danger: true,
-        async onSubmit() { await api.del(`/api/sync-keys/${k.id}`); changed(); return 'تم إلغاء المفتاح'; },
       });
     },
   },

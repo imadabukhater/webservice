@@ -1,5 +1,5 @@
 'use strict';
-// Agents portal server: zero dependencies (node:http + node:sqlite + node:crypto). Requires Node 22.13+.
+// eSIM shop server: the customer shop and the manager's portal (node:http + node:sqlite). Requires Node 22.13+.
 const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -7,23 +7,16 @@ const path = require('node:path');
 require('./src/db');
 require('./src/routes/auth');
 require('./src/routes/catalog');
-require('./src/routes/lines');
-require('./src/routes/sims');
 require('./src/routes/tasks');
-require('./src/routes/agents');
 require('./src/routes/dashboard');
 require('./src/routes/reports');
-require('./src/routes/messages');
-require('./src/routes/art');
+require('./src/routes/buyers');
 require('./src/routes/quickline');
 require('./src/routes/layan');
 require('./src/routes/telecom');
 require('./src/routes/aylol');
 require('./src/routes/whatsapp');
-require('./src/routes/invoices');
 require('./src/routes/shop');
-require('./src/routes/supsubs');
-require('./src/routes/sync');
 require('./src/routes/health');
 require('./src/autoexec');
 require('./src/cloudbackup');
@@ -68,7 +61,7 @@ function serveStatic(req, res, pathname) {
     return res.end();
   }
   // Main site / root ('/') is the customer shop (Hot eSIM storefront).
-  // The agents and manager portal is served on /portal, /admin, /agent, /agents, or /index.html.
+  // The manager's portal is served on /portal, /admin, /agent, /agents, or /index.html.
   const isPortal = /^\/(portal|admin|agent|agents)(\/|$)/i.test(pathname) || pathname === '/index.html';
   const isShop = pathname === '/' || /^\/shop(\/|$)/i.test(pathname) || pathname === '/shop.html';
   const page = isPortal ? 'index.html' : isShop ? 'shop.html' : pathname;
@@ -124,6 +117,6 @@ async function handle(req, res) {
 
 const server = http.createServer(handle);
 if (require.main === module) {
-  server.listen(PORT, () => console.log(`Agents portal running on http://localhost:${PORT}`));
+  server.listen(PORT, () => console.log(`eSIM shop running on http://localhost:${PORT}`));
 }
 module.exports = { server };

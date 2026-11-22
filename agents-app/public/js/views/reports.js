@@ -1,8 +1,8 @@
-import { api, esc, icon, isAdmin, sheet, fmtMoney, fmtDate, fmtISO, fmtPhone, fmtIccid, debounce, go } from '../core.js';
+import { api, esc, icon, sheet, fmtMoney, fmtDate, fmtISO, fmtPhone, fmtIccid, debounce, go } from '../core.js';
 import { cellText, exportCSV, exportExcel, copyTable, printTable } from '../exporter.js';
 
 const V = {
-  list: [], key: null, data: null, agents: [], agentId: '',
+  list: [], key: null, data: null,
   range: 'month', from: '', to: '',
   q: '', filters: {}, sort: null, dir: 1, page: 1, size: 10,
 };
@@ -117,13 +117,11 @@ export default {
   title: () => ({ title: 'التقارير', subtitle: meta()?.title || 'مكتبة التقارير' }),
   async load(ctx) {
     if (!V.list.length) V.list = await api.get('/api/reports');
-    if (isAdmin() && !V.agents.length) V.agents = await api.get('/api/agents');
-    if (ctx.query.agent !== undefined) V.agentId = ctx.query.agent;
-    const key = ctx.query.r && V.list.some((r) => r.key === ctx.query.r) ? ctx.query.r : V.key || 'active';
+    const key = ctx.query.r && V.list.some((r) => r.key === ctx.query.r) ? ctx.query.r : V.key || V.list[0]?.key || 'sales';
     if (key !== V.key) { V.q = ''; V.filters = {}; V.sort = null; V.page = 1; }
     V.key = key;
     const [from, to] = rangeBounds();
-    const params = new URLSearchParams({ from, to, ...(isAdmin() && V.agentId ? { agentId: V.agentId } : {}) });
+    const params = new URLSearchParams({ from, to });
     V.data = await api.get(`/api/reports/${V.key}?${params}`);
   },
   render() {
@@ -136,10 +134,9 @@ export default {
           ${V.data.subtitle ? `<p class="small muted">${esc(V.data.subtitle)}</p>` : ''}</div>
         <button class="btn" data-action="pick">${icon('list')}تغيير التقرير</button>
       </section>
-      ${m.dated || isAdmin() ? `<div class="filter-row">
+      ${m.dated ? `<div class="filter-row">
         ${m.dated ? `<div class="chips">${PRESETS.map(([k, l]) => `<button class="chip" data-action="range" data-range="${k}" aria-pressed="${V.range === k}">${l}</button>`).join('')}</div>
           ${V.range === 'custom' ? `<input class="input" type="date" id="rp-from" value="${esc(V.from || fmtISO(from))}" aria-label="من"><input class="input" type="date" id="rp-to" value="${esc(V.to || fmtISO(to - 864e5))}" aria-label="إلى">` : `<span class="small muted">${fmtDate(from)} — ${fmtDate(to - 864e5)}</span>`}` : ''}
-        ${isAdmin() ? `<select class="input" id="rp-agent"><option value="">كل الوكلاء</option>${V.agents.map((a) => `<option value="${a.id}" ${String(a.id) === String(V.agentId) ? 'selected' : ''}>${esc(a.name)}</option>`).join('')}</select>` : ''}
       </div>` : ''}
       <section class="card table-card">
         <div class="table-tools">
@@ -172,7 +169,6 @@ export default {
       V.page = Number(b.dataset.page);
       paintBody(root);
     });
-    root.querySelector('#rp-agent')?.addEventListener('change', (e) => { V.agentId = e.target.value; ctx.reload(); });
     const dates = () => { V.from = root.querySelector('#rp-from').value; V.to = root.querySelector('#rp-to').value; ctx.reload(); };
     root.querySelector('#rp-from')?.addEventListener('change', dates);
     root.querySelector('#rp-to')?.addEventListener('change', dates);

@@ -102,46 +102,6 @@ CREATE TABLE IF NOT EXISTS packages (
   tag TEXT NOT NULL DEFAULT '',
   description TEXT NOT NULL DEFAULT ''
 );
-CREATE TABLE IF NOT EXISTS agent_prices (
-  agent_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  package_id INTEGER NOT NULL REFERENCES packages(id) ON DELETE CASCADE,
-  price REAL NOT NULL,
-  PRIMARY KEY (agent_id, package_id)
-);
--- A package the manager hides from one agent only (the others still see it).
-CREATE TABLE IF NOT EXISTS agent_hidden (
-  agent_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  package_id INTEGER NOT NULL REFERENCES packages(id) ON DELETE CASCADE,
-  PRIMARY KEY (agent_id, package_id)
-);
--- The manager's profit percentage for one agent on one pricing system (see domain.SYSTEM_SQL).
-CREATE TABLE IF NOT EXISTS agent_markups (
-  agent_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  system TEXT NOT NULL CHECK (system IN ('invoice','card','qlinvoice','qlcard','lyinvoice','lycard','tcinvoice','tccard','ayinvoice','aycard')),
-  markup REAL NOT NULL,
-  PRIMARY KEY (agent_id, system)
-);
-CREATE TABLE IF NOT EXISTS offers (
-  id INTEGER PRIMARY KEY,
-  title TEXT NOT NULL,
-  details TEXT NOT NULL DEFAULT '',
-  package_id INTEGER REFERENCES packages(id) ON DELETE SET NULL,
-  offer_price REAL,
-  starts_at INTEGER,
-  ends_at INTEGER,
-  active INTEGER NOT NULL DEFAULT 1,
-  created_at INTEGER NOT NULL
-);
-CREATE TABLE IF NOT EXISTS sims (
-  id INTEGER PRIMARY KEY,
-  iccid TEXT NOT NULL UNIQUE,
-  company_id INTEGER REFERENCES companies(id) ON DELETE SET NULL,
-  agent_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
-  status TEXT NOT NULL DEFAULT 'available' CHECK (status IN ('available','used')),
-  line_id INTEGER,
-  created_at INTEGER NOT NULL,
-  used_at INTEGER
-);
 CREATE TABLE IF NOT EXISTS ops (
   id INTEGER PRIMARY KEY,
   ts INTEGER NOT NULL,
@@ -171,27 +131,6 @@ CREATE TABLE IF NOT EXISTS notifications (
   link TEXT NOT NULL DEFAULT '',
   ts INTEGER NOT NULL
 );
-CREATE TABLE IF NOT EXISTS messages (
-  id INTEGER PRIMARY KEY,
-  agent_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  from_admin INTEGER NOT NULL DEFAULT 0,
-  sender_name TEXT NOT NULL DEFAULT '',
-  body TEXT NOT NULL,
-  ts INTEGER NOT NULL,
-  read_at INTEGER
-);
-CREATE TABLE IF NOT EXISTS invoices (
-  id INTEGER PRIMARY KEY,
-  invoice_number TEXT NOT NULL UNIQUE,
-  agent_id INTEGER NOT NULL REFERENCES users(id),
-  amount REAL NOT NULL,
-  description TEXT NOT NULL DEFAULT '',
-  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','paid','rejected')),
-  issue_date INTEGER NOT NULL,
-  due_date INTEGER,
-  paid_date INTEGER,
-  notes TEXT NOT NULL DEFAULT ''
-);
 CREATE TABLE IF NOT EXISTS shop_orders (
   id INTEGER PRIMARY KEY,
   code TEXT NOT NULL UNIQUE,
@@ -220,26 +159,6 @@ CREATE TABLE IF NOT EXISTS shop_orders (
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
 );
--- The subscribers each supplier holds for our accounts (src/supsubs.js), read every hour: one row per subscription there.
-CREATE TABLE IF NOT EXISTS supplier_subs (
-  id INTEGER PRIMARY KEY,
-  supplier TEXT NOT NULL,
-  ext_id TEXT NOT NULL,
-  number TEXT NOT NULL DEFAULT '',
-  sim TEXT NOT NULL DEFAULT '',
-  company TEXT NOT NULL DEFAULT '',
-  package TEXT NOT NULL DEFAULT '',
-  status TEXT NOT NULL DEFAULT '',
-  active INTEGER NOT NULL DEFAULT 0,
-  end_at INTEGER,
-  customer TEXT NOT NULL DEFAULT '',
-  details_at INTEGER,
-  first_seen INTEGER NOT NULL,
-  last_seen INTEGER NOT NULL,
-  gone_at INTEGER,
-  UNIQUE (supplier, ext_id)
-);
-CREATE INDEX IF NOT EXISTS supplier_subs_number ON supplier_subs(number);
 -- Direct Jawwal Pay (corporate API): what happened to each order's payment, for the manager. Never the OTP.
 CREATE TABLE IF NOT EXISTS jc_log (
   id INTEGER PRIMARY KEY,
@@ -268,26 +187,6 @@ CREATE TABLE IF NOT EXISTS payment_mails (
   order_id INTEGER,
   created_at INTEGER NOT NULL,
   UNIQUE (uid_validity, uid)
-);
-CREATE TABLE IF NOT EXISTS api_keys (
-  id INTEGER PRIMARY KEY,
-  agent_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  name TEXT NOT NULL,
-  key_hash TEXT NOT NULL UNIQUE,
-  prefix TEXT NOT NULL,
-  active INTEGER NOT NULL DEFAULT 1,
-  created_at INTEGER NOT NULL,
-  last_used_at INTEGER
-);
--- Sales made over WhatsApp: the chat their result goes back to once carried out (sent_at: delivered).
-CREATE TABLE IF NOT EXISTS wa_orders (
-  task_id INTEGER PRIMARY KEY,
-  line_id INTEGER,
-  jid TEXT NOT NULL,
-  number TEXT NOT NULL DEFAULT '',
-  label TEXT NOT NULL DEFAULT '',
-  created_at INTEGER NOT NULL,
-  sent_at INTEGER
 );
 -- Shop orders a customer follows over WhatsApp: each change (payment verified, eSIM ready) is sent to that chat.
 CREATE TABLE IF NOT EXISTS wa_shop (
@@ -344,10 +243,8 @@ CREATE INDEX IF NOT EXISTS lines_expires ON lines(expires_at);
 CREATE INDEX IF NOT EXISTS ops_agent ON ops(agent_id, ts);
 CREATE INDEX IF NOT EXISTS ops_ts ON ops(ts);
 CREATE INDEX IF NOT EXISTS ops_line ON ops(line_id);
-CREATE INDEX IF NOT EXISTS sims_agent ON sims(agent_id, status);
 CREATE INDEX IF NOT EXISTS tasks_status ON tasks(status, created_at);
 CREATE INDEX IF NOT EXISTS notif_user ON notifications(user_id, ts);
-CREATE INDEX IF NOT EXISTS messages_agent ON messages(agent_id, id);
 CREATE INDEX IF NOT EXISTS shop_orders_status ON shop_orders(status, created_at);
 CREATE INDEX IF NOT EXISTS payment_mails_order ON payment_mails(order_id, received_at);
 `);
@@ -406,25 +303,6 @@ ensureColumn('shop_orders', 'email', "email TEXT NOT NULL DEFAULT ''");
 ensureColumn('shop_orders', 'qr_mailed_at', 'qr_mailed_at INTEGER');
 // JawwalPay e-mails come from noreply@jawwalpay.ps: the first default ("jawwal") also trusted look-alike domains.
 db.exec("UPDATE settings SET value = 'jawwalpay.ps' WHERE key = 'mail_from' AND value = 'jawwal'");
-// QuickLine lines: a state change made here (close, pause, activate) still to be carried out there.
-ensureColumn('lines', 'ql_pending', "ql_pending TEXT NOT NULL DEFAULT ''");
-// QuickLine lines: a new SIM put on the line here, still to be put on it there.
-ensureColumn('lines', 'ql_sim', "ql_sim TEXT NOT NULL DEFAULT ''");
-// Layan's, telecom's and Aylol's systems came after agent_markups; SQLite cannot change a CHECK, so rebuild that
-// table once (again when a newer supplier's systems are missing).
-if (!/ayinvoice/.test(tableSql('agent_markups') || '')) {
-  db.exec(`BEGIN;
-    ALTER TABLE agent_markups RENAME TO agent_markups_v1;
-    CREATE TABLE agent_markups (
-      agent_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-      system TEXT NOT NULL CHECK (system IN ('invoice','card','qlinvoice','qlcard','lyinvoice','lycard','tcinvoice','tccard','ayinvoice','aycard')),
-      markup REAL NOT NULL,
-      PRIMARY KEY (agent_id, system)
-    );
-    INSERT INTO agent_markups SELECT * FROM agent_markups_v1;
-    DROP TABLE agent_markups_v1;
-    COMMIT;`);
-}
 // gone_at: when a sync hid the package because its supplier no longer listed it. Such a package comes back by itself
 // when the supplier lists it again; a package the manager hid (gone_at NULL) stays hidden.
 ensureColumn('packages', 'gone_at', 'gone_at INTEGER');
@@ -465,8 +343,6 @@ ensureColumn('shop_orders', 'jc_status', "jc_status TEXT NOT NULL DEFAULT ''");
 ensureColumn('wa_shop', 'link', "link TEXT NOT NULL DEFAULT ''");
 // Where a direct payment's code was sent from: '' (Jawwal Pay wallet) or 'PALS' (Bank of Palestine).
 ensureColumn('shop_orders', 'jc_bank', "jc_bank TEXT NOT NULL DEFAULT ''");
-// The supplier's own package id for a subscription (QuickLine, telecom), to find our package of it.
-ensureColumn('supplier_subs', 'pkg_id', "pkg_id TEXT NOT NULL DEFAULT ''");
 db.exec("CREATE INDEX IF NOT EXISTS shop_orders_client_status ON shop_orders(client_id, status)");
 db.exec("CREATE INDEX IF NOT EXISTS shop_orders_ip_status ON shop_orders(ip, status)");
 // Before gone_at, a sync that briefly got an incomplete list from QuickLine hid packages for good. The manager hid
@@ -497,10 +373,9 @@ function tx(fn) {
 
 // ---------- settings ----------
 const DEFAULT_SETTINGS = {
-  app_name: 'بوابة الوكلاء', warn_days: '7', low_balance: '50', esim_fee: '7', support_whatsapp: '972567725080',
-  art_user: '', art_pass: '', art_markup: '15',
+  app_name: 'متجر eSIM', esim_fee: '7', support_whatsapp: '972567725080',
   shop_enabled: '0', shop_instant: '0', shop_title: '', shop_subtitle: '',
-  jawwalpay_number: '', jawwalpay_name: '', palpay_number: '', palpay_name: '', gmail_user: '', gmail_pass: '', mail_from: 'jawwalpay.ps', shop_agent_id: '',
+  jawwalpay_number: '', jawwalpay_name: '', palpay_number: '', palpay_name: '', gmail_user: '', gmail_pass: '', mail_from: 'jawwalpay.ps',
   ql_user: '', ql_pass: '', ql_markup: '15',
   ly_user: '', ly_pass: '', ly_secret: '', ly_markup: '15',
   tc_user: '', tc_pass: '', tc_mail_user: '', tc_mail_pass: '', tc_markup: '15', tc_reg_address: '', tc_reg_city: '', tc_reg_zip: '',
@@ -520,34 +395,19 @@ function getSettings() {
   for (const r of q('SELECT key, value FROM settings').all()) out[r.key] = r.value;
   return {
     appName: out.app_name,
-    warnDays: Math.max(1, Number(out.warn_days) || 7),
-    lowBalance: Number(out.low_balance) || 0,
     esimFee: Math.max(0, Number(out.esim_fee) || 0),
     supportWhatsapp: out.support_whatsapp,
-    // art-topup sign-in: the password never leaves the server (see artCredentials).
-    artUser: out.art_user,
-    artConfigured: !!(out.art_user && out.art_pass),
-    // The manager's profit on top of art-topup's price, separately for recharge cards and for invoices
-    // (both start from the older single art_markup).
-    artMarkupCard: Math.max(0, Number(out.art_markup_card ?? out.art_markup) || 0),
-    artMarkupInvoice: Math.max(0, Number(out.art_markup_invoice ?? out.art_markup) || 0),
-    artSyncedCard: Number(out.art_synced_card) || null,
-    artSyncedInvoice: Number(out.art_synced_invoice) || null,
     // QuickLine sign-in: the password never leaves the server (see qlCredentials).
     qlUser: out.ql_user,
     qlConfigured: !!(out.ql_user && out.ql_pass),
-    // The manager's profit on top of QuickLine's price, separately for extensions ('card') and new lines ('invoice').
-    qlMarkupCard: Math.max(0, Number(out.ql_markup_card ?? out.ql_markup) || 0),
+    // The manager's profit on top of QuickLine's price for its eSIM lines.
     qlMarkupInvoice: Math.max(0, Number(out.ql_markup_invoice ?? out.ql_markup) || 0),
-    qlSyncedCard: Number(out.ql_synced_card) || null,
     qlSyncedInvoice: Number(out.ql_synced_invoice) || null,
     // Layan sign-in: the password and the authenticator secret never leave the server (see lyCredentials).
     lyUser: out.ly_user,
     lyConfigured: !!(out.ly_user && out.ly_pass),
     lyHasSecret: !!out.ly_secret,
-    lyMarkupCard: Math.max(0, Number(out.ly_markup_card ?? out.ly_markup) || 0),
     lyMarkupInvoice: Math.max(0, Number(out.ly_markup_invoice ?? out.ly_markup) || 0),
-    lySyncedCard: Number(out.ly_synced_card) || null,
     lySyncedInvoice: Number(out.ly_synced_invoice) || null,
     // telecom.co.il sign-in: it e-mails a code, which the server reads from that Gmail over IMAP (see mailcode.js).
     // The password and the Gmail App password never leave the server (see tcCredentials).
@@ -557,9 +417,7 @@ function getSettings() {
     tcMailConfigured: !!(out.tc_mail_user && out.tc_mail_pass),
     // Signing in needs both: the site's account and the Gmail its codes go to.
     tcReady: !!(out.tc_user && out.tc_pass && out.tc_mail_user && out.tc_mail_pass),
-    tcMarkupCard: Math.max(0, Number(out.tc_markup_card ?? out.tc_markup) || 0),
     tcMarkupInvoice: Math.max(0, Number(out.tc_markup_invoice ?? out.tc_markup) || 0),
-    tcSyncedCard: Number(out.tc_synced_card) || null,
     tcSyncedInvoice: Number(out.tc_synced_invoice) || null,
     // telecom asks a new line's address, city and postcode: the shop registers its eSIMs with these.
     tcRegAddress: out.tc_reg_address, tcRegCity: out.tc_reg_city, tcRegZip: out.tc_reg_zip,
@@ -568,9 +426,7 @@ function getSettings() {
     aylolConfigured: !!(out.aylol_user && out.aylol_pass),
     // The Google Authenticator key Aylol's two-step sign-in asks a code from (never sent back, like the password).
     aylolHasSecret: !!out.aylol_secret,
-    aylolMarkupCard: Math.max(0, Number(out.aylol_markup_card ?? out.aylol_markup) || 0),
     aylolMarkupInvoice: Math.max(0, Number(out.aylol_markup_invoice ?? out.aylol_markup) || 0),
-    aylolSyncedCard: Number(out.aylol_synced_card) || null,
     aylolSyncedInvoice: Number(out.aylol_synced_invoice) || null,
     tcRegReady: !!(out.tc_reg_address && out.tc_reg_city && out.tc_reg_zip),
     // The daily copy in Google Cloud Storage (see cloudbackup.js): where, the last good one, and the last failure.
@@ -612,10 +468,6 @@ function gmailCredentials() {
   const get = (k) => q('SELECT value FROM settings WHERE key = ?').get(k)?.value || '';
   return { user: get('gmail_user'), pass: get('gmail_pass').replace(/\s+/g, '') };
 }
-function artCredentials() {
-  const get = (k) => q('SELECT value FROM settings WHERE key = ?').get(k)?.value || '';
-  return { user: get('art_user'), pass: get('art_pass') };
-}
 function lyCredentials() {
   const get = (k) => q('SELECT value FROM settings WHERE key = ?').get(k)?.value || '';
   return { user: get('ly_user'), pass: get('ly_pass'), secret: get('ly_secret') };
@@ -649,19 +501,14 @@ function bootstrap() {
       .run(username, hashPassword(password), Date.now());
   }
   if (!q('SELECT COUNT(*) AS n FROM companies').get().n) {
+    // The companies only: their eSIM packages come from the suppliers' syncs (or the manager adds them).
     const co = q('INSERT INTO companies (name, sort, color, iccid_prefixes) VALUES (?, ?, ?, ?)');
-    const pk = q('INSERT INTO packages (company_id, name, sort, data_gb) VALUES (?, ?, ?, ?)');
-    const pkFull = q('INSERT INTO packages (company_id, name, sort, cost, price) VALUES (?, ?, ?, ?, ?)');
-    const cellcom = co.run('سلكوم', 1, '#6b2c91', '8997202').lastInsertRowid;
-    pk.run(cellcom, '500 جيجا', 1, 500);
-    pk.run(cellcom, '300 جيجا', 2, 300);
-    pk.run(cellcom, '100 جيجا', 3, 100);
-    pk.run(co.run('بارتنر', 2, '#12a39a', '').lastInsertRowid, 'رزمة بارتنر', 1, null);
-    pk.run(co.run('بيلفون', 3, '#0a74c9', '8997250').lastInsertRowid, 'رزمة بيلفون', 1, null);
-    pk.run(co.run('هوت موبايل', 4, '#d7192d', '').lastInsertRowid, 'رزمة هوت موبايل', 1, null);
-    pkFull.run(co.run('الكروت', 5, '#ff5722', '').lastInsertRowid, 'كرت 70 شيكل', 1, 70, 70);
+    co.run('سلكوم', 1, '#6b2c91', '8997202');
+    co.run('بارتنر', 2, '#12a39a', '');
+    co.run('بيلفون', 3, '#0a74c9', '8997250');
+    co.run('هوت موبايل', 4, '#d7192d', '');
   }
 }
 bootstrap();
 
-module.exports = { db, q, tx, getSettings, setSetting, artCredentials, qlCredentials, aylolCredentials, lyCredentials, tcCredentials, gmailCredentials, jcCredentials, DB_FILE };
+module.exports = { db, q, tx, getSettings, setSetting, qlCredentials, aylolCredentials, lyCredentials, tcCredentials, gmailCredentials, jcCredentials, DB_FILE };

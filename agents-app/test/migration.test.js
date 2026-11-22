@@ -58,7 +58,7 @@ test('a first-release database is upgraded in place', () => {
   assert.equal(db.prepare('SELECT balance, credit_limit FROM users WHERE id = 2').get().credit_limit, 0);
   assert.equal(db.prepare('SELECT iccid_prefixes FROM companies WHERE id = 1').get().iccid_prefixes, '');
   assert.ok(db.prepare("SELECT 1 FROM sqlite_master WHERE name = 'lines_agent'").get(), 'index recreated');
-  for (const t of ['sims', 'tasks', 'notifications', 'settings']) {
+  for (const t of ['tasks', 'notifications', 'settings', 'shop_orders']) {
     assert.ok(db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(t), t);
   }
   assert.equal(db.prepare("SELECT COUNT(*) AS n FROM users WHERE role = 'admin'").get().n, 1, 'no second admin');

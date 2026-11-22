@@ -189,22 +189,6 @@ async function numbers(creds) {
   })).filter((x) => x.number);
 }
 
-// What Layan would charge now for activating or extending a number this way.
-async function quote(creds, { number, days, saleId }) {
-  const { data, text } = await api(creds, 'POST', 'Deals/GetCostBeforeActivate', { Number: number, Duration: saleId ? null : days, SaleId: saleId || null });
-  const n = money(data ?? text);
-  if (n === null) throw new LayanError(`ليان: سعر غير مفهوم (${text})`);
-  return n;
-}
-
-// ---------- selling ----------
-async function activate(creds, { number, days, saleId }) {
-  await api(creds, 'POST', 'Deals/ActivateLine', { Number: number, Duration: saleId ? null : days, SaleId: saleId || null, UserPaid: false, endDate: null });
-}
-async function extend(creds, { number, days, saleId }) {
-  await api(creds, 'POST', 'Deals/Extend', { Number: number, Duration: saleId ? null : days, SaleId: saleId || null, UserPaid: false });
-}
-
 // ---------- a new eSIM line (as Layan's "join a package" page does it) ----------
 // 1. Numbers/GetAvailableNumbersForPackage/<package>/true — the free numbers that come as an eSIM;
 // 2. Packages/GetEmptySim/<package>/<number> — the eSIM for that number: { sim, url (its QR code), price };
@@ -256,6 +240,6 @@ function localNumber(n) {
 }
 
 module.exports = {
-  LayanError, normalizeSecret, totp, login, api, balance, durations, catalog, numbers, quote, activate, extend, parseRef, localNumber,
+  LayanError, normalizeSecret, totp, login, api, balance, durations, catalog, numbers, parseRef, localNumber,
   esimNumbers, emptyEsim, newEsimLine, esimStatus, imageDataUrl,
 };

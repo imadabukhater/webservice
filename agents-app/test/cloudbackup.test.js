@@ -49,7 +49,7 @@ test.after(() => { server.close(); google.close(); });
 
 test('cloud backup: a full, compressed copy of the database, created under a new name and never overwritten', async () => {
   const admin = (await call(null, 'POST', '/api/login', { username: 'admin', password: 'admin-pass' })).body.token;
-  await call(admin, 'POST', '/api/agents', { name: 'وكيل', username: 'agent1', password: 'secret1', balance: 123 });
+  require('../src/db').q("INSERT INTO companies (name, sort) VALUES ('شركة النسخة', 99)").run();
 
   // ----- no bucket set on this server: nothing is sent -----
   const none = await call(admin, 'POST', '/api/backup/cloud');
@@ -69,7 +69,7 @@ test('cloud backup: a full, compressed copy of the database, created under a new
   assert.equal(up.type, 'application/gzip');
   const copy = zlib.gunzipSync(up.body);
   assert.equal(copy.subarray(0, 15).toString(), 'SQLite format 3', 'a real database file');
-  // The copy holds the data: open it and find the agent.
+  // The copy holds the data: open it and find the company.
   const fs = require('node:fs');
   const os = require('node:os');
   const path = require('node:path');
@@ -77,7 +77,7 @@ test('cloud backup: a full, compressed copy of the database, created under a new
   fs.writeFileSync(file, copy);
   const { DatabaseSync } = require('node:sqlite');
   const restored = new DatabaseSync(file);
-  assert.equal(restored.prepare("SELECT balance FROM users WHERE username = 'agent1'").get().balance, 123);
+  assert.ok(restored.prepare("SELECT 1 FROM companies WHERE name = 'شركة النسخة'").get());
   restored.close();
   fs.rmSync(file, { force: true });
 

@@ -301,9 +301,11 @@ test('eSIM shop: a random number held per order, pay by JawwalPay, confirmed fro
   assert.equal(vc.status, 'paid');
   await until(async () => (await ok(call(null, 'GET', `/api/shop/orders/${c.code}`))).stage === 'done');
 
-  // The shop account keeps the profit: paid 90 twice, each charged the agent's price and the eSIM fee.
-  const shopAgent = (await ok(call(admin, 'GET', '/api/agents'))).find((x) => x.name === 'متجر الزبائن');
-  assert.ok(shopAgent.balance > 0 && shopAgent.balance < 180, String(shopAgent.balance));
+  // Each paid order is kept as a record of the sale (its line, at what the customer paid); no agent account, no balance.
+  const { q } = require('../src/db');
+  const sold = q("SELECT customer_price FROM lines WHERE number IN (SELECT number FROM shop_orders WHERE code IN (?, ?))").all(a.code, c.code);
+  assert.deepEqual(sold.map((l) => l.customer_price), [90, 90]);
+  assert.equal(q("SELECT COUNT(*) AS n FROM users WHERE role = 'agent'").get().n, 0);
   // The order B is still waiting (its "payment" was our own transfer), and holds its number.
   assert.equal((await ok(call(null, 'GET', `/api/shop/orders/${b.code}`))).status, 'verifying');
 });

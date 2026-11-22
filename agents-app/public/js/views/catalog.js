@@ -1,92 +1,40 @@
 import {
   S, api, esc, icon, money, fmtMoney, sheet, field, changed, loadCatalog, companyLogo, specs, fileToDataUrl, empty, fmtNum, round, relTime, toast,
 } from '../core.js';
-import { openOfferForm } from './offers.js';
 
-// A tab is one supplier's one system. Each has its own packages, its own profit percentage, its own sync and its own
-// list of price changes awaiting the manager. Packages the manager typed by hand belong to no supplier and are shown
-// with art-topup's two tabs, the ones that existed before any supplier.
-// co: the company shown (0 = all); sort: how packages are ordered in a company; open: companies unfolded.
-const V = { tab: 'invoice', q: '', msg: {}, co: 0, sort: 'size', open: new Set(), selected: new Set() };
-const TABS = {
-  invoice: { label: 'الفواتير', icon: 'sim', color: '', supplier: 'art', kind: 'invoice', note: 'رزم تفعيل خط جديد بشريحة. تظهر للوكيل في «اشتراك فاتورة جديدة».' },
-  card: { label: 'كروت الشحن', icon: 'card', color: 'green', supplier: 'art', kind: 'card', note: 'كروت وحزم ورصيد لرقم موجود. تظهر للوكيل في «زبون دفع مسبق» و«تمديد».' },
-  qlcard: { label: 'تمديد QuickLine', short: 'التمديد', icon: 'refresh', color: 'green', supplier: 'ql', kind: 'card', note: 'تمديد خط موجود في QuickLine تحت وكالتك. يُنفَّذ تلقائياً. تظهر للوكيل في «تمديد».' },
-  qlinvoice: { label: 'خطوط QuickLine', short: 'الخط الجديد', icon: 'sim', color: '', supplier: 'ql', kind: 'invoice', note: 'تفعيل خط جديد في QuickLine: رقم من أرقامهم المتاحة، eSIM، أو تحويل رقم. يُنفَّذ تلقائياً. تظهر للوكيل في «اشتراك فاتورة جديدة».' },
-  lycard: { label: 'تمديد ليان', short: 'التمديد', icon: 'refresh', color: 'green', supplier: 'ly', kind: 'card', note: 'تمديد رقم فعّال للوكالة في ليان. يُنفَّذ تلقائياً.' },
-  tccard: { label: 'تمديد telecom', short: 'التمديد', icon: 'refresh', color: 'green', supplier: 'tc', kind: 'card', note: 'تمديد مشترك فعّال للوكالة في telecom على رزمته. يُنفَّذ تلقائياً بعد فحص السعر.' },
-  tcinvoice: { label: 'خطوط telecom', short: 'الخط الجديد', icon: 'sim', color: '', supplier: 'tc', kind: 'invoice', note: 'تفعيل خط جديد في telecom (شريحة أو تحويل رقم). يصلك كطلب تنفّذه على موقع telecom.' },
-  lyinvoice: { label: 'خطوط ليان', short: 'الخط الجديد', icon: 'sim', color: '', supplier: 'ly', kind: 'invoice', note: 'تفعيل رقم موقوف من أرقام الوكالة في ليان (مع شريحته أو eSIM). يُنفَّذ تلقائياً.' },
-aycard: { label: 'كروت أيلول', short: 'الكروت', icon: 'refresh', color: 'green', supplier: 'ay', kind: 'card', note: 'شحن كروت وحزم رصيد مباشر وفوري من أيلول تيليكوم. يُنفَّذ تلقائياً.' },
-ayinvoice: { label: 'خطوط أيلول', short: 'الخط الجديد', icon: 'sim', color: '', supplier: 'ay', kind: 'invoice', note: 'تفعيل خط فاتورة جديد واسترداد رقم فوري وإصدار كود eSIM من أيلول تيليكوم (جميع باقات الفواتير تدعم eSIM).' },
-};
-// What the manager sees: art-topup's two systems each in its own tab, and each other supplier's two together in one.
-const VIEWS = {
-  invoice: { systems: ['invoice'] },
-  card: { systems: ['card'] },
-  ql: {
-    label: 'QuickLine', icon: 'refresh', systems: ['qlcard', 'qlinvoice'],
-    note: 'تمديد الخطوط الموجودة وتفعيل خطوط جديدة (شريحة، eSIM، تحويل رقم) — كلها تُنفَّذ تلقائياً.',
-  },
-  ly: {
-    label: 'ليان', icon: 'refresh', systems: ['lycard', 'lyinvoice'],
-    note: 'تمديد أرقام الوكالة الفعّالة في ليان، وتفعيل أرقامها الموقوفة أو eSIM كخطوط جديدة — مع إظهار الكود مباشرة بعد التفعيل.',
-  },
-  tc: {
-    label: 'telecom', icon: 'refresh', systems: ['tccard', 'tcinvoice'],
-    note: 'تمديد مشتركي الوكالة في telecom تلقائياً بعد فحص السعر؛ الخطوط الجديدة تصلك كطلبات.',
-  },
-  ay: {
-    label: 'أيلول', icon: 'refresh', systems: ['aycard', 'ayinvoice'],
-    note: 'مزامنة حية وتفعيل مباشر واسترداد رقم فوري مع إظهار الرقم الجديد وكود eSIM من أيلول تيليكوم.',
-  },
-};
-const viewKey = () => (VIEWS[V.tab] ? V.tab : /^ql/.test(V.tab) ? 'ql' : /^ly/.test(V.tab) ? 'ly' : /^tc/.test(V.tab) ? 'tc' : /^ay/.test(V.tab) ? 'ay' : 'invoice');
-// The tab a system's messages show in.
-const viewOf = (systemKey) => (/^ql/.test(systemKey) ? 'ql' : /^ly/.test(systemKey) ? 'ly' : /^tc/.test(systemKey) ? 'tc' : /^ay/.test(systemKey) ? 'ay' : systemKey);
-// Tabs that show one supplier's two systems together.
-const isSupplierView = (vk) => ['ql', 'ly', 'tc', 'ay'].includes(vk);
+// One tab per supplier: its eSIM / new-line packages (the shop sells only those), its sync, and the price changes
+// awaiting the manager. co: the company shown (0 = all); sort: order inside a company; open: companies unfolded.
+const V = { tab: 'ql', q: '', msg: {}, co: 0, sort: 'size', open: new Set(), selected: new Set() };
 const SUPPLIERS = {
-  art: {
-    name: 'art-topup', api: 'art', configured: () => S.settings.artConfigured,
-    markup: (k) => (k === 'card' ? S.settings.artMarkupCard : S.settings.artMarkupInvoice) ?? 0,
-    synced: (k) => (k === 'card' ? S.settings.artSyncedCard : S.settings.artSyncedInvoice),
-    markupField: (k) => (k === 'card' ? 'artMarkupCard' : 'artMarkupInvoice'),
+  ql: {
+    name: 'QuickLine', api: 'quickline', configured: () => S.settings.qlConfigured, synced: () => S.settings.qlSyncedInvoice,
+    note: 'eSIM على أرقام QuickLine المتاحة. يُفعَّل تلقائياً بعد الدفع.',
   },
   ly: {
-    name: 'ليان', api: 'layan', configured: () => S.settings.lyConfigured,
-    markup: (k) => (k === 'card' ? S.settings.lyMarkupCard : S.settings.lyMarkupInvoice) ?? 0,
-    synced: (k) => (k === 'card' ? S.settings.lySyncedCard : S.settings.lySyncedInvoice),
-    markupField: (k) => (k === 'card' ? 'lyMarkupCard' : 'lyMarkupInvoice'),
+    name: 'ليان', api: 'layan', configured: () => S.settings.lyConfigured, synced: () => S.settings.lySyncedInvoice,
+    note: 'eSIM على أرقام ليان المتاحة. يُفعَّل تلقائياً ويظهر رمز QR بعد التفعيل.',
   },
   tc: {
-    name: 'telecom', api: 'telecom', configured: () => S.settings.tcReady,
-    markup: (k) => (k === 'card' ? S.settings.tcMarkupCard : S.settings.tcMarkupInvoice) ?? 0,
-    synced: (k) => (k === 'card' ? S.settings.tcSyncedCard : S.settings.tcSyncedInvoice),
-    markupField: (k) => (k === 'card' ? 'tcMarkupCard' : 'tcMarkupInvoice'),
-  },
-  ql: {
-    name: 'QuickLine', api: 'quickline', configured: () => S.settings.qlConfigured,
-    markup: (k) => (k === 'card' ? S.settings.qlMarkupCard : S.settings.qlMarkupInvoice) ?? 0,
-    synced: (k) => (k === 'card' ? S.settings.qlSyncedCard : S.settings.qlSyncedInvoice),
-    markupField: (k) => (k === 'card' ? 'qlMarkupCard' : 'qlMarkupInvoice'),
+    name: 'telecom', api: 'telecom', configured: () => S.settings.tcReady, synced: () => S.settings.tcSyncedInvoice,
+    note: 'eSIM من telecom (ALOHA) على أرقامها المتاحة. يُفعَّل تلقائياً بعد الدفع.',
   },
   ay: {
-    name: 'أيلول', api: 'aylol', configured: () => !!S.settings.aylolConfigured,
-    markup: (k) => (k === 'card' ? S.settings.aylolMarkupCard : S.settings.aylolMarkupInvoice) ?? 0,
-    synced: (k) => (k === 'card' ? S.settings.aylolSyncedCard : S.settings.aylolSyncedInvoice),
-    markupField: (k) => (k === 'card' ? 'aylolMarkupCard' : 'aylolMarkupInvoice'),
+    name: 'أيلول', api: 'aylol', configured: () => !!S.settings.aylolConfigured, synced: () => S.settings.aylolSyncedInvoice,
+    note: 'eSIM وخطوط أيلول الجديدة كـ eSIM، برقم من أرقامها المتاحة ورمز QR بعد التفعيل.',
   },
 };
+const TAB_ICON = 'qr';
 // Not connected yet: a plain way to the supplier's account settings, instead of a button that does nothing.
 const setupLink = (sup) => `<a class="btn btn-sm btn-primary" href="#/settings?tab=suppliers">${icon('sliders')}أدخل بيانات ${sup.name}</a>`;
-
-const tabOf = (key) => TABS[key] || TABS.invoice;
-// The supplier a package came from, for the labels on its card and form.
 const supplierName = (p) => SUPPLIERS[p?.supplier]?.name || 'المورّد';
-// Packages shown under one tab: its supplier's, plus the hand-typed ones under art-topup's original tabs.
-const inTab = (p, t) => p.kind === t.kind && (p.supplier === t.supplier || (!p.supplier && t.supplier === 'art'));
-const inView = (p, v) => v.systems.some((k) => inTab(p, TABS[k]));
+const tabKey = () => (SUPPLIERS[V.tab] ? V.tab : 'ql');
+const inTab = (p, key) => p.supplier === key && p.kind !== 'card';
+
+// Aylol's charge page lists the customer's price; what it really takes is supplierCost, when the site says so.
+const isAy = (p) => p.supplier === 'ay';
+const realCost = (p) => (isAy(p) && p.supplierCost !== null && p.supplierCost !== undefined ? p.supplierCost : p.cost);
+// What the shop earns on a package: the customer's price less what it costs.
+const shopProfit = (p) => (p.shopPrice ? round(p.shopPrice - realCost(p)) : null);
 
 export function openCompanyForm(c) {
   let logo = c?.logo || '';
@@ -103,18 +51,14 @@ export function openCompanyForm(c) {
           <span class="hint">للنقاط والشعار الافتراضي</span></div></div>
         <div class="field"><label for="co-esim-fee">سعر كود QR / eSIM للشركة (₪)</label>
           <input class="input ltr" id="co-esim-fee" name="esimFee" type="number" min="0" step="0.5" inputmode="decimal" value="${c?.esimFee ?? ''}" placeholder="افتراضي (${S.settings?.esimFee ?? 0} ₪)">
-          <span class="hint">يُخصَّص لكل شركة على حدة. اتركه فارغاً لاستعمال السعر العام.</span></div>
+          <span class="hint">يُضاف إلى سعر الزبون. اتركه فارغاً لاستعمال السعر العام.</span></div>
       </div>
-      <div class="field"><label for="co-prefix">بادئات أرقام الشرائح (ICCID)</label><input class="input ltr mono" id="co-prefix" name="prefixes" value="${esc((c?.prefixes || []).join(', '))}" placeholder="8997202">
-        <span class="hint">أول 7 أرقام من شرائح هذه الشركة. تتعلّمها المنصّة تلقائياً من أول تفعيل، ويمكنك تعديلها هنا.</span></div>
-      <div class="field"><span class="label">طريقة التفعيل</span>
+      <div class="field"><span class="label">طريقة التفعيل بعد الدفع</span>
         <div class="switches">
-          <label class="switch-row"><span class="tile sm">${icon('tasks')}</span><span class="grow"><b>طلب للمدير</b><small>يُخصم المبلغ ويصلك طلب، تفعّل الخط على موقع الشركة ثم تضغط «تنفيذ». يُسترد المبلغ إن رفضت.</small></span>
-            <input type="radio" name="activation" value="manual" ${!['direct', 'auto'].includes(c?.activation) ? 'checked' : ''}></label>
-          <label class="switch-row"><span class="tile sm green">${icon('refresh')}</span><span class="grow"><b>تلقائي عبر المورّد</b><small>شحن الكروت (art-topup) وتمديد الخطوط وتفعيل خطوط ليان وQuickLine (بما فيها eSIM وإظهار رمز QR فوراً) يُنفَّذ تلقائياً.</small></span>
+          <label class="switch-row"><span class="tile sm green">${icon('refresh')}</span><span class="grow"><b>تلقائي عبر المورّد</b><small>يُفعَّل الـ eSIM عند المورّد فور تأكيد الدفع ويظهر رمز QR للزبون.</small></span>
             <input type="radio" name="activation" value="auto" ${c?.activation === 'auto' ? 'checked' : ''}></label>
-          <label class="switch-row"><span class="tile sm amber">${icon('bolt')}</span><span class="grow"><b>تفعيل مباشر</b><small>الخط فعّال فوراً. لا يستطيع الوكيل فصله ولا يُسترد المبلغ.</small></span>
-            <input type="radio" name="activation" value="direct" ${c?.activation === 'direct' ? 'checked' : ''}></label>
+          <label class="switch-row"><span class="tile sm">${icon('tasks')}</span><span class="grow"><b>يدوي</b><small>يصلك في «التفعيلات»: تفعّله عند المورّد وترفق رمز QR.</small></span>
+            <input type="radio" name="activation" value="manual" ${c?.activation !== 'auto' ? 'checked' : ''}></label>
         </div></div>`,
     submit: c ? 'حفظ' : 'إضافة الشركة',
     onMount(form) {
@@ -131,7 +75,7 @@ export function openCompanyForm(c) {
     },
     async onSubmit(form) {
       const body = {
-        name: field(form, 'name'), color: field(form, 'color'), logo, prefixes: field(form, 'prefixes'),
+        name: field(form, 'name'), color: field(form, 'color'), logo,
         activation: form.elements.activation.value, esimFee: field(form, 'esimFee'),
       };
       await (c ? api.put(`/api/companies/${c.id}`, body) : api.post('/api/companies', body));
@@ -142,115 +86,72 @@ export function openCompanyForm(c) {
   });
 }
 
-export function openPackageForm(p, companyId, kind = 'invoice') {
-  const cos = S.catalog.companies;
-  if (!cos.length) { openCompanyForm(null); return; }
+// Packages come from the suppliers' syncs; the manager sets how the shop shows and prices them.
+export function openPackageForm(p) {
   const amountVal = (v) => (v === -1 ? 'غير محدود' : v ?? '');
-  const k = p?.kind || kind;
   sheet({
-    title: p ? 'تعديل رزمة' : 'رزمة جديدة',
-    subtitle: p?.artCode ? `رمز ${supplierName(p)}: <span class="mono ltr">${esc(p.artCode)}</span>` : '',
+    title: 'تعديل رزمة',
+    subtitle: p.artCode ? `رمز ${supplierName(p)}: <span class="mono ltr">${esc(p.artCode)}</span>` : esc(p.companyName || ''),
     body: `
-      ${p?.artCode ? `<div class="msg info">${icon('info')}<span>رزمة من ${supplierName(p)}. بعد حفظ تعديلك تبقى قيمك كما هي عند كل مزامنة، وتتحدث «التكلفة» فقط.</span></div>` : ''}
-      <div class="field"><span class="label">النظام</span><div class="segmented" id="pk-kind">
-        <button type="button" data-kind="invoice" aria-pressed="${k === 'invoice'}">${icon('sim')}فاتورة (تفعيل خط)</button>
-        <button type="button" data-kind="card" aria-pressed="${k === 'card'}">${icon('card')}كرت شحن</button></div>
-        <input type="hidden" name="kind" value="${k}"></div>
-      <div class="field"><label for="pk-co">الشركة</label><select class="input" id="pk-co" name="companyId">${cos.map((c) => `<option value="${c.id}" ${c.id === (p?.companyId ?? companyId) ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select></div>
-      <div class="field"><label for="pk-name">اسم الرزمة</label><input class="input" id="pk-name" name="name" value="${esc(p?.name || '')}" placeholder="مثال: 300 جيجا رزمة شهرية" required></div>
-      <div class="row2"><div class="field"><label for="pk-gb">حجم الإنترنت (GB)</label><input class="input ltr" id="pk-gb" name="dataGb" type="number" min="0" step="1" inputmode="numeric" value="${p?.dataGb ?? ''}"></div>
-        <div class="field"><label for="pk-days">المدة بالأيام <span class="opt">(فارغ = شهرية)</span></label><input class="input ltr" id="pk-days" name="days" type="number" min="1" max="730" step="1" inputmode="numeric" value="${p?.days ?? ''}" placeholder="30، 90…"></div></div>
-      <div class="field"><label for="pk-tag">وسم <span class="opt">(مثل RENTERS / 5G)</span></label><input class="input ltr" id="pk-tag" name="tag" value="${esc(p?.tag || '')}"></div>
-      <div class="row2"><div class="field"><label for="pk-min">الدقائق</label><input class="input ltr" id="pk-min" name="minutes" list="unlimited" value="${esc(amountVal(p?.minutes))}" placeholder="5000"></div>
-        <div class="field"><label for="pk-sms">الرسائل</label><input class="input ltr" id="pk-sms" name="sms" list="unlimited" value="${esc(amountVal(p?.sms))}" placeholder="5000"></div></div>
+      <div class="msg info">${icon('info')}<span>رزمة من ${supplierName(p)}. بعد حفظ تعديلك تبقى قيمك كما هي عند كل مزامنة، وتتحدث «التكلفة» فقط.</span></div>
+      <div class="field"><label for="pk-name">اسم الرزمة</label><input class="input" id="pk-name" name="name" value="${esc(p.name || '')}" required></div>
+      <div class="row2"><div class="field"><label for="pk-gb">حجم الإنترنت (GB)</label><input class="input ltr" id="pk-gb" name="dataGb" type="number" min="0" step="1" inputmode="numeric" value="${p.dataGb ?? ''}"></div>
+        <div class="field"><label for="pk-days">المدة بالأيام <span class="opt">(فارغ = شهرية)</span></label><input class="input ltr" id="pk-days" name="days" type="number" min="1" max="730" step="1" inputmode="numeric" value="${p.days ?? ''}" placeholder="30، 90…"></div></div>
+      <div class="field"><label for="pk-tag">وسم <span class="opt">(مثل 5G)</span></label><input class="input ltr" id="pk-tag" name="tag" value="${esc(p.tag || '')}"></div>
+      <div class="row2"><div class="field"><label for="pk-min">الدقائق</label><input class="input ltr" id="pk-min" name="minutes" list="unlimited" value="${esc(amountVal(p.minutes))}" placeholder="5000"></div>
+        <div class="field"><label for="pk-sms">الرسائل</label><input class="input ltr" id="pk-sms" name="sms" list="unlimited" value="${esc(amountVal(p.sms))}" placeholder="5000"></div></div>
       <datalist id="unlimited"><option value="غير محدود"></option></datalist>
-      <div class="field"><label for="pk-desc">وصف قصير <span class="opt">(اختياري)</span></label><input class="input" id="pk-desc" name="description" value="${esc(p?.description || '')}"></div>
-      <div class="row2"><div class="field">${p && isAy(p)
+      <div class="field"><label for="pk-desc">وصف قصير <span class="opt">(اختياري)</span></label><input class="input" id="pk-desc" name="description" value="${esc(p.description || '')}"></div>
+      <div class="field">${isAy(p)
         ? `<label for="pk-cost">سعر أيلول للزبون (₪)</label><input class="input ltr" id="pk-cost" name="cost" type="number" value="${round(p.cost)}" readonly>
            <span class="hint">من أيلول نفسه، ويُرسل معه الطلب. سعرك منه: ${p.supplierCost !== null && p.supplierCost !== undefined ? `<b>${fmtMoney(p.supplierCost)}</b>` : 'غير معروف بعد'}</span>`
-        : `<label for="pk-cost">التكلفة عليك (₪)</label><input class="input ltr" id="pk-cost" name="cost" type="number" min="0" step="0.01" inputmode="decimal" value="${p ? round(p.cost) : ''}">`}</div>
-        <div class="field"><label for="pk-price">سعر الوكيل (₪)</label><input class="input ltr" id="pk-price" name="price" type="number" min="0" step="0.01" inputmode="decimal" value="${p ? round(p.price) : ''}"></div></div>
+        : `<label for="pk-cost">التكلفة عليك (₪)</label><input class="input ltr" id="pk-cost" name="cost" type="number" min="0" step="0.01" inputmode="decimal" value="${round(p.cost)}">`}</div>
       <div class="row2">
         <div class="field"><label for="pk-shop">سعر الزبون في المتجر (₪)</label>
-          <input class="input ltr" id="pk-shop" name="shopPrice" type="number" min="0" step="0.01" inputmode="decimal" value="${p?.shopPrice ?? ''}" placeholder="فارغ = مخفية عن المتجر"></div>
+          <input class="input ltr" id="pk-shop" name="shopPrice" type="number" min="0" step="0.01" inputmode="decimal" value="${p.shopPrice ?? ''}" placeholder="فارغ = مخفية عن المتجر"></div>
         <div class="field"><label for="pk-old">السعر قبل الخصم (₪) <span class="opt">(اختياري)</span></label>
-          <input class="input ltr" id="pk-old" name="oldPrice" type="number" min="0" step="0.01" inputmode="decimal" value="${p?.oldPrice ?? ''}" placeholder="مثال: 120 لإظهار التوفير"></div>
+          <input class="input ltr" id="pk-old" name="oldPrice" type="number" min="0" step="0.01" inputmode="decimal" value="${p.oldPrice ?? ''}" placeholder="مثال: 120 لإظهار التوفير"></div>
       </div>
       <div class="hint" id="pk-margin"></div>
-      <label class="switch-row"><span class="tile sm cyan">${icon('qr')}</span><span class="grow"><b>تفعيل مباشر eSIM وإظهار الكود فوراً</b><small>إتاحة الرزمة في قسم التفعيل المباشر لـ eSIM مع توليد وإظهار رمز QR فوراً وسعر QR الخاص بالشركة</small></span><input class="switch" type="checkbox" name="esimEnabled" ${p?.esimEnabled || p?.lyEsim ? 'checked' : ''}></label>
-      <label class="switch-row"><span class="tile sm amber">${icon('bolt')}</span><span class="grow"><b>الأكثر مبيعاً / مميزة في المتجر</b><small>إبراز الباقة بشارة «الأكثر طلباً» في متجر الزبائن</small></span><input class="switch" type="checkbox" name="popular" ${p?.popular ? 'checked' : ''}></label>
-      <label class="switch-row"><span class="grow"><b>ظاهرة للوكلاء والزبائن</b><small>أوقفها لإخفائها مؤقتاً</small></span><input class="switch" type="checkbox" name="active" ${!p || p.active ? 'checked' : ''}></label>`,
-    submit: p ? 'حفظ' : 'إضافة الرزمة',
-    onMount(form) {
-      form.querySelectorAll('#pk-kind [data-kind]').forEach((b) => b.addEventListener('click', () => {
-        form.elements.kind.value = b.dataset.kind;
-        form.querySelectorAll('#pk-kind [data-kind]').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
-      }));
-    },
+      <label class="switch-row"><span class="tile sm cyan">${icon('qr')}</span><span class="grow"><b>eSIM</b><small>تُباع الرزمة كشريحة eSIM مع رمز QR وسعر QR الخاص بالشركة</small></span><input class="switch" type="checkbox" name="esimEnabled" ${p.esimEnabled || p.lyEsim ? 'checked' : ''}></label>
+      <label class="switch-row"><span class="tile sm amber">${icon('bolt')}</span><span class="grow"><b>الأكثر مبيعاً / مميزة في المتجر</b><small>إبراز الباقة بشارة «الأكثر طلباً» في متجر الزبائن</small></span><input class="switch" type="checkbox" name="popular" ${p.popular ? 'checked' : ''}></label>
+      <label class="switch-row"><span class="grow"><b>ظاهرة في المتجر</b><small>أوقفها لإخفائها مؤقتاً</small></span><input class="switch" type="checkbox" name="active" ${p.active ? 'checked' : ''}></label>`,
+    submit: 'حفظ',
     onInput(form) {
-      const cost = p && isAy(p) ? realCost(p) : Number(field(form, 'cost')) || 0;
-      const price = Number(field(form, 'price')) || 0;
+      const cost = isAy(p) ? realCost(p) : Number(field(form, 'cost')) || 0;
+      const price = Number(field(form, 'shopPrice')) || 0;
       const box = form.querySelector('#pk-margin');
       box.className = `hint ${price - cost < 0 ? 'bad' : 'ok'}`;
-      box.innerHTML = price ? `${icon('coins')}<span>ربحك في الشهر: ${fmtMoney(price - cost)}</span>` : `${icon('info')}<span>الرزمة بسعر صفر لا تظهر للوكلاء حتى تحدد سعرها.</span>`;
+      box.innerHTML = price ? `${icon('coins')}<span>ربحك من الزبون: ${fmtMoney(price - cost)} (قبل رسوم QR)</span>` : `${icon('info')}<span>بلا سعر للزبون لا تظهر الرزمة في المتجر.</span>`;
     },
     async onSubmit(form) {
       const body = {
-        companyId: Number(field(form, 'companyId')), name: field(form, 'name'), dataGb: field(form, 'dataGb'), minutes: field(form, 'minutes'), sms: field(form, 'sms'),
-        tag: field(form, 'tag'), description: field(form, 'description'), cost: field(form, 'cost') || 0, price: field(form, 'price') || 0,
+        companyId: p.companyId, name: field(form, 'name'), dataGb: field(form, 'dataGb'), minutes: field(form, 'minutes'), sms: field(form, 'sms'),
+        tag: field(form, 'tag'), description: field(form, 'description'), cost: field(form, 'cost') || 0,
         shopPrice: field(form, 'shopPrice'), oldPrice: field(form, 'oldPrice'),
         popular: form.elements.popular.checked, esimEnabled: form.elements.esimEnabled.checked,
-        active: form.elements.active.checked, kind: form.elements.kind.value, days: field(form, 'days'),
+        active: form.elements.active.checked, days: field(form, 'days'),
       };
-      await (p ? api.put(`/api/packages/${p.id}`, body) : api.post('/api/packages', body));
+      await api.put(`/api/packages/${p.id}`, body);
       await loadCatalog(true);
       changed();
-      return p ? 'تم حفظ الرزمة' : 'تمت إضافة الرزمة';
+      return 'تم حفظ الرزمة';
     },
   });
 }
 
-// ---------- one tab's controls: profit percentage, the supplier's sync, price changes awaiting approval ----------
-const markupOf = (key) => { const t = tabOf(key); return SUPPLIERS[t.supplier].markup(t.kind); };
-
-function systemBar(key) {
-  const t = tabOf(key);
-  const sup = SUPPLIERS[t.supplier];
-  const pending = S.catalog.packages.filter((p) => inTab(p, t) && p.artPending).length;
-  const synced = sup.synced(t.kind);
+// ---------- one supplier's controls: its sync and the price changes awaiting approval ----------
+function supplierBar(key) {
+  const sup = SUPPLIERS[key];
+  const pending = S.catalog.packages.filter((p) => inTab(p, key) && p.artPending).length;
+  const synced = sup.synced();
   const msg = V.msg[key];
-  const other = Object.entries(TABS).filter(([k]) => k !== key).map(([, x]) => x.label).join(' و');
   return `<section class="card card-pad sys-bar">
-    <div class="sys-row"><span class="tile sm ${t.color}">${icon('percent')}</span>
-      <div class="grow"><b>نسبة ربحك على ${t.label}: <span class="ltr">${markupOf(key)}%</span></b><small>سعر الوكيل = التكلفة + ${markupOf(key)}%. منفصلة عن ${other}.</small></div>
-      <button class="btn btn-sm" data-action="set-markup" data-tab="${key}">${icon('edit')}تغيير</button></div>
     <div class="sys-row"><span class="tile sm">${icon('refresh')}</span>
       <div class="grow"><b>المزامنة من ${sup.name}</b><small>${synced ? `آخر مزامنة ${relTime(synced)}` : 'لم تتم بعد'} · تضيف الجديد ولا تغيّر أسعارك الحالية</small></div>
-      ${sup.configured() ? `<button class="btn btn-sm" data-action="sync" data-tab="${key}">${icon('refresh')}مزامنة ${t.label}</button>` : setupLink(sup)}</div>
-    ${pending ? `<div class="msg warn" style="align-items:center">${icon('alert')}<span class="grow"><b>${pending} رزمة تغيّر سعرها في ${sup.name}</b> — لن تتغيّر أسعارك إلا بموافقتك.</span>
+      ${sup.configured() ? `<button class="btn btn-sm" data-action="sync" data-tab="${key}">${icon('refresh')}مزامنة ${sup.name}</button>` : setupLink(sup)}</div>
+    ${pending ? `<div class="msg warn" style="align-items:center">${icon('alert')}<span class="grow"><b>${pending} رزمة تغيّر سعرها في ${sup.name}</b> — لن تتغيّر تكلفتك إلا بموافقتك.</span>
       <button class="btn btn-sm" data-action="pending" data-tab="${key}">مراجعة</button></div>` : ''}
-    ${msg ? `<div class="msg ${msg.error ? '' : 'info'}">${icon(msg.error ? 'alert' : 'checkCircle')}<span>${esc(msg.text)}</span></div>` : ''}
-  </section>`;
-}
-
-// QuickLine's tab: both systems' percentages, one sync for both, and each system's price changes to review.
-function supplierBar(vk) {
-  const keys = VIEWS[vk].systems;
-  const sup = SUPPLIERS[TABS[keys[0]].supplier];
-  const synced = keys.map((k) => sup.synced(TABS[k].kind));
-  const last = synced.every(Boolean) ? Math.min(...synced) : null;
-  const msg = V.msg[vk];
-  const pending = keys.map((k) => [k, S.catalog.packages.filter((p) => inTab(p, TABS[k]) && p.artPending).length]).filter(([, n]) => n);
-  return `<section class="card card-pad sys-bar">
-    <div class="sys-row"><span class="tile sm green">${icon('percent')}</span>
-      <div class="grow"><b>نسبة ربحك: ${keys.map((k) => `${TABS[k].short} <span class="ltr">${markupOf(k)}%</span>`).join(' · ')}</b>
-        <small>سعر الوكيل = التكلفة + النسبة، ولكل نوع نسبته.</small></div>
-      <div style="display:flex;gap:6px;flex-wrap:wrap">${keys.map((k) => `<button class="btn btn-sm" data-action="set-markup" data-tab="${k}">${icon('edit')}${TABS[k].short}</button>`).join('')}</div></div>
-    <div class="sys-row"><span class="tile sm">${icon('refresh')}</span>
-      <div class="grow"><b>المزامنة من ${sup.name}</b><small>${last ? `آخر مزامنة ${relTime(last)}` : 'لم تتم بعد'} · التمديد والخطوط الجديدة معاً · تضيف الجديد ولا تغيّر أسعارك الحالية</small></div>
-      ${sup.configured() ? `<button class="btn btn-sm" data-action="sync-ql" data-view="${vk}">${icon('refresh')}مزامنة ${sup.name}</button>` : setupLink(sup)}</div>
-    ${pending.map(([k, n]) => `<div class="msg warn" style="align-items:center">${icon('alert')}<span class="grow"><b>${n} رزمة ${TABS[k].short} تغيّر سعرها في ${sup.name}</b> — لن تتغيّر أسعارك إلا بموافقتك.</span>
-      <button class="btn btn-sm" data-action="pending" data-tab="${k}">مراجعة</button></div>`).join('')}
     ${msg ? `<div class="msg ${msg.error ? '' : 'info'}">${icon(msg.error ? 'alert' : 'checkCircle')}<span>${esc(msg.text)}</span></div>` : ''}
   </section>`;
 }
@@ -261,58 +162,21 @@ async function refreshAll(ctx) {
   ctx.rerender();
 }
 
-function openMarkup(key, ctx) {
-  const d = tabOf(key);
-  const sup = SUPPLIERS[d.supplier];
-  api.get(`/api/${sup.api}/reprice?kind=${d.kind}`).then((info) => sheet({
-    title: `نسبة ربحك على ${d.label}`,
-    subtitle: 'سعر الوكيل = التكلفة + النسبة',
-    body: `<div class="field"><label for="mk-val">النسبة (%)</label><input class="input ltr big" id="mk-val" name="markup" type="number" min="0" max="200" step="0.5" inputmode="decimal" value="${info.markup}"></div>
-      <div class="hint" id="mk-example"></div>
-      <div class="field"><span class="label">ماذا يحدث للأسعار الحالية؟</span><div class="switches">
-        <label class="switch-row"><span class="grow"><b>طبّقها على الرزم التي لم أعدّل سعرها يدوياً (${info.total - info.edited})</b><small>الرزم التي وضعت سعرها بنفسك (${info.edited}) تبقى كما هي.</small></span><input type="radio" name="scope" value="unedited" checked></label>
-        <label class="switch-row"><span class="grow"><b>طبّقها على كل رزم ${d.label} (${info.total})</b><small>تستبدل الأسعار التي وضعتها يدوياً أيضاً.</small></span><input type="radio" name="scope" value="all"></label>
-        <label class="switch-row"><span class="grow"><b>احفظ النسبة فقط</b><small>للرزم الجديدة من المزامنة وللاعتمادات القادمة.</small></span><input type="radio" name="scope" value="none"></label>
-      </div></div>`,
-    submit: 'حفظ',
-    onInput(form) {
-      const m = Number(field(form, 'markup')) || 0;
-      form.querySelector('#mk-example').innerHTML = `${icon('coins')}<span>مثال: رزمة تكلفتها 50 ₪ تصبح للوكيل ${fmtMoney(50 * (1 + m / 100))}</span>`;
-    },
-    async onSubmit(form) {
-      const markup = field(form, 'markup');
-      await api.put('/api/settings', { [sup.markupField(d.kind)]: markup });
-      const scope = form.elements.scope.value;
-      let text = `حُفظت نسبة ${d.label}: ${Number(markup)}%`;
-      if (scope !== 'none') {
-        const r = await api.post(`/api/${sup.api}/reprice`, { kind: d.kind, scope });
-        text += ` — تحدّث سعر ${r.changed} رزمة`;
-      }
-      V.msg[viewOf(key)] = { text };
-      await refreshAll(ctx);
-      return text;
-    },
-  }));
-}
-
 function openPending(key, ctx) {
-  const d = tabOf(key);
-  const sup = SUPPLIERS[d.supplier];
-  api.get(`/api/${sup.api}/pending?kind=${d.kind}`).then((rows) => {
+  const sup = SUPPLIERS[key];
+  api.get(`/api/${sup.api}/pending?kind=invoice`).then((rows) => {
     if (!rows.length) { toast('لا توجد تغييرات بانتظارك'); return; }
     const row = (p) => `<article class="item pend-row" data-id="${p.id}">
-      <div class="item-top"><div class="grow"><b class="item-title">${esc(p.name)}</b><div class="item-sub"><span>${esc(p.companyName)}</span>${p.active ? '' : '<span>مخفية</span>'}${p.edited ? '<span>سعرها معدّل يدوياً</span>' : ''}</div></div></div>
-      <div class="kv small"><div>التكلفة</div><div>${money(p.cost)} ← <b>${money(p.artPrice)}</b></div>
-        <div>سعر الوكيل</div><div>${money(p.price)} ← <b>${money(p.suggested)}</b> <span class="muted">(+${markupOf(key)}%)</span></div></div>
-      <div class="item-actions"><button type="button" class="btn btn-sm btn-good" data-mode="all">${icon('check')}اعتماد</button>
-        <button type="button" class="btn btn-sm" data-mode="cost">التكلفة فقط</button>
+      <div class="item-top"><div class="grow"><b class="item-title">${esc(p.name)}</b><div class="item-sub"><span>${esc(p.companyName)}</span>${p.active ? '' : '<span>مخفية</span>'}${p.edited ? '<span>معدّلة يدوياً</span>' : ''}</div></div></div>
+      <div class="kv small"><div>التكلفة</div><div>${money(p.cost)} ← <b>${money(p.artPrice)}</b></div></div>
+      <div class="item-actions"><button type="button" class="btn btn-sm btn-good" data-mode="cost">${icon('check')}اعتماد التكلفة الجديدة</button>
         <button type="button" class="btn btn-sm btn-ghost" data-mode="ignore">تجاهل</button></div></article>`;
     sheet({
-      title: `تغييرات أسعار ${sup.name} — ${d.label}`,
-      subtitle: '«اعتماد»: التكلفة والسعر الجديدان · «التكلفة فقط»: يبقى سعر الوكيل · «تجاهل»: يبقى كل شيء',
+      title: `تغييرات أسعار ${sup.name}`,
+      subtitle: 'راجع سعر الزبون في المتجر بعد اعتماد تكلفة أعلى',
       wide: true,
       body: `<div class="list" id="pend-list">${rows.map(row).join('')}</div>`,
-      footer: `<button type="button" class="btn btn-primary" data-bulk="all">${icon('check')}اعتماد الكل (${rows.length})</button>
+      footer: `<button type="button" class="btn btn-primary" data-bulk="cost">${icon('check')}اعتماد الكل (${rows.length})</button>
         <button type="button" class="btn" data-bulk="ignore">تجاهل الكل</button>`,
       onMount(form, el) {
         const left = () => form.querySelectorAll('.pend-row').length;
@@ -337,7 +201,7 @@ function openPending(key, ctx) {
           b.disabled = true;
           try {
             await act(ids, b.dataset.bulk);
-            toast(b.dataset.bulk === 'all' ? `اعتُمد ${ids.length}` : `تُجوهل ${ids.length}`);
+            toast(b.dataset.bulk === 'ignore' ? `تُجوهل ${ids.length}` : `اعتُمد ${ids.length}`);
             el.querySelector('[data-close]').click();
           } catch (err) { toast(err.message, { error: true }); b.disabled = false; }
         }));
@@ -346,59 +210,37 @@ function openPending(key, ctx) {
   });
 }
 
-// ---------- one company: its packages by source, and its offers, edited right there ----------
-const SOURCE_GROUPS = [
-  ['QuickLine — خط جديد', (p) => p.supplier === 'ql' && p.kind === 'invoice'],
-  ['QuickLine — تمديد', (p) => p.supplier === 'ql' && p.kind === 'card'],
-  ['ليان — خط جديد', (p) => p.supplier === 'ly' && p.kind === 'invoice'],
-  ['ليان — تمديد', (p) => p.supplier === 'ly' && p.kind === 'card'],
-  ['telecom — خط جديد', (p) => p.supplier === 'tc' && p.kind === 'invoice'],
-  ['telecom — تمديد', (p) => p.supplier === 'tc' && p.kind === 'card'],
-  ['art-topup — فواتير', (p) => p.supplier === 'art' && p.kind === 'invoice'],
-  ['art-topup — كروت', (p) => p.supplier === 'art' && p.kind === 'card'],
-  ['أيلول — خط جديد', (p) => p.supplier === 'ay' && p.kind === 'invoice'],
-  ['أيلول — كروت', (p) => p.supplier === 'ay' && p.kind === 'card'],
-  ['يدوية', (p) => !p.supplier],
-];
-// How many of a company's packages come from where, for its card.
+// ---------- one company: its packages by supplier ----------
 function sourceCounts(companyId) {
   const pk = S.catalog.packages.filter((p) => p.companyId === companyId);
-  const n = (test) => pk.filter(test).length;
-  return [['QuickLine', n((p) => p.supplier === 'ql')], ['ليان', n((p) => p.supplier === 'ly')], ['telecom', n((p) => p.supplier === 'tc')], ['art-topup', n((p) => p.supplier === 'art')], ['أيلول', n((p) => p.supplier === 'ay')], ['يدوية', n((p) => !p.supplier)]]
-    .filter(([, k]) => k).map(([label, k]) => `${label} ${k}`).join(' · ');
+  return Object.entries(SUPPLIERS).map(([k, s]) => [s.name, pk.filter((p) => inTab(p, k)).length])
+    .filter(([, n]) => n).map(([label, n]) => `${label} ${n}`).join(' · ');
 }
-function companyPackagesHtml(c, offers) {
+function companyPackagesHtml(c) {
   const pk = S.catalog.packages.filter((p) => p.companyId === c.id);
-  const groups = SOURCE_GROUPS.map(([label, test]) => [label, pk.filter(test)]).filter(([, l]) => l.length);
+  const groups = Object.entries(SUPPLIERS).map(([k, s]) => [s.name, pk.filter((p) => inTab(p, k))]).filter(([, l]) => l.length);
   const row = (p) => `<div class="item-top cp-row">
       <div class="grow"><b>${esc(p.name)}</b>${p.active ? '' : p.gone ? ' <span class="pill s-expiring">لم تعد عند المورّد</span>' : ' <span class="pill">مخفية</span>'}
-        <div class="item-sub"><span>${p.days ? `${p.days} يوماً` : 'شهرية'}</span><span>التكلفة ${money(p.cost)}</span><span>للوكيل ${money(p.price)}</span>${p.artCode ? `<span class="mono ltr">${esc(p.artCode)}</span>` : ''}</div></div>
+        <div class="item-sub"><span>${p.days ? `${p.days} يوماً` : 'شهرية'}</span><span>التكلفة ${money(p.cost)}</span>${p.shopPrice ? `<span>المتجر ${money(p.shopPrice)}</span>` : ''}${p.artCode ? `<span class="mono ltr">${esc(p.artCode)}</span>` : ''}</div></div>
       <button type="button" class="btn btn-sm" data-cp-toggle="${p.id}">${icon(p.active ? 'eyeOff' : 'eye')}${p.active ? 'إخفاء' : 'إظهار'}</button>
       <button type="button" class="btn btn-sm" data-cp-edit="${p.id}">${icon('edit')}تعديل</button></div>`;
-  const mine = offers.filter((o) => o.companyId === c.id);
-  return `${groups.map(([label, list]) => `<details class="pr-group" open><summary><b>${label}</b> <span class="muted small">${list.length} · ظاهرة ${list.filter((p) => p.active).length}</span></summary>${list.map(row).join('')}</details>`).join('')
-      || empty('box', 'لا توجد رزم لهذه الشركة', '')}
-    <button type="button" class="btn btn-soft" data-cp-pkg-new>${icon('plus')}رزمة جديدة لهذه الشركة</button>
-    <div class="section-title" style="margin-top:16px"><h3>العروض (${mine.length})</h3><button type="button" class="btn btn-sm btn-soft" data-cp-offer-new>${icon('plus')}عرض جديد</button></div>
-    ${mine.map((o) => `<div class="item-top cp-row"><div class="grow"><b>${esc(o.title)}</b><div class="item-sub">${o.packageLabel ? `<span>${esc(o.packageLabel)}</span>` : ''}${o.offerPrice !== null ? `<span>${money(o.offerPrice)}</span>` : ''}<span>${!o.active ? 'متوقف' : o.live ? 'ظاهر للوكلاء' : 'خارج التاريخ'}</span></div></div>
-      <button type="button" class="btn btn-sm" data-cp-offer="${o.id}">${icon('edit')}تعديل</button></div>`).join('') || '<p class="muted small">لا توجد عروض لهذه الشركة.</p>'}`;
+  return groups.map(([label, list]) => `<details class="pr-group" open><summary><b>${label}</b> <span class="muted small">${list.length} · ظاهرة ${list.filter((p) => p.active).length}</span></summary>${list.map(row).join('')}</details>`).join('')
+    || empty('box', 'لا توجد رزم لهذه الشركة', 'تأتي الرزم من مزامنة المورّدين.');
 }
-async function openCompanyPackages(c) {
-  let offers = await api.get('/api/offers');
+function openCompanyPackages(c) {
   let box;
   // Edits made from here (or anywhere) show here at once.
   const redraw = async () => {
     await loadCatalog(true);
-    offers = await api.get('/api/offers');
-    if (box?.isConnected) box.innerHTML = companyPackagesHtml(c, offers);
+    if (box?.isConnected) box.innerHTML = companyPackagesHtml(c);
   };
   const onChanged = () => { redraw().catch(() => {}); };
   window.addEventListener('app:changed', onChanged);
   sheet({
-    title: `رزم وعروض ${c.name}`,
-    subtitle: 'كل رزم الشركة حسب مصدرها، وعروضها',
+    title: `رزم ${c.name}`,
+    subtitle: 'كل رزم الشركة حسب المورّد',
     wide: true,
-    body: `<div id="cp-body">${companyPackagesHtml(c, offers)}</div>`,
+    body: `<div id="cp-body">${companyPackagesHtml(c)}</div>`,
     onClose: () => window.removeEventListener('app:changed', onChanged),
     onMount(form) {
       box = form.querySelector('#cp-body');
@@ -412,15 +254,13 @@ async function openCompanyPackages(c) {
           const p = find(b.dataset.cpToggle);
           await api.put(`/api/packages/${p.id}`, { active: !p.active });
           changed({ keepView: true });
-        } else if (b.dataset.cpOffer) openOfferForm(offers.find((o) => o.id === Number(b.dataset.cpOffer)), () => redraw());
-        else if ('cpOfferNew' in b.dataset) openOfferForm(null, () => redraw());
-        else if ('cpPkgNew' in b.dataset) openPackageForm(null, c.id);
+        }
       });
     },
   });
 }
 
-// ---------- the same new line from two suppliers: keep the cheaper one for the agents ----------
+// ---------- the same eSIM from two suppliers: keep the cheaper one in the shop ----------
 // Groups the manager chose to keep as they are (this browser only), until their prices change.
 const IGNORED_KEY = 'agents-similar-ignored';
 const ignored = () => { try { return JSON.parse(localStorage.getItem(IGNORED_KEY) || '[]'); } catch { return []; } };
@@ -431,22 +271,22 @@ function similarBanner() {
   const groups = openGroups();
   if (!groups.length) return '';
   const saving = groups.reduce((t, g) => t + g.saving, 0);
-  return `<div class="msg warn" style="align-items:center">${icon('coins')}<span class="grow"><b>${groups.length} خط جديد متوفّر عند أكثر من مورّد</b>
-    — نفس الشركة ونفس الإنترنت والمدة، وأحدهما أرخص عليك${saving > 0 ? ` (توفير حتى ${fmtMoney(saving)} في الخط)` : ''}.</span>
+  return `<div class="msg warn" style="align-items:center">${icon('coins')}<span class="grow"><b>${groups.length} رزمة متوفّرة عند أكثر من مورّد</b>
+    — نفس الشركة ونفس الإنترنت والمدة، وأحدهما أرخص عليك${saving > 0 ? ` (توفير حتى ${fmtMoney(saving)})` : ''}.</span>
     <button class="btn btn-sm" data-action="similar">مراجعة</button></div>`;
 }
 
 function similarHtml() {
   const groups = openGroups();
-  if (!groups.length) return empty('checkCircle', 'لا توجد خطوط متشابهة تحتاج قراراً', '');
+  if (!groups.length) return empty('checkCircle', 'لا توجد رزم متشابهة تحتاج قراراً', '');
   return groups.map((g) => `<section class="card card-pad" style="display:grid;gap:8px;box-shadow:none;background:var(--surface-2)">
     <b>${esc(g.companyName)} · ${fmtNum(g.dataGb)} جيجا · ${g.days} يوماً</b>
     ${g.packages.map((p) => `<div class="item-top cp-row"><div class="grow"><b>${esc(p.name)}</b>
-      <div class="item-sub"><span>${p.source}</span><span>التكلفة ${money(p.cost)}</span><span>للوكيل ${money(p.price)}</span><span>${p.active ? 'ظاهرة للوكلاء' : 'مخفية'}</span></div></div>
+      <div class="item-sub"><span>${p.source}</span><span>التكلفة ${money(p.cost)}</span><span>${p.active ? 'ظاهرة' : 'مخفية'}</span></div></div>
       ${p.id === g.cheapestId ? '<span class="pill s-active">الأرخص عليك</span>' : ''}</div>`).join('')}
-    <div class="btn-row"><button type="button" class="btn btn-primary btn-sm" data-sim-pick="${esc(g.key)}">${icon('check')}اعتمد الأرخص للوكلاء</button>
+    <div class="btn-row"><button type="button" class="btn btn-primary btn-sm" data-sim-pick="${esc(g.key)}">${icon('check')}أظهر الأرخص فقط</button>
       <button type="button" class="btn btn-ghost btn-sm" data-sim-ignore="${esc(g.key)}">تجاهل</button></div>
-    <small class="muted">«اعتمد الأرخص»: يُظهر الأرخص لكل الوكلاء ويُخفي الأخرى عنهم. تبقى كلها في القائمة عندك.</small>
+    <small class="muted">«أظهر الأرخص فقط»: يُظهر الأرخص ويُخفي الأخرى. تبقى كلها في القائمة عندك.</small>
   </section>`).join('');
 }
 
@@ -458,8 +298,8 @@ function openSimilar(ctx) {
     ctx.rerender();
   };
   sheet({
-    title: 'خطوط متشابهة من مورّدَين',
-    subtitle: 'نفس الشركة ونفس الإنترنت والمدة: الأرخص عليك يربحك أكثر بنفس سعر الوكيل',
+    title: 'رزم متشابهة من مورّدَين',
+    subtitle: 'نفس الشركة ونفس الإنترنت والمدة: الأرخص عليك يربحك أكثر بنفس سعر الزبون',
     wide: true,
     body: `<div id="sim-body" style="display:grid;gap:12px">${similarHtml()}</div>`,
     onMount(form) {
@@ -476,7 +316,7 @@ function openSimilar(ctx) {
             const want = p.id === g.cheapestId;
             if (p.active !== want) await api.put(`/api/packages/${p.id}`, { active: want });
           }
-          toast('صار الأرخص هو الظاهر للوكلاء');
+          toast('صار الأرخص هو الظاهر');
         }
         await redraw();
       });
@@ -484,39 +324,13 @@ function openSimilar(ctx) {
   });
 }
 
-// Aylol's charge page lists the customer's price; what it really takes is supplierCost, when the site says so.
-// The manager sees both and earns on the real one; the agents' price is the manager's own.
-const isAy = (p) => p.supplier === 'ay';
-const realCost = (p) => (isAy(p) && p.supplierCost !== null && p.supplierCost !== undefined ? p.supplierCost : p.cost);
-
-function packageCardAdmin(p) {
-  return `<article class="pkg-card ${p.active ? '' : 'inactive'}" style="cursor:default">
-    <div class="pkg-head"><span class="pkg-name">${esc(p.name)}</span>${p.supplier === 'ql' ? `<span class="pill ${p.kind === 'card' ? 's-active' : 'plain'}">${p.kind === 'card' ? 'تمديد' : 'خط جديد'}</span>` : ''}${p.active ? '' : p.gone ? `<span class="pill s-expiring" title="تعود تلقائياً عند أول مزامنة يظهر فيها">لم تعد عند ${supplierName(p)}</span>` : '<span class="pill">مخفية عن الوكلاء</span>'}${!p.price ? '<span class="pill s-expiring">حدد السعر</span>' : ''}${p.artPending ? `<span class="pill s-expiring">سعر ${supplierName(p)} الجديد: ${fmtMoney(p.artPrice)}</span>` : ''}</div>
-    ${p.dataGb ? `<div class="pkg-data"><b>${fmtNum(p.dataGb)}</b><span>GB</span></div>` : ''}
-    ${specs(p) ? `<div class="pkg-specs">${specs(p)}</div>` : ''}
-    <div class="kv small"><div>المدة</div><div>${p.days ? `${p.days} يوماً` : 'شهرية'}</div>
-      ${isAy(p)
-        ? `<div>سعر أيلول للزبون</div><div>${money(p.cost)}</div><div>سعرك من أيلول</div><div>${p.supplierCost !== null && p.supplierCost !== undefined ? `<b>${money(p.supplierCost)}</b>` : '<span class="muted">غير معروف — يظهر بعد أول عملية</span>'}</div>`
-        : `<div>التكلفة</div><div>${money(p.cost)}</div>`}
-      <div>سعر الوكيل</div><div>${p.price ? money(p.price) : '<span class="muted">لم تحدده بعد</span>'}</div>
-      ${p.price ? `<div>ربحك</div><div class="${p.price - realCost(p) < 0 ? 'minus' : 'plus'}">${money(p.price - realCost(p))}</div>` : ''}
-      ${p.artCode ? `<div>رمز ${supplierName(p)}</div><div class="mono ltr">${esc(p.artCode)}${p.edited ? ' · <span class="muted">معدّلة</span>' : ''}</div>` : ''}</div>
-    <div class="item-actions" style="padding-bottom:16px">
-      <button class="btn btn-sm ${p.active ? '' : 'btn-soft'}" data-action="toggle-package" data-id="${p.id}">${icon(p.active ? 'eyeOff' : 'eye')}${p.active ? 'إخفاء' : 'إظهار للوكلاء'}</button>
-      <button class="btn btn-sm" data-action="edit-package" data-id="${p.id}">${icon('edit')}تعديل</button>
-      <button class="btn btn-sm btn-ghost" data-action="delete-package" data-id="${p.id}">${icon('trash')}حذف</button></div>
-    ${p.tag ? `<div class="pkg-tag"><span>${esc(p.tag)}</span><span></span></div>` : ''}
-  </article>`;
-}
-
-// One package as a compact row: what it is, what it costs and earns, and its actions.
+// One package as a compact row: what it is, what it costs and earns in the shop, and its actions.
 function packageRowAdmin(p) {
-  const profit = p.price - realCost(p);
+  const profit = shopProfit(p);
   const checked = V.selected.has(p.id);
   const pills = [
     p.active ? '' : p.gone ? `<span class="pill s-expiring">لم تعد عند ${supplierName(p)}</span>` : '<span class="pill">مخفية</span>',
-    p.shopPrice ? `<span class="pill s-active">المتجر ${money(p.shopPrice)}</span>` : '',
-    p.esimEnabled || p.lyEsim ? '<span class="pill plain">eSIM مباشر</span>' : '',
+    p.shopPrice ? `<span class="pill s-active">المتجر ${money(p.shopPrice)}</span>` : '<span class="pill s-expiring">بلا سعر للزبون</span>',
     p.popular ? '<span class="pill s-expiring">الأكثر طلباً</span>' : '',
     p.artPending ? '<span class="pill s-expiring">سعر جديد</span>' : '',
   ].join('');
@@ -528,10 +342,11 @@ function packageRowAdmin(p) {
         ${isAy(p)
           ? `<span>أيلول للزبون ${money(p.cost)}</span><span>سعرك منه ${p.supplierCost !== null && p.supplierCost !== undefined ? `<b>${money(p.supplierCost)}</b>` : 'غير معروف'}</span>`
           : `<span>التكلفة ${money(p.cost)}</span>`}
-        ${p.price ? `<span>للوكيل <b>${money(p.price)}</b></span><span class="${profit < 0 ? 'minus' : 'plus'}">ربح ${money(profit)}</span>` : '<span class="pill s-expiring">حدد سعر الوكيل</span>'}
+        ${profit !== null ? `<span class="${profit < 0 ? 'minus' : 'plus'}">ربح ${money(profit)}</span>` : ''}
+        ${specs(p) ? `<span class="pkg-specs">${specs(p)}</span>` : ''}
         ${p.artCode ? `<span class="mono ltr">${esc(p.artCode)}</span>` : ''}${p.edited ? '<span>معدّلة</span>' : ''}</div></div>
       <div class="item-actions">
-        <button class="icon-btn pk-act" data-action="toggle-package" data-id="${p.id}" title="${p.active ? 'إخفاء عن الوكلاء' : 'إظهار للوكلاء'}" aria-label="${p.active ? 'إخفاء' : 'إظهار'}">${icon(p.active ? 'eyeOff' : 'eye')}</button>
+        <button class="icon-btn pk-act" data-action="toggle-package" data-id="${p.id}" title="${p.active ? 'إخفاء' : 'إظهار'}" aria-label="${p.active ? 'إخفاء' : 'إظهار'}">${icon(p.active ? 'eyeOff' : 'eye')}</button>
         <button class="icon-btn pk-act" data-action="edit-package" data-id="${p.id}" title="تعديل" aria-label="تعديل">${icon('edit')}</button>
         <button class="icon-btn plain pk-act" data-action="delete-package" data-id="${p.id}" title="حذف" aria-label="حذف">${icon('trash')}</button></div></div>
   </article>`;
@@ -548,17 +363,16 @@ function bulkToolbar(mine) {
       ${selCount ? `<span class="pill s-active">محدد: ${selCount} رزمة</span>
         <button type="button" class="btn btn-sm btn-good" data-action="bulk-act" data-bulk="show">${icon('eye')}إظهار المحدد</button>
         <button type="button" class="btn btn-sm" data-action="bulk-act" data-bulk="hide">${icon('eyeOff')}إخفاء المحدد</button>
-        <button type="button" class="btn btn-sm btn-soft" data-action="bulk-shop">${icon('card')}إظهار في المتجر</button>
+        <button type="button" class="btn btn-sm btn-soft" data-action="bulk-shop">${icon('card')}سعر المتجر</button>
         <button type="button" class="btn btn-sm btn-soft" data-action="bulk-act" data-bulk="esim-enable">${icon('qr')}تفعيل eSIM</button>
         <button type="button" class="btn btn-sm btn-danger" data-action="bulk-delete">${icon('trash')}حذف المحدد (${selCount})</button>
-        <button type="button" class="btn btn-sm btn-ghost" data-action="clear-selection">مسح التحديد</button>` : '<span class="muted small">حدد رزماً من القائمة لإخفائها أو إظهارها أو حذفها دفعة واحدة</span>'}
+        <button type="button" class="btn btn-sm btn-ghost" data-action="clear-selection">مسح التحديد</button>` : '<span class="muted small">حدد رزماً من القائمة لإخفائها أو إظهارها أو تسعيرها دفعة واحدة</span>'}
     </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap">
-      <button type="button" class="btn btn-sm btn-danger" data-action="reset-resync">${icon('refresh')}إلغاء جميع الرزم الحالية وإعادة المزامنة</button>
+      <button type="button" class="btn btn-sm btn-danger" data-action="reset-resync">${icon('refresh')}حذف كل الرزم وإعادة المزامنة</button>
     </div>
   </section>`;
 }
-// The order inside a company: what the supplier dropped last, extensions before new lines, then the chosen order.
 const SORTS = { size: 'الحجم', price: 'السعر', days: 'المدة', name: 'الاسم' };
 function sortPackages(list) {
   const key = {
@@ -567,12 +381,13 @@ function sortPackages(list) {
     days: (a, b) => (a.days || 30) - (b.days || 30) || a.cost - b.cost,
     name: (a, b) => a.name.localeCompare(b.name, 'ar'),
   }[V.sort] || (() => 0);
-  return [...list].sort((a, b) => (a.gone - b.gone) || (a.kind === b.kind ? 0 : a.kind === 'card' ? -1 : 1) || key(a, b));
+  // Packages the supplier no longer lists go last.
+  return [...list].sort((a, b) => (a.gone - b.gone) || key(a, b));
 }
+const matches = (p, term) => !term || `${p.name} ${p.companyName} ${p.artCode}`.toLowerCase().includes(term);
 
 export default {
-  admin: true,
-  title: () => ({ title: 'الشركات والرزم', subtitle: 'الفواتير وكروت الشحن: الأسعار والأحجام وما يظهر للوكلاء' }),
+  title: () => ({ title: 'الشركات والرزم', subtitle: 'رزم eSIM من المورّدين: الأسعار وما يظهر في المتجر' }),
   async load() { [S.settings, , V.similar] = await Promise.all([api.get('/api/settings'), loadCatalog(true), api.get('/api/catalog/similar')]); },
   mount(root, ctx) {
     root.querySelector('#pkg-sort')?.addEventListener('change', (e) => { V.sort = e.target.value; ctx.rerender(); });
@@ -593,57 +408,47 @@ export default {
   },
   render() {
     const { companies, packages } = S.catalog;
-    const count = (v) => packages.filter((p) => inView(p, v)).length;
-    const tabs = `<div class="segmented">${Object.entries(VIEWS).map(([k, v]) => {
-      const d = v.label ? v : TABS[v.systems[0]];
-      return `<button data-action="tab" data-tab="${k}" aria-pressed="${viewKey() === k && V.tab !== 'companies'}">${icon(d.icon)}${d.label} (${count(v)})</button>`;
-    }).join('')}
+    const tabs = `<div class="segmented">${Object.entries(SUPPLIERS).map(([k, s]) => `<button data-action="tab" data-tab="${k}" aria-pressed="${tabKey() === k && V.tab !== 'companies'}">${icon(TAB_ICON)}${s.name} (${packages.filter((p) => inTab(p, k)).length})</button>`).join('')}
       <button data-action="tab" data-tab="companies" aria-pressed="${V.tab === 'companies'}">${icon('building')}الشركات (${companies.length})</button></div>`;
     if (V.tab === 'companies') {
-      return `${tabs}<div class="page-head"><p>الشعار واللون وسعر رمز QR (eSIM) وبادئات الشرائح وطريقة التفعيل لكل شركة.</p><button class="btn btn-primary" data-action="add-company">${icon('plus')}شركة جديدة</button></div>
+      return `${tabs}<div class="page-head"><p>الشعار واللون وسعر رمز QR (eSIM) وطريقة التفعيل لكل شركة.</p><button class="btn btn-primary" data-action="add-company">${icon('plus')}شركة جديدة</button></div>
         ${companies.length ? `<div class="grid-cards">${companies.map((c) => `<article class="item"><div class="item-top">${companyLogo(c, 'sm')}
-          <div class="grow"><b class="item-title">${esc(c.name)}</b><div class="item-sub"><span>${c.packageCount} رزمة${c.packageCount ? ` (${sourceCounts(c.id)})` : ''}</span><span>سعر QR: <b>${c.esimFee !== null && c.esimFee !== undefined ? fmtMoney(c.esimFee) : `${fmtMoney(S.settings?.esimFee || 0)} (عام)`}</b></span><span class="mono ltr">${esc((c.prefixes || []).join(', ') || 'بدون بادئة')}</span></div></div>
-            <span class="pill ${c.activation === 'direct' ? 's-expiring' : c.activation === 'auto' ? 's-active' : 'plain'}">${{ direct: 'تفعيل مباشر', auto: 'تلقائي' }[c.activation] || 'طلب للمدير'}</span></div>
-          <div class="item-actions"><button class="btn btn-sm btn-soft" data-action="company-packages" data-id="${c.id}">${icon('box')}الرزم والعروض</button>
-            <button class="btn btn-sm" data-action="edit-company" data-id="${c.id}">${icon('edit')}تعديل وتحديد سعر QR</button>
+          <div class="grow"><b class="item-title">${esc(c.name)}</b><div class="item-sub"><span>${c.packageCount} رزمة${c.packageCount && sourceCounts(c.id) ? ` (${sourceCounts(c.id)})` : ''}</span><span>سعر QR: <b>${c.esimFee !== null && c.esimFee !== undefined ? fmtMoney(c.esimFee) : `${fmtMoney(S.settings?.esimFee || 0)} (عام)`}</b></span></div></div>
+            <span class="pill ${c.activation === 'auto' ? 's-active' : 'plain'}">${c.activation === 'auto' ? 'تلقائي' : 'يدوي'}</span></div>
+          <div class="item-actions"><button class="btn btn-sm btn-soft" data-action="company-packages" data-id="${c.id}">${icon('box')}الرزم</button>
+            <button class="btn btn-sm" data-action="edit-company" data-id="${c.id}">${icon('edit')}تعديل</button>
             <button class="btn btn-sm btn-ghost" data-action="delete-company" data-id="${c.id}">${icon('trash')}حذف</button></div></article>`).join('')}</div>`
           : empty('building', 'لا توجد شركات', 'أضف أول شركة اتصالات.')}`;
     }
-    const vk = viewKey();
-    const v = VIEWS[vk];
-    const t = v.label ? v : TABS[v.systems[0]];
-    const canAdd = true;
+    const key = tabKey();
+    const sup = SUPPLIERS[key];
     const term = V.q.trim().toLowerCase();
-    const mine = packages.filter((p) => inView(p, v) && (!term || `${p.name} ${p.companyName} ${p.artCode}`.toLowerCase().includes(term)));
+    const all = packages.filter((p) => inTab(p, key));
+    const mine = all.filter((p) => matches(p, term));
     const shown = mine.filter((p) => p.active).length;
-    // Within a company: extensions first, then new lines.
-    // Packages the supplier no longer lists go last.
-    return `${tabs}${similarBanner()}${isSupplierView(vk) ? supplierBar(vk) : systemBar(v.systems[0])}<div class="page-head"><p><b>${t.label}:</b> ${t.note} ظاهرة للوكلاء ${shown} من ${mine.length}.</p>
-        ${canAdd ? `<button class="btn btn-primary" data-action="add-package">${icon('plus')}رزمة جديدة</button>` : ''}</div>
+    return `${tabs}${similarBanner()}${supplierBar(key)}<div class="page-head"><p><b>${sup.name}:</b> ${sup.note} ظاهرة ${shown} من ${mine.length}.</p></div>
       ${bulkToolbar(mine)}
       <div class="search-box">${icon('search', 'i lead')}<input class="input" id="pkg-q" type="search" placeholder="ابحث باسم الرزمة أو الشركة أو رمز المورّد…" value="${esc(V.q)}" aria-label="بحث في الرزم"></div>
       ${(() => {
         // The companies that have packages here, as chips; one chosen shows only it.
-        const cos = companies.filter((c) => packages.some((p) => p.companyId === c.id && inView(p, v)));
+        const cos = companies.filter((c) => all.some((p) => p.companyId === c.id));
         if (V.co && !cos.some((c) => c.id === V.co)) V.co = 0;
         return `<div class="cat-tools">${cos.length > 1 ? `<div class="chips">${[{ id: 0, name: 'كل الشركات' }, ...cos].map((c) => `<button class="chip" data-action="pick-company" data-id="${c.id}" aria-pressed="${V.co === c.id}">${esc(c.name)}${c.id ? ` <span class="n">${mine.filter((p) => p.companyId === c.id).length}</span>` : ''}</button>`).join('')}</div>` : ''}
           <label class="cat-sort">ترتيب الرزم <select class="input" id="pkg-sort">${Object.entries(SORTS).map(([k, l]) => `<option value="${k}" ${V.sort === k ? 'selected' : ''}>${l}</option>`).join('')}</select></label></div>`;
       })()}
       ${companies.filter((c) => !V.co || c.id === V.co).map((c) => {
         const list = sortPackages(mine.filter((p) => p.companyId === c.id));
-        if (!list.length && (term || !packages.some((p) => p.companyId === c.id && inView(p, v)))) return '';
+        if (!list.length) return '';
         const visible = list.filter((p) => p.active).length;
-        const cheapest = list.filter((p) => p.active && p.cost > 0).reduce((m, p) => Math.min(m, p.cost), Infinity);
+        const cheapest = list.filter((p) => p.active && p.shopPrice > 0).reduce((m, p) => Math.min(m, p.shopPrice), Infinity);
         // Unfolded: a company searched for or chosen, one the manager opened, or the only one.
         const open = term || V.co || V.open.has(c.id) || companies.filter((x) => mine.some((p) => p.companyId === x.id)).length === 1;
-        const groups = [['card', 'التمديد'], ['invoice', 'خط جديد']].map(([k, l]) => [l, list.filter((p) => p.kind === k)]).filter(([, l]) => l.length);
         return `<details class="co-sec card" data-company="${c.id}" ${open ? 'open' : ''}>
           <summary><span class="co-head">${companyLogo(c, 'xs')}<b>${esc(c.name)}</b></span>
-            <span class="co-meta">${visible} ظاهرة من ${list.length}${Number.isFinite(cheapest) ? ` · من ${money(cheapest)}` : ''}</span>
-            ${canAdd ? `<button class="btn btn-sm btn-soft" data-action="add-package" data-company="${c.id}">${icon('plus')}رزمة</button>` : ''}</summary>
-          ${groups.map(([label, l]) => `${groups.length > 1 || isSupplierView(vk) ? `<h3 class="co-kind">${label} <span class="muted">${l.length}</span></h3>` : ''}<div class="list">${l.map(packageRowAdmin).join('')}</div>`).join('')}
+            <span class="co-meta">${visible} ظاهرة من ${list.length}${Number.isFinite(cheapest) ? ` · من ${money(cheapest)}` : ''}</span></summary>
+          <div class="list">${list.map(packageRowAdmin).join('')}</div>
         </details>`;
-      }).join('') || empty(t.icon, term ? 'لا نتائج' : `لا توجد رزم في ${t.label}`, term ? '' : canAdd ? `أضفها يدوياً، أو اضغط «مزامنة ${t.label}» أعلى الصفحة.` : `اضغط «مزامنة ${t.label}» أعلى الصفحة.`)}`;
+      }).join('') || empty(TAB_ICON, term ? 'لا نتائج' : `لا توجد رزم من ${sup.name}`, term ? '' : `اضغط «مزامنة ${sup.name}» أعلى الصفحة.`)}`;
   },
   actions: {
     tab(btn, e, ctx) { V.tab = btn.dataset.tab; V.co = 0; ctx.rerender(); },
@@ -659,17 +464,14 @@ export default {
         async onSubmit() { await api.del(`/api/companies/${c.id}`); await loadCatalog(true); changed(); return 'تم حذف الشركة'; },
       });
     },
-    'add-package': (btn) => openPackageForm(null, Number(btn.dataset.company) || undefined, TABS[VIEWS[viewKey()].systems[0]].kind),
     'check-package'(btn, e, ctx) {
       const id = Number(btn.dataset.id);
       if (btn.checked) V.selected.add(id); else V.selected.delete(id);
       ctx.rerender();
     },
     'select-all-view'(btn, e, ctx) {
-      const vk = viewKey();
-      const v = VIEWS[vk];
       const term = V.q.trim().toLowerCase();
-      const mine = S.catalog.packages.filter((p) => inView(p, v) && (!V.co || p.companyId === V.co) && (!term || `${p.name} ${p.companyName} ${p.artCode}`.toLowerCase().includes(term)));
+      const mine = S.catalog.packages.filter((p) => inTab(p, tabKey()) && (!V.co || p.companyId === V.co) && matches(p, term));
       const allSel = mine.length > 0 && mine.every((p) => V.selected.has(p.id));
       for (const p of mine) {
         if (allSel) V.selected.delete(p.id);
@@ -686,8 +488,7 @@ export default {
       if (!ids.length) return;
       btn.disabled = true;
       try {
-        const action = btn.dataset.bulk;
-        const r = await api.post('/api/packages/bulk', { ids, action });
+        const r = await api.post('/api/packages/bulk', { ids, action: btn.dataset.bulk });
         toast(`تم تحديث ${r.affected} رزمة`);
         await loadCatalog(true);
         ctx.rerender();
@@ -698,7 +499,7 @@ export default {
       if (!ids.length) return;
       sheet({
         title: `إظهار ${ids.length} رزمة في متجر الزبائن`,
-        subtitle: 'يمكنك تحديد سعر موحّد للمتجر أو تركه ليُحسب تلقائياً (+15% فوق سعر الوكيل)',
+        subtitle: 'حدّد سعراً موحّداً للزبون، أو اتركه فارغاً ليُحسب تلقائياً',
         body: `<div class="field"><label for="bs-price">سعر الزبون في المتجر (₪) <span class="opt">(اختياري)</span></label>
           <input class="input ltr" id="bs-price" name="shopPrice" type="number" min="0" step="0.5" placeholder="اتركه فارغاً للحساب التلقائي"></div>`,
         submit: 'تطبيق وإظهار في المتجر',
@@ -716,7 +517,7 @@ export default {
       if (!ids.length) return;
       sheet({
         title: `حذف ${ids.length} رزمة محددة`,
-        body: `<p>هل أنت متأكد من حذف <b>${ids.length}</b> رزمة نهائياً؟ يمكنك إعادة المزامنة لاحقاً لجلب الرزم الجديدة.</p>`,
+        body: `<p>هل أنت متأكد من حذف <b>${ids.length}</b> رزمة نهائياً؟ يمكنك إعادة المزامنة لاحقاً لجلب الرزم من جديد.</p>`,
         submit: `حذف ${ids.length} رزمة`,
         danger: true,
         async onSubmit() {
@@ -731,9 +532,9 @@ export default {
     'reset-resync'(btn, e, ctx) {
       const totalAll = S.catalog.packages.length;
       sheet({
-        title: 'إلغاء جميع الرزم الحالية وإعادة المزامنة',
-        subtitle: 'حذف كافة الباقات الحالية وإعادة جلب أحدث الباقات والأسعار من المورّدين',
-        body: `<div class="msg warn">${icon('alert')}<span>سيتم حذف جميع الرزم الحالية (${totalAll} رزمة) وإعادة المزامنة تلقائياً مع المورّدين المفعّلين لظهور الرزم الجديدة وتحديث الأسعار حسب نسبة ربحك.</span></div>
+        title: 'حذف كل الرزم وإعادة المزامنة',
+        subtitle: 'حذف كافة الرزم الحالية وإعادة جلب أحدث الرزم والأسعار من المورّدين',
+        body: `<div class="msg warn">${icon('alert')}<span>سيتم حذف جميع الرزم الحالية (${totalAll} رزمة) وإعادة المزامنة مع المورّدين المفعّلين. أسعار الزبائن في المتجر تحتاج إعادة تحديد بعدها.</span></div>
           <label class="switch-row"><span class="grow"><b>إعادة المزامنة تلقائياً بعد الحذف</b><small>يجلب أحدث الرزم والأسعار فوراً من المورّدين المتصلين</small></span><input class="switch" type="checkbox" name="doSync" checked></label>`,
         submit: 'حذف الكل وإعادة المزامنة الآن',
         danger: true,
@@ -743,14 +544,12 @@ export default {
           V.selected.clear();
           const syncedParts = [];
           if (doSync) {
-            for (const [, sup] of Object.entries(SUPPLIERS)) {
+            for (const sup of Object.values(SUPPLIERS)) {
               if (!sup.configured()) continue;
-              for (const kind of ['invoice', 'card']) {
-                try {
-                  const r = await api.post(`/api/${sup.api}/sync`, { kind });
-                  if (r.added) syncedParts.push(`${sup.name} (${kind === 'card' ? 'تمديد/كروت' : 'خطوط'}): +${r.added}`);
-                } catch { /* ignore unconfigured kind */ }
-              }
+              try {
+                const r = await api.post(`/api/${sup.api}/sync`, { kind: 'invoice' });
+                if (r.added) syncedParts.push(`${sup.name}: +${r.added}`);
+              } catch { /* not connected */ }
             }
           }
           await refreshAll(ctx);
@@ -758,43 +557,17 @@ export default {
         },
       });
     },
-    // Both QuickLine systems, one after the other, reported together.
-    // Both systems of a supplier (QuickLine or Layan), one after the other, reported together.
-    async 'sync-ql'(btn, e, ctx) {
-      const vk = btn.dataset.view || 'ql';
-      const keys = VIEWS[vk].systems;
-      const sup = SUPPLIERS[TABS[keys[0]].supplier];
-      btn.disabled = true;
-      btn.innerHTML = `${icon('clock')}جاري القراءة من ${sup.name}…`;
-      try {
-        const parts = [];
-        let pending = 0;
-        let off = 0;
-        for (const k of keys) {
-          const r = await api.post(`/api/${sup.api}/sync`, { kind: TABS[k].kind });
-          parts.push(`${TABS[k].short}: ${r.total}، أُضيف ${r.added} بسعر التكلفة + ${r.markup}%`);
-          pending += r.pending;
-          off += r.switchedOff;
-        }
-        V.msg[vk] = { text: `من ${sup.name} — ${parts.join(' · ')}${off ? `، أُخفيت ${off} لم تعد موجودة` : ''}. أسعارك الحالية لم تتغيّر${pending ? `، و${pending} تغيّر سعرها بانتظار موافقتك` : ''}.` };
-      } catch (err) {
-        V.msg[vk] = { text: err.message, error: true };
-      }
-      await refreshAll(ctx);
-    },
-    'set-markup': (btn, e, ctx) => openMarkup(btn.dataset.tab, ctx),
     pending: (btn, e, ctx) => openPending(btn.dataset.tab, ctx),
     async sync(btn, e, ctx) {
       const key = btn.dataset.tab;
-      const t = tabOf(key);
-      const sup = SUPPLIERS[t.supplier];
+      const sup = SUPPLIERS[key];
       btn.disabled = true;
       btn.innerHTML = `${icon('clock')}جاري القراءة من ${sup.name}…`;
       try {
-        const r = await api.post(`/api/${sup.api}/sync`, { kind: t.kind });
-        V.msg[viewOf(key)] = { text: `${r.total} من ${sup.name}: أُضيف ${r.added} جديدة بسعر التكلفة + ${r.markup}%${r.switchedOff ? `، أُخفيت ${r.switchedOff} لم تعد موجودة` : ''}. أسعارك الحالية لم تتغيّر${r.pending ? `، و${r.pending} تغيّر سعرها بانتظار موافقتك` : ''}.${r.hidden ? ` ${r.hidden} حزمة لم تظهر لأن رصيد ${sup.name} أقل من سعرها.` : ''}` };
+        const r = await api.post(`/api/${sup.api}/sync`, { kind: 'invoice' });
+        V.msg[key] = { text: `${r.total} من ${sup.name}: أُضيف ${r.added} جديدة${r.switchedOff ? `، أُخفيت ${r.switchedOff} لم تعد موجودة` : ''}. أسعارك الحالية لم تتغيّر${r.pending ? `، و${r.pending} تغيّر سعرها بانتظار موافقتك` : ''}.${r.hidden ? ` ${r.hidden} رزمة لم تظهر لأن رصيد ${sup.name} أقل من سعرها.` : ''}` };
       } catch (err) {
-        V.msg[viewOf(key)] = { text: err.message, error: true };
+        V.msg[key] = { text: err.message, error: true };
       }
       await refreshAll(ctx);
     },
@@ -809,7 +582,7 @@ export default {
     'delete-package'(btn) {
       const p = S.catalog.packages.find((x) => x.id === Number(btn.dataset.id));
       sheet({
-        title: `حذف ${p.name}`, body: `<p>تُحذف الرزمة. الأرقام المفعّلة عليها تبقى باسمها. لإخفائها مؤقتاً استعمل «تعديل» وأوقفها.</p>`, submit: 'حذف الرزمة', danger: true,
+        title: `حذف ${p.name}`, body: `<p>تُحذف الرزمة. سجل المشترين عليها يبقى كما هو. لإخفائها مؤقتاً استعمل «إخفاء».</p>`, submit: 'حذف الرزمة', danger: true,
         async onSubmit() { await api.del(`/api/packages/${p.id}`); await loadCatalog(true); changed(); return 'تم حذف الرزمة'; },
       });
     },

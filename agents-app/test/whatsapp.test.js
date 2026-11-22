@@ -1,8 +1,7 @@
 'use strict';
-// The WhatsApp agent, with WhatsApp itself replaced by a recorder and Aylol by a fake site (as in aylol.test.js):
-// an agent sells over WhatsApp exactly as in the portal (nothing charged before «نعم», the supplier carries it out,
-// the result and the eSIM's real QR come back in the chat), a refusal is reported with its refund, the manager sees
-// open requests, and anyone else only gets the shop's packages and its link to pay — nothing is bought for them.
+// The shop's WhatsApp assistant, with WhatsApp itself replaced by a recorder and Aylol by a fake site (as in
+// aylol.test.js): customers buy an eSIM in the chat (nothing bought before the payment is verified, the real QR comes
+// back in the chat), the manager sees what needs them, and the assistant's words never claim what the code did not do.
 const http = require('node:http');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -127,20 +126,15 @@ test.before(async () => {
 });
 test.after(() => { app.close(); server.close(); gemini.close(); fs.rmSync(dataDir, { recursive: true, force: true }); });
 
-// The manager prices Aylol's packages: a synced package has no agents' price until then (here, cost + the system's %).
-const priceAylol = () => {
-  const { q, getSettings } = require('../src/db');
-  const s = getSettings();
-  q("UPDATE packages SET price = ROUND(cost * (1 + ? / 100.0), 2) WHERE art_card_id LIKE 'ay:%' AND kind = 'card' AND price = 0").run(s.aylolMarkupCard);
-  q("UPDATE packages SET price = ROUND(cost * (1 + ? / 100.0), 2) WHERE art_card_id LIKE 'ay:%' AND kind != 'card' AND price = 0").run(s.aylolMarkupInvoice);
-};
 
-test('WhatsApp: agents sell as in the portal; customers buy in the chat, their transfer is checked and the real QR comes back', async () => {
+test('WhatsApp: customers buy an eSIM in the chat, their transfer is checked and the real QR comes back', async () => {
   const wa = require('../src/whatsapp');
   const { q } = require('../src/db');
   const sent = [];
   wa._test.setTransport(async (jid, content) => { sent.push({ jid, ...content }); });
   const AG = '970599111222@s.whatsapp.net';
+  // One ready eSIM number at Aylol: held for the first order, the package is then not on sale.
+  STOCKS.splice(0, 1);
   const say = async (jid, phone, text) => { const from = sent.length; await wa.handle({ jid, phone, text }); return sent.slice(from); };
   const textOf = (msgs) => msgs.map((m) => m.text || m.caption || '').join('\n');
 
@@ -148,11 +142,11 @@ test('WhatsApp: agents sell as in the portal; customers buy in the chat, their t
   await ok(call(admin, 'PUT', '/api/settings', { aylolUser: 'dealer@example.com', aylolPass: 'right-pass' }));
   // The instant sync (what saving the account starts on the server).
   await require('../src/autosync').syncNow('ay');
-  priceAylol();
-  const cat = await ok(call(admin, 'GET', '/api/catalog'));
-  const esimPkg = cat.packages.find((p) => p.esimEnabled && p.cost === 40);
-  const cardPkg = cat.packages.find((p) => p.kind === 'card' && p.cost === 47.5);
-  assert.ok(esimPkg && cardPkg, 'synced at once');
+  const esimPkg = q("SELECT * FROM packages WHERE art_card_id LIKE 'ay:esim:%' AND cost = 40").get();
+  assert.ok(esimPkg, 'synced at once');
+  // A package that is not an eSIM (a line on a SIM card): never sold by the shop, even with a customer price.
+  const hotId = q("SELECT id FROM companies WHERE name = 'هوت موبايل'").get().id;
+  const cardPkg = q('SELECT * FROM packages WHERE id = ?').get(Number(q("INSERT INTO packages (company_id, name, cost, price) VALUES (?, 'هوت خط عادي', 30, 40)").run(hotId).lastInsertRowid));
 
   // The portal only links WhatsApp: its settings (who it answers, the assistant, the daily limit) are changed on the
   // server by the owner, never from the portal, whoever is signed in. Nothing secret comes back.
@@ -174,60 +168,9 @@ test('WhatsApp: agents sell as in the portal; customers buy in the chat, their t
   const saved = wa.saveConfig({ admins: '0599000111', shopUrl: 'https://shop.example.com/shop', aiDailyUsd: 0 });
   assert.deepEqual([saved.admins, saved.shopUrl, saved.aiDailyUsd], ['0599000111', 'https://shop.example.com/shop', 0.5], 'the limit stays half a dollar');
   process.env.WA_AI_DAILY_USD = '0';
-  const agentTok = await ok(call(admin, 'POST', '/api/agents', { name: 'وكيل واتساب', username: 'wa-agent', password: 'secret1', phone: '0599111222', balance: 500 }));
-  assert.ok(agentTok);
-  const login = (await ok(call(null, 'POST', '/api/login', { username: 'wa-agent', password: 'secret1' }))).token;
-  assert.equal((await call(login, 'GET', '/api/whatsapp')).status, 403, 'manager only');
 
-  // The agent, known by the phone on their account: their packages at their prices, never the supplier's name.
-  const list = textOf(await say(AG, '0599111222', 'الباقات'));
-  assert.match(list, new RegExp(`#${esimPkg.id}`));
-  assert.match(list, new RegExp(`#${cardPkg.id}`));
-  assert.equal(/أيلول|aylol/i.test(list), false);
-  assert.match(textOf(await say(AG, '0599111222', 'رصيدي')), /500 ₪/);
-
-  // eSIM: the free numbers, then the customer's name, then «نعم». Nothing is bought or charged before it.
-  const nums = textOf(await say(AG, '0599111222', `esim ${esimPkg.id}`));
-  assert.match(nums, /1\) 0531112222/);
-  assert.match(textOf(await say(AG, '0599111222', '١')), /اسم الزبون/);
-  assert.match(textOf(await say(AG, '0599111222', 'زبون واتساب')), /نعم/);
-  assert.equal(site.purchases.length, 0);
-  assert.equal((await ok(call(login, 'GET', '/api/me'))).user.balance, 500, 'not charged before «نعم»');
-  assert.match(textOf(await say(AG, '0599111222', 'نعم')), /يُنفَّذ الآن/);
-  const done = await until(() => sent.find((m) => m.image && m.jid === AG));
-  assert.equal(site.purchases.length, 1);
-  assert.deepEqual(site.purchases[0], { category_id: 10, purchase_type: 'loaded_esim', package_id: '501' });
-  assert.match(done.caption, /0531112222/);
-  assert.equal(decodeQrDataUrl(`data:image/png;base64,${done.image.toString('base64')}`), lpaOf(STOCKS[0]), 'the real code, scannable');
-  await until(() => sent.find((m) => m.text && m.text.includes(lpaOf(STOCKS[0]))));
-  assert.ok((await ok(call(login, 'GET', '/api/me'))).user.balance < 500, 'paid from the balance');
-
-  // A top-up card, confirmed: carried out at the supplier with that number, and the agent is told.
-  assert.match(textOf(await say(AG, '0599111222', `شحن 0529998877 ${cardPkg.id}`)), /نعم/);
-  assert.equal(site.subscribes.length, 0);
-  await say(AG, '0599111222', 'نعم');
-  await until(() => sent.find((m) => m.text && m.text.startsWith('✅ تم الشحن') && m.text.includes('0529998877')));
-  assert.equal(site.subscribes.at(-1).phone, '0529998877');
-
-  // Refused by the supplier: it waits for the manager; the manager's rejection reaches the chat with the refund.
-  const before = (await ok(call(login, 'GET', '/api/me'))).user.balance;
-  await say(AG, '0599111222', `شحن 0520000000 ${cardPkg.id}`);
-  await say(AG, '0599111222', 'نعم');
-  const task = await until(async () => (await ok(call(admin, 'GET', '/api/tasks'))).find((t) => t.status === 'open' && /0520000000/.test(t.note) && t.autoStatus === 'failed'));
-  await ok(call(admin, 'POST', `/api/tasks/${task.id}/resolve`, { status: 'rejected', response: 'رقم غير صالح' }));
-  await until(() => sent.find((m) => m.text && m.text.startsWith('❌') && m.text.includes('0520000000')));
-  assert.equal((await ok(call(login, 'GET', '/api/me'))).user.balance, before, 'refunded');
-
-  // «لا» cancels; a sale cannot be confirmed later out of nowhere.
-  await say(AG, '0599111222', `شحن 0529998877 ${cardPkg.id}`);
-  assert.match(textOf(await say(AG, '0599111222', 'لا')), /الإلغاء/);
-  const subs = site.subscribes.length;
-  await say(AG, '0599111222', 'نعم');
-  await new Promise((r) => setTimeout(r, 200));
-  assert.equal(site.subscribes.length, subs);
-
-  // The manager: open requests; selling stays in the portal.
-  assert.match(textOf(await say('970599000111@s.whatsapp.net', '0599000111', 'الطلبات')), /لا طلبات مفتوحة|طلبات مفتوحة/);
+  // The manager: what needs them (nothing yet).
+  assert.match(textOf(await say('970599000111@s.whatsapp.net', '0599000111', 'الطلبات')), /لا طلبات تحتاجك/);
 
   // A customer buys in the chat, talking with the assistant (there are no menus): the package and the name → the
   // shop's summary → yes → a real shop order (an Aylol eSIM on one of its ready numbers) → pays by Jawwal Pay and sends
@@ -264,7 +207,7 @@ test('WhatsApp: agents sell as in the portal; customers buy in the chat, their t
   assert.equal(reserved.includes(esimPkg.name), false, 'the package is not said again');
   const order = await ok(call(null, 'GET', `/api/shop/orders/${code}`));
   assert.equal(order.status, 'awaiting_payment');
-  assert.equal(site.purchases.length, 1, 'nothing bought before the payment');
+  assert.equal(site.purchases.length, 0, 'nothing bought before the payment');
   // Its one free number is held for this order: meanwhile the package is not on sale (only what has a number free is).
   assert.equal(require('../src/routes/shop').shopCatalogResponse().packages.some((p) => p.id === esimPkg.id), false);
   // One reservation per chat at a time.
@@ -290,13 +233,13 @@ test('WhatsApp: agents sell as in the portal; customers buy in the chat, their t
      VALUES (1, 7001, '<wa@jp>', 1, 'noreply@jawwalpay.ps', 'Jawwal Pay', ?, ?, '2922940777001', '', 'محمد احمد علي', 'incoming', ?)`).run(Date.now(), order.amount, Date.now());
   // Only this received transfer of the order's amount pays it.
   assert.match(await cs(`${code} 2922940777001`, [{ call: 'submit_payment', args: { order_code: code, payer: '2922940777001' } }, { text: 'تمام 👍' }]), /تأكدنا من الدفع/);
-  await until(() => site.purchases.length === 2);
+  await until(() => site.purchases.length === 1);
   await until(async () => (await ok(call(null, 'GET', `/api/shop/orders/${code}`))).stage === 'done');
   await wa._test.watchShop();
   const qrMsg = await until(() => sent.find((m) => m.image && m.jid === C));
   assert.match(qrMsg.caption, new RegExp(code));
-  assert.equal(decodeQrDataUrl(`data:image/png;base64,${qrMsg.image.toString('base64')}`), lpaOf(STOCKS[1]));
-  assert.ok(sent.find((m) => m.jid === C && m.text && m.text.includes(lpaOf(STOCKS[1]))));
+  assert.equal(decodeQrDataUrl(`data:image/png;base64,${qrMsg.image.toString('base64')}`), lpaOf(STOCKS[0]));
+  assert.ok(sent.find((m) => m.jid === C && m.text && m.text.includes(lpaOf(STOCKS[0]))));
   const after = sent.length;
   await wa._test.watchShop();
   assert.equal(sent.length, after, 'sent once');
@@ -305,7 +248,7 @@ test('WhatsApp: agents sell as in the portal; customers buy in the chat, their t
   // token, its own project), which asks the shop — the code — for what it needs: packages and prices, a new order, an
   // order's state, a payment check. The code alone decides them, and writes an order's details under the reply.
   process.env.WA_AI_DAILY_USD = '0.6';
-  // The shop sells eSIMs only: a recharge package with a customer price is still not on sale. The site gets more
+  // The shop sells eSIMs only: a SIM-card package with a customer price is still not on sale. The site gets more
   // eSIM numbers, and the shop sees them at its next look.
   q('UPDATE packages SET shop_price = 50 WHERE id = ?').run(cardPkg.id);
   STOCKS.push({ id: 902, phone: '0533334444', sim_number: '8997210000000000902' }, { id: 903, phone: '0534445555', sim_number: '8997210000000000903' });
@@ -330,7 +273,7 @@ test('WhatsApp: agents sell as in the portal; customers buy in the chat, their t
   assert.equal(r.calls.length, 1, 'one question: nothing to ask the shop for the packages');
   assert.match(r.calls[0].url, /^\/v1\/projects\/agents-portal-test\/locations\/global\/publishers\/google\/models\/gemini-3\.1-flash-lite:generateContent$/);
   assert.equal(r.calls[0].auth, 'Bearer server-token');
-  assert.deepEqual(r.calls[0].body.tools[0].functionDeclarations.map((f) => f.name).sort(), ['cancel_order', 'create_order', 'order_status', 'renew_number', 'submit_payment']);
+  assert.deepEqual(r.calls[0].body.tools[0].functionDeclarations.map((f) => f.name).sort(), ['cancel_order', 'create_order', 'order_status', 'submit_payment']);
   const sheet = r.calls[0].body.systemInstruction.parts[0].text;
   assert.equal(sheet.includes(`#${cardPkg.id} `), false, 'no recharge');
   assert.match(sheet, /eSIM بس/);
@@ -342,7 +285,7 @@ test('WhatsApp: agents sell as in the portal; customers buy in the chat, their t
 
   // The customer picks one: what is missing is asked first; then the shop makes the order, and its number, amount and
   // how to pay are written under the reply by the code.
-  // A recharge is not sold: there is no such package to order.
+  // Only eSIMs are sold: a package that is not one cannot be ordered.
   r = await ask('بدي شحن لرقمي', [{ call: 'create_order', args: { package_id: cardPkg.id } }, { text: 'عنا eSIM بس، بتحب أعرضلك؟' }]);
   assert.equal(toolAnswer(r.calls[1]).response.ok, false);
   r = await ask('بدي eSIM هوت', [{ call: 'create_order', args: { package_id: esimPkg.id } }, { text: 'تكرم، شو اسمك؟' }]);
@@ -451,7 +394,7 @@ test('WhatsApp: agents sell as in the portal; customers buy in the chat, their t
   assert.match(await cSay(C2, '0541112233', 'بدي eSIM هوت، اسمي رامي سالم', [{ call: 'create_order', args: { package_id: esimPkg.id, customer_name: 'رامي سالم' } }, { text: 'تكرم 👍' }]), /تأكيد الطلب/);
   const top = await cSay(C2, '0541112233', 'نعم', [{ call: 'create_order', args: { confirmed: true } }, { text: 'حجزتلك 👍' }]);
   site.agentScript = null;
-  process.env.WA_AI_DAILY_USD = '0'; // the rest: agents, as without the assistant
+  process.env.WA_AI_DAILY_USD = '0'; // the rest: without the assistant
   const topCode = /رقم \*([A-Z0-9]{8})\*/.exec(top)?.[1];
   assert.ok(topCode, top);
   const png = Buffer.from(require('../src/qr').dataUrl('receipt').split(',')[1], 'base64');
@@ -475,8 +418,8 @@ test('WhatsApp: agents sell as in the portal; customers buy in the chat, their t
   const old = Math.floor(Date.now() / 1000) - 3600;
   await wa._test.onRaw({ key: { remoteJid: AG, fromMe: false }, message: { conversation: 'الباقات' }, messageTimestamp: { low: old, high: 0, toNumber: () => old } });
   assert.equal(sent.length, n);
-  await wa._test.onRaw({ key: { remoteJid: '1555@lid', remoteJidAlt: '970599111222@s.whatsapp.net', fromMe: false }, message: { conversation: 'رصيدي' }, messageTimestamp: Math.floor(Date.now() / 1000) });
+  await wa._test.onRaw({ key: { remoteJid: '1555@lid', remoteJidAlt: '970599000111@s.whatsapp.net', fromMe: false }, message: { conversation: 'الطلبات' }, messageTimestamp: Math.floor(Date.now() / 1000) });
   assert.equal(sent.at(-1).jid, '1555@lid');
-  assert.match(sent.at(-1).text, /رصيدك/);
+  assert.match(sent.at(-1).text, new RegExp(`طلبات المتجر[\\s\\S]*${topCode}`), 'the manager, known by the phone behind the LID chat');
   assert.deepEqual([wa._test.jidOf('0599111222'), wa._test.jidOf('0521234567')], ['970599111222@s.whatsapp.net', '972521234567@s.whatsapp.net']);
 });

@@ -3,13 +3,13 @@
 // manager pressing a button: every six hours or once a day (see OFTEN_MS), when its account is saved, and sooner (after half an hour) while a sync hid packages within the last day,
 // which may be listed again. The manager is told when prices changed and wait for approval, and when a sync fails (once, until it
 // works again). Each sync is the same one as the buttons in «الشركات والرزم».
-const { q, getSettings, setSetting, qlCredentials, aylolCredentials, artCredentials, lyCredentials, tcCredentials } = require('./db');
+const { q, getSettings, setSetting, qlCredentials, aylolCredentials, lyCredentials, tcCredentials } = require('./db');
 const { now } = require('./util');
 const D = require('./domain');
 
 const DAY_MS = 24 * 60 * 60_000;
 // QuickLine and Layan sign in by themselves, so their catalogs are refreshed four times a day, and Aylol's every two
-// hours. telecom's sign-in waits for a code by e-mail and art-topup's catalog is large: once a day.
+// hours. telecom's sign-in waits for a code by e-mail: once a day.
 // (Free numbers and the price are read from the supplier at every order, whatever the catalog's age.)
 const OFTEN_MS = 6 * 60 * 60_000;
 const SOON_MS = 30 * 60_000;
@@ -17,31 +17,26 @@ const CHECK_MS = Number(process.env.AUTOSYNC_CHECK_MS) || 60 * 60_000;
 
 const SUPPLIERS = [
   {
-    key: 'ay', name: 'أيلول', every: 2 * 60 * 60_000, configured: (s) => s.aylolConfigured, synced: (s) => [s.aylolSyncedCard, s.aylolSyncedInvoice],
-    refs: "art_card_id LIKE 'ay:%'", sync: (kind) => require('./routes/aylol').syncKind(aylolCredentials(), kind),
+    key: 'ay', name: 'أيلول', every: 2 * 60 * 60_000, configured: (s) => s.aylolConfigured, synced: (s) => [s.aylolSyncedInvoice],
+    refs: "(art_card_id LIKE 'ay:bill:%' OR art_card_id LIKE 'ay:esim:%')", sync: (kind) => require('./routes/aylol').syncKind(aylolCredentials(), kind),
   },
   {
-    key: 'ql', name: 'QuickLine', every: OFTEN_MS, configured: (s) => s.qlConfigured, synced: (s) => [s.qlSyncedCard, s.qlSyncedInvoice],
-    refs: "art_card_id LIKE 'ql%'", sync: (kind) => require('./routes/quickline').syncKind(qlCredentials(), kind),
+    key: 'ql', name: 'QuickLine', every: OFTEN_MS, configured: (s) => s.qlConfigured, synced: (s) => [s.qlSyncedInvoice],
+    refs: "art_card_id LIKE 'qln:%'", sync: (kind) => require('./routes/quickline').syncKind(qlCredentials(), kind),
   },
   {
-    key: 'ly', name: 'ليان', every: OFTEN_MS, configured: (s) => s.lyConfigured, synced: (s) => [s.lySyncedCard, s.lySyncedInvoice],
-    refs: "art_card_id LIKE 'ly%'", sync: (kind) => require('./routes/layan').syncKind(lyCredentials(), kind),
+    key: 'ly', name: 'ليان', every: OFTEN_MS, configured: (s) => s.lyConfigured, synced: (s) => [s.lySyncedInvoice],
+    refs: "art_card_id LIKE 'lyn:%'", sync: (kind) => require('./routes/layan').syncKind(lyCredentials(), kind),
   },
   {
-    key: 'tc', name: 'telecom', configured: (s) => s.tcReady, synced: (s) => [s.tcSyncedCard, s.tcSyncedInvoice],
-    refs: "art_card_id LIKE 'tc%'", sync: (kind) => require('./routes/telecom').syncKind(tcCredentials(), kind),
-  },
-  {
-    key: 'art', name: 'art-topup', configured: (s) => s.artConfigured, synced: (s) => [s.artSyncedCard, s.artSyncedInvoice],
-    refs: "(art_card_id LIKE 'ic:%' OR art_card_id LIKE 'pb:%' OR art_card_id LIKE 'pc:%' OR art_card_id LIKE 'inv:%')",
-    sync: (kind) => require('./routes/art').syncKind(artCredentials(), kind),
+    key: 'tc', name: 'telecom', configured: (s) => s.tcReady, synced: (s) => [s.tcSyncedInvoice],
+    refs: "art_card_id LIKE 'tcn:%'", sync: (kind) => require('./routes/telecom').syncKind(tcCredentials(), kind),
   },
 ];
 
 const tell = (title, body) => D.notify({ role: 'admin', kind: 'task', title, body, link: '#/catalog' });
 
-// Due when either system has never synced or is older than the supplier's period; or half an hour old while some packages are hidden by a sync.
+// Due when its new lines have never synced or is older than the supplier's period; or half an hour old while some packages are hidden by a sync.
 function due(sup, s) {
   const times = sup.synced(s);
   if (times.some((t) => !t)) return true;
@@ -52,7 +47,7 @@ function due(sup, s) {
   return gone > 0 && now() - oldest >= SOON_MS;
 }
 
-// One supplier's two systems, with what the manager is told. Never two syncs of one supplier at once.
+// One supplier's new lines, with what the manager is told. Never two syncs of one supplier at once.
 const running = new Set();
 async function syncOne(sup) {
   if (running.has(sup.key)) return;
@@ -60,7 +55,7 @@ async function syncOne(sup) {
   try {
     let pending = 0;
     let restored = 0;
-    for (const kind of ['card', 'invoice']) {
+    for (const kind of ['invoice']) {
       const r = await sup.sync(kind);
       pending += r.pending || 0;
       restored += r.restored || 0;
@@ -73,7 +68,7 @@ async function syncOne(sup) {
       tell(`${sup.name}: ${pending} رزمة تغيّر سعرها`, 'بانتظار موافقتك في «الشركات والرزم». لن تتغيّر أسعارك قبلها.');
     }
     setSetting(lastKey, pending);
-    if (restored) tell(`${sup.name}: عادت ${restored} رزمة للوكلاء`, 'كانت مخفية لأن المورّد لم يعرضها، وعرضها الآن.');
+    if (restored) tell(`${sup.name}: عادت ${restored} رزمة`, 'كانت مخفية لأن المورّد لم يعرضها، وعرضها الآن.');
   } catch (e) {
     const errKey = `autosync_error_${sup.key}`;
     if (!q('SELECT value FROM settings WHERE key = ?').get(errKey)?.value) tell(`تعذّرت المزامنة التلقائية مع ${sup.name}`, String(e.message).slice(0, 200));

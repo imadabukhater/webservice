@@ -92,67 +92,27 @@ test.before(async () => {
 });
 test.after(() => { server.close(); api.close(); });
 
-test('Layan: signs in with its own authenticator code, syncs, and sells new lines and extensions automatically', async () => {
+test('Layan: signs in with its own authenticator code and syncs its new lines (no extensions)', async () => {
   const admin = await login('admin', 'admin-pass');
   // ----- the secret as the authenticator app exports it, stored as a key and never sent back -----
   assert.equal((await call(admin, 'PUT', '/api/settings', { lySecret: 'not a key!' })).status, 400);
-  const s = await ok(call(admin, 'PUT', '/api/settings', { lyUser: 'ahmad.2025', lyPass: 'pw-1', lySecret: `otpauth://totp/Layan:ahmad?secret=${SECRET}&issuer=Layan`, lyMarkupCard: 20, lyMarkupInvoice: 10 }));
+  const s = await ok(call(admin, 'PUT', '/api/settings', { lyUser: 'ahmad.2025', lyPass: 'pw-1', lySecret: `otpauth://totp/Layan:ahmad?secret=${SECRET}&issuer=Layan`, lyMarkupInvoice: 10 }));
   assert.deepEqual([s.lyConfigured, s.lyHasSecret], [true, true]);
   assert.ok(!JSON.stringify(s).includes(SECRET) && !JSON.stringify(s).includes('pw-1'), 'secret and password never sent back');
   const chk = await ok(call(admin, 'POST', '/api/layan/check'));
   assert.deepEqual([chk.balance, chk.numbers, chk.suspended], [-58, 3, 3]);
 
   // ----- sync: Arabic names, regular 30 days and the offer's own period, the percentage on top -----
-  const sc = await ok(call(admin, 'POST', '/api/layan/sync', { kind: 'card' }));
+  assert.equal((await call(admin, 'POST', '/api/layan/sync', { kind: 'card' })).status, 400, 'no extensions');
   const si = await ok(call(admin, 'POST', '/api/layan/sync', { kind: 'invoice' }));
-  assert.deepEqual([sc.total, si.total], [2, 3], 'an extension takes regular prices only');
+  assert.equal(si.total, 3);
   const cat = (await ok(call(admin, 'GET', '/api/catalog'))).packages.filter((p) => p.supplier === 'ly');
-  const newCel = cat.find((p) => p.kind === 'invoice' && p.days === 30 && /سلكوم 300 جيجا/.test(p.name));
-  const offer = cat.find((p) => p.kind === 'invoice' && p.days === 90);
-  const newPartner = cat.find((p) => p.kind === 'invoice' && /بارتنر 500 جيجا/.test(p.name));
-  const extPartner = cat.find((p) => p.kind === 'card' && /بارتنر/.test(p.name));
-  assert.deepEqual([newCel.cost, newCel.price, offer.cost, offer.price, extPartner.price], [39, 42.9, 99, 108.9, 46.8]);
+  assert.equal(cat.length, 3);
+  const newCel = cat.find((p) => p.days === 30 && /سلكوم 300 جيجا/.test(p.name));
+  const offer = cat.find((p) => p.days === 90);
+  assert.deepEqual([newCel.cost, newCel.price, offer.cost, offer.price], [39, 42.9, 99, 108.9]);
   assert.match(offer.name, /عرض 90 يوماً/);
-
-  // ----- a new line: one of the dealer's suspended numbers on that package, its SIM with it -----
-  await ok(call(admin, 'POST', '/api/agents', { name: 'وكيل', username: 'agent1', password: 'secret1', balance: 500 }));
-  const t = await login('agent1', 'secret1');
-  const agentPkg = (await ok(call(t, 'GET', '/api/catalog'))).packages.find((p) => p.id === newPartner.id);
-  assert.deepEqual([agentPkg.pool, agentPkg.ownSim, 'supplier' in agentPkg], [true, true, false]);
-  const nums = await ok(call(t, 'GET', `/api/numbers/free?packageId=${newPartner.id}`));
-  assert.deepEqual(nums.map((n) => n.phone), ['0542791534', '0542791535'], 'only the suspended numbers of that package');
-  assert.equal((await call(t, 'POST', '/api/lines', { kind: 'new', packageId: newPartner.id, number: '0501234567' })).status, 400, 'not from the list');
-  assert.equal((await call(t, 'POST', '/api/lines', { kind: 'new', packageId: newPartner.id, number: '0542791534', esim: true })).status, 400, 'no eSIM switch');
-  const r = await ok(call(t, 'POST', '/api/lines', { kind: 'new', packageId: newPartner.id, number: '0542791534' }));
-  assert.equal(r.line.status, 'pending');
-  const line = await until(async () => { const l = (await ok(call(t, 'GET', `/api/lines/${r.line.id}`))).line; return l.status === 'active' && l; });
-  assert.equal(line.sim, '89972010915031422471', 'the SIM came with the number');
-  assert.deepEqual(fake.activated, [{ Number: '0542791534', Duration: 30, SaleId: null, UserPaid: false, endDate: null }]);
-  const task = (await ok(call(admin, 'GET', '/api/tasks'))).find((x) => x.lineId === r.line.id);
-  assert.deepEqual([task.status, task.source], ['done', 'ليان']);
-  assert.match(task.autoNote, /ليان: تم التفعيل حتى 16\/11\/2026/);
-
-  // ----- an extension of that line, on its own package -----
-  const ext = await ok(call(t, 'POST', `/api/lines/${r.line.id}/renew`, { packageId: extPartner.id }));
-  assert.equal(ext.pending, true);
-  await until(async () => (await ok(call(admin, 'GET', '/api/tasks'))).some((x) => x.lineId === r.line.id && x.type === 'renew' && x.status === 'done'));
-  assert.deepEqual(fake.extended, [{ Number: '0542791534', Duration: 30, SaleId: null, UserPaid: false }]);
-  assert.equal((await call(t, 'POST', `/api/lines/${r.line.id}/renew`, { packageId: newCel.id })).status, 400, 'a new-line package does not extend');
-
-  // ----- Layan's price went up: nothing is sent, the manager is told -----
-  fake.quotePlus = 5;
-  await ok(call(t, 'GET', `/api/numbers/free?packageId=${newPartner.id}`));
-  const r2 = await ok(call(t, 'POST', '/api/lines', { kind: 'new', packageId: newPartner.id, number: '0542791535' }));
-  const failed = await until(async () => (await ok(call(admin, 'GET', '/api/tasks'))).find((x) => x.lineId === r2.line.id && x.autoStatus === 'failed'));
-  assert.match(failed.autoNote, /سعر ليان الآن 44 ₪ وهو أعلى من المعتمد 39 ₪/);
-  assert.equal(fake.activated.length, 1, 'not sent');
-  fake.quotePlus = 0;
-
-  // ----- the agent never learns it is Layan -----
-  for (const url of ['/api/catalog', '/api/lines', `/api/lines/${r.line.id}`, '/api/tasks', '/api/notifications', '/api/ops']) {
-    const body = JSON.stringify((await ok(call(t, 'GET', url))));
-    assert.ok(!/ليان|Layan|"supplier"\s*:|"source"\s*:/.test(body), `${url} names the supplier`);
-  }
+  assert.equal(require('../src/db').q("SELECT COUNT(*) AS n FROM packages WHERE art_card_id LIKE 'ly:%'").get().n, 0);
 });
 
 test('Layan: a wrong authenticator secret is reported clearly', async () => {

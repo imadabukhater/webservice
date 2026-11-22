@@ -1,5 +1,5 @@
 // App shell cache: pages and code load instantly and work offline; API calls always go to the network.
-const CACHE = 'agents-shell-v33';
+const CACHE = 'esim-admin-shell-v34';
 const SHELL = [
   '/portal',
   '/css/app.css',
@@ -11,23 +11,14 @@ const SHELL = [
   '/js/core.js',
   '/js/exporter.js',
   '/js/main.js',
-  '/js/scan.js',
-  '/js/simfield.js',
-  '/js/views/agents.js',
+  '/js/views/buyers.js',
   '/js/views/catalog.js',
   '/js/views/home.js',
-  '/js/views/invoices.js',
   '/js/views/login.js',
-  '/js/views/offers.js',
-  '/js/views/payments.js',
-  '/js/views/renew.js',
   '/js/views/reports.js',
   '/js/views/settings.js',
   '/js/views/shop.js',
-  '/js/views/messages.js',
-  '/js/views/subscribers.js',
   '/js/views/tasks.js',
-  '/js/views/wizard.js',
   '/manifest.webmanifest',
 ];
 

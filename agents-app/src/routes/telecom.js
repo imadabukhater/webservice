@@ -1,8 +1,6 @@
 'use strict';
-// telecom.co.il for its two systems, the same shape as Layan: extending a subscriber the dealer already has ('card',
-// carried out automatically) and a new line ('invoice', a request the manager carries out there for now). Signing in
-// e-mails a code to the account's Gmail; the server reads it from that mailbox over IMAP (src/mailcode.js).
-// Each system has its own sync, profit percentage and list of price changes awaiting the manager.
+// telecom.co.il's new lines ('invoice'), sold in the shop as eSIMs on its free numbers: their sync, profit percentage and
+// price changes awaiting the manager.
 const { q, tx, getSettings, setSetting, tcCredentials } = require('../db');
 const { fail, round, now } = require('../util');
 const mailcode = require('../mailcode');
@@ -10,12 +8,13 @@ const tc = require('../telecom');
 const { route, ADMIN } = require('../router');
 const { companyFor } = require('./quickline');
 
-const KINDS = ['card', 'invoice'];
+// Only new lines (sold as eSIMs in the shop): extensions and top-up cards are not sold.
+const KINDS = ['invoice'];
 const GONE_DAYS = 7;
-const kindOf = (v) => (KINDS.includes(v) ? v : fail(400, 'اختر النظام: تمديد الخطوط أو خطوط جديدة'));
-const markupFor = (kind) => (kind === 'card' ? getSettings().tcMarkupCard : getSettings().tcMarkupInvoice);
+const kindOf = (v) => (v === undefined || v === '' || KINDS.includes(v) ? 'invoice' : fail(400, 'المتجر يبيع شرائح eSIM فقط: لا رزم تمديد أو كروت'));
+const markupFor = () => getSettings().tcMarkupInvoice;
 const withMarkup = (cost, kind) => round(cost * (1 + markupFor(kind) / 100));
-const REF = { card: "art_card_id LIKE 'tc:%'", invoice: "art_card_id LIKE 'tcn:%'" };
+const REF = { invoice: "art_card_id LIKE 'tcn:%'" };
 const PENDING = 'art_price IS NOT NULL AND ROUND(art_price, 2) != ROUND(cost, 2) AND (art_ack IS NULL OR ROUND(art_ack, 2) != ROUND(art_price, 2))';
 const pendingCount = (kind) => q(`SELECT COUNT(*) AS n FROM packages WHERE ${REF[kind]} AND ${PENDING}`).get().n;
 
@@ -63,7 +62,7 @@ async function syncKind(creds, kind) {
     let restored = 0;
     const companyIds = new Set();
     const refs = [];
-    const known = new Set(q(`SELECT DISTINCT company_id FROM packages WHERE ${REF.card} OR ${REF.invoice}`).all().map((r) => r.company_id));
+    const known = new Set(q(`SELECT DISTINCT company_id FROM packages WHERE ${REF.invoice}`).all().map((r) => r.company_id));
     // Two of the site's packages may read the same in Arabic: the second keeps its own name too.
     const names = new Set();
     for (const p of items) {
@@ -95,7 +94,7 @@ async function syncKind(creds, kind) {
     for (const g of gone) {
       if (g.active) { q('UPDATE packages SET active = 0, gone_at = ? WHERE id = ?').run(now(), g.id); off++; continue; }
       if (!g.gone_at || now() - g.gone_at < GONE_DAYS * 864e5) continue;
-      const used = q(`SELECT 1 FROM lines WHERE package_id = ?1 UNION ALL SELECT 1 FROM offers WHERE package_id = ?1
+      const used = q(`SELECT 1 FROM lines WHERE package_id = ?1 UNION ALL SELECT 1 FROM shop_orders WHERE package_id = ?1 AND status IN ('awaiting_payment','verifying','review','paid')
                       UNION ALL SELECT 1 FROM tasks WHERE status = 'open' AND json_valid(payload) AND json_extract(payload, '$.packageId') = ?1 LIMIT 1`).get(g.id);
       if (!used) { q('DELETE FROM packages WHERE id = ?').run(g.id); removed++; }
     }
@@ -119,7 +118,7 @@ route('POST', '/api/telecom/approve', ADMIN, ({ body }) => tx(() => {
   if (!ids.length) fail(400, 'اختر الرزم');
   let done = 0;
   for (const id of ids) {
-    const p = q(`SELECT * FROM packages WHERE id = ? AND (${REF.card} OR ${REF.invoice}) AND ${PENDING}`).get(id);
+    const p = q(`SELECT * FROM packages WHERE id = ? AND (${REF.invoice}) AND ${PENDING}`).get(id);
     if (!p) continue;
     if (mode === 'ignore') q('UPDATE packages SET art_ack = art_price WHERE id = ?').run(id);
     else if (mode === 'cost') q('UPDATE packages SET cost = art_price, art_ack = NULL WHERE id = ?').run(id);

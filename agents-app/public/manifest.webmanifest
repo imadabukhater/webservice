@@ -1,7 +1,7 @@
 {
-  "name": "بوابة الوكلاء · Hot eSIM",
-  "short_name": "الوكلاء",
-  "description": "تفعيل الخطوط، الأرصدة، العروض والتقارير للوكلاء",
+  "name": "لوحة متجر eSIM · Hot eSIM",
+  "short_name": "متجر eSIM",
+  "description": "طلبات الزبائن، الدفع، تفعيل eSIM والتقارير",
   "lang": "ar",
   "dir": "rtl",
   "start_url": "/portal#/home",
@@ -17,8 +17,8 @@
     { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml" }
   ],
   "shortcuts": [
-    { "name": "اشتراك فاتورة جديدة", "url": "/portal#/new", "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }] },
-    { "name": "زبون قائم", "url": "/portal#/renew", "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }] },
-    { "name": "المشتركون", "url": "/portal#/subscribers", "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }] }
+    { "name": "متجر الزبائن", "url": "/portal#/shop", "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }] },
+    { "name": "التفعيلات", "url": "/portal#/tasks", "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }] },
+    { "name": "المشترون", "url": "/portal#/buyers", "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }] }
   ]
 }

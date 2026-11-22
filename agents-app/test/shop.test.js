@@ -143,15 +143,10 @@ test('customer shop: eSIMs only, JawwalPay proof, automatic match from Gmail, fu
   assert.equal((await ok(call(null, 'GET', '/api/shop'))).enabled, false);
   assert.equal((await call(null, 'POST', '/api/shop/orders', { kind: 'esim', packageId: 1, customerName: 'زبون' })).status, 403);
 
-  // Packages on a SIM card (here a direct company's) are the agents' only: never in the shop.
-  const cat = await ok(call(admin, 'GET', '/api/catalog'));
-  const cellcom = cat.companies.find((c) => c.name === 'سلكوم');
-  await ok(call(admin, 'PUT', `/api/companies/${cellcom.id}`, { activation: 'direct' }));
-  const p500 = cat.packages.find((p) => p.name === '500 جيجا');
-  const pPartner = cat.packages.find((p) => p.companyId === cat.companies.find((c) => c.name === 'بارتنر').id);
-  await ok(call(admin, 'PUT', `/api/packages/${p500.id}`, { cost: 60, price: 80, shopPrice: 95 }));
-  await ok(call(admin, 'PUT', `/api/packages/${pPartner.id}`, { cost: 20, price: 30, shopPrice: 40 }));
-  assert.equal((await ok(call(admin, 'GET', '/api/catalog'))).packages.find((p) => p.id === p500.id).shopPrice, 95);
+  // A package on a SIM card with a customer price is never in the shop: it sells eSIMs only.
+  const { q } = require('../src/db');
+  const cellcomId = q("SELECT id FROM companies WHERE name = 'سلكوم'").get().id;
+  const p500 = { id: Number(q("INSERT INTO packages (company_id, name, cost, price, shop_price) VALUES (?, '500 جيجا', 60, 80, 95)").run(cellcomId).lastInsertRowid) };
 
   await ok(call(admin, 'PUT', '/api/settings', {
     shopEnabled: true, jawwalpayNumber: '0599000000', jawwalpayName: 'متجر الاتصالات', gmailUser: 'shop@gmail.com', gmailPass: 'abcd efgh ijkl mnop', mailFrom: 'jawwal',
@@ -192,12 +187,12 @@ test('customer shop: eSIMs only, JawwalPay proof, automatic match from Gmail, fu
   await done(o1.code);
   assert.ok(imapLog.some((c) => /^UID FETCH \d+ BODY\.PEEK\[\]$/.test(c)), 'emails stay unread');
 
+  // Kept as a record of the sale: its line, with what the customer paid. No agent account, no balance.
   const summary = await ok(call(admin, 'GET', '/api/shop/admin/summary'));
-  const shopAgent = (await ok(call(admin, 'GET', '/api/agents'))).find((a) => a.id === summary.agentId);
-  assert.equal(shopAgent.name, 'متجر الزبائن');
-  const lines = await ok(call(admin, 'GET', `/api/lines?agentId=${shopAgent.id}`));
-  assert.equal(lines[0].number, o1.number);
-  assert.equal(lines[0].customerPrice, 95);
+  assert.deepEqual(Object.keys(summary), ['open']);
+  const sold = q('SELECT * FROM lines WHERE number = ?').get(o1.number);
+  assert.equal(sold.customer_price, 95);
+  assert.equal(q("SELECT COUNT(*) AS n FROM users WHERE role = 'agent'").get().n, 0, 'no shop agent account');
 
   // ----- 2: a forged email (no Gmail authentication) is never trusted -----
   addMail('استلمت حوالة بمبلغ 95 ₪ من الرقم 0597777777', { from: 'JawwalPay <notify@jawwal.ps>', auth: '' });
@@ -238,17 +233,16 @@ test('customer shop: eSIMs only, JawwalPay proof, automatic match from Gmail, fu
 
   // ----- 4: paid, but the number was taken meanwhile: the manager frees it and carries the order out -----
   const o5 = await order('زبون خامس');
-  await ok(call(admin, 'POST', '/api/agents', { name: 'وكيل', username: 'ag1', password: 'secret1', balance: 500 }));
-  const agTok = (await ok(call(null, 'POST', '/api/login', { username: 'ag1', password: 'secret1' }))).token;
-  const taken = await ok(call(agTok, 'POST', '/api/lines', { kind: 'external', number: o5.number, packageId: p500.id }));
+  const t = Date.now();
+  const takenId = Number(q(`INSERT INTO lines (number, package_id, package_label, agent_id, price, cost, status, activated_at, updated_at)
+    VALUES (?, ?, 'سابق', 1, 0, 0, 'active', ?, ?)`).run(o5.number, p500.id, t, t).lastInsertRowid);
   addMail('استلمت حوالة 95 شيكل Reference: RR-5');
   v = await ok(call(null, 'POST', `/api/shop/orders/${o5.code}/proof`, { payReference: 'RR-5' }));
   assert.equal(v.status, 'paid');
   assert.equal(v.stage, 'paid_issue');
   const a5 = (await ok(call(admin, 'GET', '/api/shop/admin/orders?filter=open'))).find((o) => o.code === o5.code);
   assert.match(a5.error, /مفعّل مسبقاً/);
-  const { q } = require('../src/db');
-  q("UPDATE lines SET status = 'disconnected' WHERE id = ?").run(taken.line.id);
+  q("UPDATE lines SET status = 'disconnected' WHERE id = ?").run(takenId);
   v = await ok(call(admin, 'POST', `/api/shop/admin/orders/${a5.id}/retry`, {}));
   assert.ok(v.lineId);
   await done(o5.code);
@@ -277,56 +271,11 @@ test('customer shop: eSIMs only, JawwalPay proof, automatic match from Gmail, fu
   const rootPage = await call(null, 'GET', '/');
   assert.match(rootPage.body, /js\/shop\.js/);
 
-  // Portal '/portal' and '/admin' serve the agents & manager portal (index.html).
+  // Portal '/portal' and '/admin' serve the manager's portal (index.html).
   const portalPage = await call(null, 'GET', '/portal');
   assert.match(portalPage.body, /js\/main\.js/);
   const adminPage = await call(null, 'GET', '/admin');
   assert.match(adminPage.body, /js\/main\.js/);
-});
-
-test('connected sites: catalog, orders and balance with an API key; invoices', async () => {
-  const admin = (await ok(call(null, 'POST', '/api/login', { username: 'admin', password: 'admin-pass' }))).token;
-  const site = await ok(call(admin, 'POST', '/api/agents', { name: 'موقع شريك', username: 'site1', password: 'secret1', balance: 200 }));
-  const k = await ok(call(admin, 'POST', '/api/sync-keys', { agentId: site.id, name: 'example.com' }));
-  assert.match(k.key, /^ak_/);
-  const keys = await ok(call(admin, 'GET', '/api/sync-keys'));
-  assert.equal(keys[0].prefix, k.key.slice(0, 7));
-  assert.equal(keys[0].key, undefined);
-
-  const H = { 'X-Api-Key': k.key };
-  assert.equal((await call(null, 'GET', '/api/v1/catalog')).status, 401);
-  assert.equal((await call(null, 'GET', '/api/v1/catalog', undefined, { 'X-Api-Key': 'ak_wrong' })).status, 401);
-  const cat = await ok(call(null, 'GET', '/api/v1/catalog', undefined, H));
-  const p500 = cat.packages.find((p) => p.name === '500 جيجا');
-  assert.equal(p500.price, 80);
-  assert.equal(p500.suggestedPrice, 95);
-  assert.equal(p500.cost, undefined);
-
-  const r = await ok(call(null, 'POST', '/api/v1/orders', { packageId: p500.id, number: '0561234567', customerName: 'عبر الموقع', reference: 'W-1' }, H));
-  assert.equal(r.order.status, 'active');
-  assert.equal(r.balance, 120);
-  assert.equal((await ok(call(null, 'GET', `/api/v1/orders/${r.order.id}`, undefined, H))).order.number, '0561234567');
-  assert.equal((await ok(call(null, 'GET', '/api/v1/balance', undefined, H))).available, 120);
-  assert.equal((await call(null, 'POST', '/api/v1/orders', { packageId: p500.id, number: '0561234567' }, H)).status, 200, 'recharging its own number extends it');
-  assert.equal((await call(null, 'POST', '/api/v1/orders', { packageId: p500.id, number: '0570000000' }, H)).status, 400, 'no balance left');
-
-  await ok(call(admin, 'DELETE', `/api/sync-keys/${k.id}`));
-  assert.equal((await call(null, 'GET', '/api/v1/catalog', undefined, H)).status, 401);
-
-  // ----- invoices -----
-  const inv = await ok(call(admin, 'POST', '/api/invoices', { agentId: site.id, amount: 150, description: 'اشتراك الشهر' }));
-  assert.equal(inv.invoiceNumber, 'INV-1001');
-  assert.equal((await ok(call(admin, 'POST', '/api/invoices', { agentId: site.id, amount: 20 }))).invoiceNumber, 'INV-1002');
-  const siteTok = (await ok(call(null, 'POST', '/api/login', { username: 'site1', password: 'secret1' }))).token;
-  assert.equal((await ok(call(siteTok, 'GET', '/api/invoices'))).length, 2);
-  assert.equal((await call(siteTok, 'POST', `/api/invoices/${inv.id}/pay`)).status, 403);
-  assert.equal((await call(null, 'GET', '/api/invoices')).status, 401);
-  await ok(call(admin, 'PUT', `/api/invoices/${inv.id}`, { amount: 160 }));
-  await ok(call(admin, 'POST', `/api/invoices/${inv.id}/pay`));
-  assert.equal((await call(admin, 'DELETE', `/api/invoices/${inv.id}`)).status, 400, 'paid invoices stay');
-  const paid = (await ok(call(admin, 'GET', '/api/invoices'))).find((i) => i.id === inv.id);
-  assert.equal(paid.status, 'paid');
-  assert.equal(paid.amount, 160);
 });
 
 test('the company eSIM fee, no unpaid activation, an eSIM with no supplier number never sold, and bulk package operations', async () => {
@@ -372,14 +321,13 @@ test('the company eSIM fee, no unpaid activation, an eSIM with no supplier numbe
   await ok(call(admin, 'PUT', `/api/companies/${esim.companyId}`, { esimFee: '' }));
 
   // Bulk hide, show, esim-enable, and delete
+  const { q } = require('../src/db');
   await ok(call(admin, 'POST', '/api/packages/bulk', { action: 'hide', ids: [p1.id, p2.id] }));
-  let cat = await ok(call(admin, 'GET', '/api/catalog'));
-  assert.equal(cat.packages.find((p) => p.id === p1.id).active, false);
+  assert.equal(q('SELECT active FROM packages WHERE id = ?').get(p1.id).active, 0);
 
   await ok(call(admin, 'POST', '/api/packages/bulk', { action: 'show', ids: [p1.id, p2.id] }));
   await ok(call(admin, 'POST', '/api/packages/bulk', { action: 'esim-enable', ids: [p2.id] }));
-  cat = await ok(call(admin, 'GET', '/api/catalog'));
-  assert.equal(cat.packages.find((p) => p.id === p2.id).esimEnabled, true);
+  assert.equal(q('SELECT esim_enabled FROM packages WHERE id = ?').get(p2.id).esim_enabled, 1);
 
   const delRes = await ok(call(admin, 'POST', '/api/packages/bulk', { action: 'delete', ids: [p1.id, p2.id] }));
   assert.equal(delRes.affected, 2);

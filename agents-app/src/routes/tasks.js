@@ -1,101 +1,50 @@
 'use strict';
+// eSIM activations the manager carries out (or a supplier, see autoexec.js): one task per eSIM sold in the shop
+// (sale.js). Done: the line is active with its QR code. Rejected: the line is removed and the shop order says why.
 const { q, tx } = require('../db');
-const { sourceOf, forAgent } = require('../privacy');
-const { fail, now, round, str, num, isBlank, periodEnd, imageOrEmpty } = require('../util');
-const D = require('../domain');
-const { route, ADMIN, ANY } = require('../router');
+const { sourceOf } = require('../privacy');
+const { fail, now, round, str, periodEnd, imageOrEmpty } = require('../util');
+const { route, ADMIN } = require('../router');
 
-const { applyRenewal } = require('./lines');
+const TYPE_LABEL = { esim: 'تفعيل eSIM' };
 
-const TYPE_LABEL = {
-  topup: 'طلب شحن رصيد', port: 'تحويل رقم', esim: 'تفعيل eSIM', general: 'طلب عام', activate: 'تفعيل خط', recharge: 'زبون دفع مسبق', renew: 'تمديد رزمة',
-};
-// Requests that hold a pending line until the manager carries them out.
-const LINE_TASKS = ['port', 'esim', 'activate', 'recharge'];
-const DONE_OP = { port: 'port_done', esim: 'esim_done', activate: 'activate_done', recharge: 'activate_done' };
+const taskView = (t) => ({
+  id: t.id, type: t.type, status: t.status,
+  lineId: t.line_id, lineNumber: t.line_number || '', linePackage: t.line_package || '',
+  amount: t.amount === null ? null : round(t.amount), note: t.note, response: t.response,
+  hasAttachment: !!t.has_attachment, createdAt: t.created_at, resolvedAt: t.resolved_at, resolvedBy: t.resolved_by,
+  autoStatus: t.auto_status || '', autoNote: t.auto_note || '', source: t.package_ref === null ? '' : sourceOf(t.package_ref),
+});
 
-// The manager sees how a supplier is carrying a request out (autoStatus, autoNote); an agent only a simple state:
-// running (being carried out automatically), review (waiting for the manager) or '' — never the technical notes.
-const autoStateFor = (s) => (['sending', 'sent'].includes(s) ? 'running' : ['failed', 'unknown'].includes(s) ? 'review' : '');
-// The activation source (the supplier) is the manager's only: agents get the request without it (see privacy.js).
-const taskView = (t, role = 'admin') => {
-  const admin = role === 'admin';
-  const text = admin ? (s) => s : forAgent;
-  return {
-    id: t.id, type: t.type, status: t.status, agentId: t.agent_id, agentName: t.agent_name || '',
-    lineId: t.line_id, lineNumber: t.line_number || '', linePackage: t.line_package || '',
-    amount: t.amount === null ? null : round(t.amount), note: text(t.note), response: text(t.response),
-    hasAttachment: !!t.has_attachment, createdAt: t.created_at, resolvedAt: t.resolved_at, resolvedBy: text(t.resolved_by),
-    ...(admin
-      ? { autoStatus: t.auto_status || '', autoNote: t.auto_note || '', source: t.package_ref === null ? '' : sourceOf(t.package_ref) }
-      : { autoState: autoStateFor(t.auto_status) }),
-  };
-};
+const TASK_SELECT = `SELECT t.id, t.type, t.status, t.line_id, t.amount, t.note, t.response, (t.attachment != '') AS has_attachment,
+  t.created_at, t.resolved_at, t.resolved_by, t.auto_status, t.auto_note, l.number AS line_number, l.package_label AS line_package,
+  (SELECT art_card_id FROM packages WHERE id = l.package_id) AS package_ref
+  FROM tasks t LEFT JOIN lines l ON l.id = t.line_id`;
 
-const TASK_SELECT = `SELECT t.id, t.type, t.status, t.agent_id, t.line_id, t.amount, t.note, t.response, (t.attachment != '') AS has_attachment,
-  t.created_at, t.resolved_at, t.resolved_by, t.auto_status, t.auto_note, u.name AS agent_name, l.number AS line_number, l.package_label AS line_package,
-  (SELECT art_card_id FROM packages WHERE id = COALESCE(CASE WHEN json_valid(t.payload) THEN json_extract(t.payload, '$.packageId') END, l.package_id)) AS package_ref
-  FROM tasks t LEFT JOIN users u ON u.id = t.agent_id LEFT JOIN lines l ON l.id = t.line_id`;
-
-function getTask(id, user) {
-  const t = q('SELECT * FROM tasks WHERE id = ?').get(Number(id));
-  if (!t || (user.role === 'agent' && t.agent_id !== user.id)) fail(404, 'الطلب غير موجود');
+function getTask(id) {
+  const t = q("SELECT * FROM tasks WHERE id = ? AND type = 'esim'").get(Number(id));
+  if (!t) fail(404, 'الطلب غير موجود');
   return t;
 }
 
-route('GET', '/api/tasks', ANY, ({ user, query }) => {
-  const args = [];
-  let where = '1=1';
-  if (user.role === 'agent') { where += ' AND t.agent_id = ?'; args.push(user.id); }
-  else if (query.agentId) { where += ' AND t.agent_id = ?'; args.push(Number(query.agentId)); }
+route('GET', '/api/tasks', ADMIN, ({ query }) => {
+  let where = "t.type = 'esim'";
   if (query.status === 'open') where += " AND t.status = 'open'";
   else if (query.status === 'closed') where += " AND t.status != 'open'";
-  if (query.type) { where += ' AND t.type = ?'; args.push(String(query.type)); }
-  return q(`${TASK_SELECT} WHERE ${where} ORDER BY t.status = 'open' DESC, t.created_at DESC, t.id DESC LIMIT 500`).all(...args).map((t) => taskView(t, user.role));
+  else if (['done', 'rejected'].includes(query.status)) where += ` AND t.status = '${query.status}'`;
+  return q(`${TASK_SELECT} WHERE ${where} ORDER BY t.status = 'open' DESC, t.created_at DESC, t.id DESC LIMIT 500`).all().map(taskView);
 });
 
-route('GET', '/api/tasks/:id', ANY, ({ user, params }) => {
-  const t = getTask(params.id, user);
+route('GET', '/api/tasks/:id', ADMIN, ({ params }) => {
+  const t = getTask(params.id);
   const row = q(`${TASK_SELECT} WHERE t.id = ?`).get(t.id);
-  return { ...taskView(row, user.role), attachment: t.attachment };
+  return { ...taskView(row), attachment: t.attachment };
 });
 
-// Agents ask the manager for a top-up (with an optional receipt photo) or anything else.
-route('POST', '/api/tasks', ANY, ({ user, body }) => {
-  if (user.role !== 'agent') fail(400, 'الطلبات يرسلها الوكلاء');
-  const type = String(body.type);
-  if (!['topup', 'general'].includes(type)) fail(400, 'نوع الطلب غير معروف');
-  let amount = null;
-  if (type === 'topup') {
-    amount = num(body.amount, 'المبلغ');
-    if (!(amount > 0)) fail(400, 'أدخل مبلغاً أكبر من صفر');
-  }
-  const note = str(body.note, 500);
-  if (type === 'general' && !note) fail(400, 'اكتب تفاصيل الطلب');
-  const attachment = imageOrEmpty(body.attachment, { maxKb: 1500, label: 'المرفق' });
-  const id = Number(q('INSERT INTO tasks (type, agent_id, amount, note, attachment, created_at) VALUES (?, ?, ?, ?, ?, ?)')
-    .run(type, user.id, amount, note, attachment, now()).lastInsertRowid);
-  D.notify({
-    role: 'admin', kind: 'task', link: '#/tasks',
-    title: type === 'topup' ? `طلب شحن ${amount} ₪ من ${user.name}` : `طلب جديد من ${user.name}`,
-    body: note.slice(0, 120),
-  });
-  return { id };
-}, { maxBody: 2200 * 1024 });
-
-route('POST', '/api/tasks/:id/cancel', ANY, ({ user, params }) => {
-  const t = getTask(params.id, user);
-  if (t.status !== 'open') fail(400, 'تمت معالجة هذا الطلب من قبل');
-  if (!['topup', 'general'].includes(t.type)) fail(400, 'طلبات التفعيل يلغيها المدير');
-  q("UPDATE tasks SET status = 'rejected', response = 'أُلغي الطلب', resolved_at = ?, resolved_by = ? WHERE id = ?").run(now(), user.name, t.id);
-  return { ok: true };
-});
-
-// The manager completes or rejects a request (the art-topup executor does the same). Rejected sales are refunded in full.
+// The manager completes or rejects an activation.
 route('POST', '/api/tasks/:id/resolve', ADMIN, ({ user, params, body }) => tx(() => {
-  const t = getTask(params.id, user);
-  // While it is being sent, carrying it out by hand would do it twice; once sent, a refund could pay back something
-  // the supplier is about to deliver.
+  const t = getTask(params.id);
+  // While it is being sent, carrying it out by hand would do it twice; once sent, the supplier may still deliver it.
   if (t.auto_status === 'sending') fail(409, 'يُرسَل الآن إلى المورّد — انتظر ثوانيَ ثم أعد المحاولة');
   if (body.status === 'rejected' && t.auto_status === 'sent') {
     fail(409, 'التنفيذ التلقائي جارٍ الآن عند المورّد — انتظر نتيجته قبل الرفض');
@@ -104,70 +53,26 @@ route('POST', '/api/tasks/:id/resolve', ADMIN, ({ user, params, body }) => tx(()
 }),
   { maxBody: 1100 * 1024 });
 
-// Runs inside the caller's transaction.
+// Runs inside the caller's transaction. user: { name } of whoever carried it out (the manager, or a supplier's actor).
 function resolveTask(t, user, body) {
   if (t.status !== 'open') fail(400, 'تمت معالجة هذا الطلب من قبل');
   const status = body.status === 'rejected' ? 'rejected' : 'done';
   const response = str(body.response, 500);
-  const agent = t.agent_id ? D.getUser(t.agent_id) : null;
   const ts = now();
-  let amount = t.amount;
-
-  if (t.type === 'topup' && status === 'done') {
-    amount = isBlank(body.amount) ? t.amount : num(body.amount, 'المبلغ');
-    if (!(amount > 0)) fail(400, 'أدخل مبلغاً أكبر من صفر');
-    D.changeBalance(agent, amount, { type: 'topup', actor: user, detail: `طلب شحن رقم ${t.id}${response ? ' · ' + response : ''}` });
-  }
-
-  if (t.type === 'renew' && t.line_id) {
-    const l = q('SELECT * FROM lines WHERE id = ?').get(t.line_id);
-    const r = JSON.parse(t.payload || '{}');
-    if (status === 'done' && l) {
-      applyRenewal(l.id, r);
-      D.logLineOp('renew_done', l, agent, user, response || `تم ${TYPE_LABEL.renew}`, { package: r.label });
-    } else if (status === 'rejected') {
-      D.changeBalance(agent, t.amount, {
-        type: 'refund', actor: user, lineId: t.line_id, number: l?.number || '', cost: -(r.cost || 0), profit: -(t.amount - (r.cost || 0)),
-        package: r.label || '', detail: `رفض التمديد${response ? ' · ' + response : ''}`,
-      });
+  const l = t.line_id ? q('SELECT * FROM lines WHERE id = ?').get(t.line_id) : null;
+  if (l && l.status === 'pending') {
+    if (status === 'done') {
+      const esimQr = imageOrEmpty(body.attachment, { maxKb: 600, label: 'رمز QR' });
+      const esimCode = str(body.esimCode, 500);
+      q("UPDATE lines SET status = 'active', activated_at = ?, expires_at = ?, esim_code = COALESCE(NULLIF(?, ''), esim_code), esim_qr = COALESCE(NULLIF(?, ''), esim_qr), updated_at = ? WHERE id = ?")
+        .run(ts, periodEnd(ts, l.months, l.days), esimCode, esimQr, ts, l.id);
+    } else {
+      q("UPDATE shop_orders SET line_id = NULL, error = 'رُفض التفعيل: ' || ?, updated_at = ? WHERE line_id = ?").run(response, ts, l.id);
+      q('DELETE FROM lines WHERE id = ?').run(l.id);
     }
   }
-
-  if (LINE_TASKS.includes(t.type) && t.line_id) {
-    const l = q('SELECT * FROM lines WHERE id = ?').get(t.line_id);
-    if (l && l.status === 'pending') {
-      const what = { port: 'تحويل الرقم', esim: 'eSIM', activate: 'تفعيل الخط', recharge: 'شحن زبون دفع مسبق' }[t.type];
-      if (status === 'done') {
-        const esimQr = t.type === 'esim' ? imageOrEmpty(body.attachment, { maxKb: 600, label: 'رمز QR' }) : '';
-        const esimCode = t.type === 'esim' ? str(body.esimCode, 500) : '';
-        q("UPDATE lines SET status = 'active', activated_at = ?, expires_at = ?, esim_code = ?, esim_qr = ?, updated_at = ? WHERE id = ?")
-          .run(ts, periodEnd(ts, l.months, l.days), esimCode, esimQr, ts, l.id);
-        D.logLineOp(DONE_OP[t.type], l, agent, user, response || `تم ${what}`, { package: l.package_label });
-      } else {
-        D.changeBalance(agent, l.price, {
-          type: 'refund', actor: user, lineId: l.id, number: l.number, cost: -l.cost, profit: -(l.price - l.cost), package: l.package_label,
-          detail: `رفض ${what}${response ? ' · ' + response : ''}`,
-        });
-        q("UPDATE sims SET status = 'available', line_id = NULL, used_at = NULL WHERE line_id = ?").run(l.id);
-        q('DELETE FROM lines WHERE id = ?').run(l.id);
-      }
-    }
-  }
-
-  q('UPDATE tasks SET status = ?, response = ?, amount = ?, resolved_at = ?, resolved_by = ? WHERE id = ?')
-    .run(status, response, amount, ts, user.name, t.id);
-  // A sale made over WhatsApp gets its result (and the eSIM's QR code) in the same chat, once this is committed.
-  setImmediate(() => require('../whatsapp').taskResolved(t.id).catch((e) => console.error('whatsapp result', e.message)));
-  if (agent) {
-    const label = TYPE_LABEL[t.type];
-    D.notify({
-      userId: agent.id, kind: 'task', link: LINE_TASKS.includes(t.type) || t.type === 'renew' ? '#/subscribers' : '#/tasks',
-      title: status === 'done'
-        ? (t.type === 'topup' ? `تم شحن رصيدك بـ ${round(amount)} ₪` : `تم تنفيذ ${label}`)
-        : `رُفض ${label}`,
-      body: response,
-    });
-  }
+  q('UPDATE tasks SET status = ?, response = ?, resolved_at = ?, resolved_by = ? WHERE id = ?')
+    .run(status, response, ts, user?.name || '', t.id);
   return { ok: true };
 }
 

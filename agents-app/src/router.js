@@ -5,8 +5,9 @@ const { sha } = require('./passwords');
 const { getUser } = require('./domain');
 
 const routes = [];
+// Only the manager signs in (the shop sells eSIMs to customers directly; there are no agents). ANY is kept as an alias.
 const ADMIN = ['admin'];
-const ANY = ['admin', 'agent'];
+const ANY = ADMIN;
 // Behind a reverse proxy (TRUST_PROXY=1) the client address is the last X-Forwarded-For entry, added by the proxy.
 const TRUST_PROXY = process.env.TRUST_PROXY === '1';
 
@@ -53,7 +54,7 @@ function sessionUser(token) {
   const s = q('SELECT * FROM sessions WHERE token_hash = ?').get(sha(token));
   if (!s || s.expires_at < now()) return null;
   const user = getUser(s.user_id);
-  return user && user.active ? user : null;
+  return user && user.active && user.role === 'admin' ? user : null;
 }
 
 // Returns { status, body } or { raw } for handlers that stream their own response.

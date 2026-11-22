@@ -1,19 +1,19 @@
 'use strict';
-// QuickLine for its two systems: extending a line a dealer already has ('card', carried out automatically) and
-// activating a new line ('invoice', a request for the manager). Each has its own sync, its own profit percentage
-// and its own list of price changes awaiting the manager — the same shape as art-topup.
+// QuickLine's new lines ('invoice', qln: refs), sold in the shop as eSIMs on its free numbers and activated there
+// automatically: their sync, profit percentage and price changes awaiting the manager.
 const { q, tx, getSettings, setSetting, qlCredentials } = require('../db');
 const { fail, round, now } = require('../util');
 const ql = require('../quickline');
-const { route, ADMIN, ANY } = require('../router');
+const { route, ADMIN } = require('../router');
 
-const KINDS = ['card', 'invoice'];
+// Only new lines (sold as eSIMs in the shop): extensions and top-up cards are not sold.
+const KINDS = ['invoice'];
 const GONE_DAYS = 7; // a package QuickLine no longer lists is removed after this long (when nothing refers to it)
-const kindOf = (v) => (KINDS.includes(v) ? v : fail(400, 'اختر النظام: تمديد الخطوط أو خطوط جديدة'));
-const markupFor = (kind) => (kind === 'card' ? getSettings().qlMarkupCard : getSettings().qlMarkupInvoice);
+const kindOf = (v) => (v === undefined || v === '' || KINDS.includes(v) ? 'invoice' : fail(400, 'المتجر يبيع شرائح eSIM فقط: لا رزم تمديد أو كروت'));
+const markupFor = () => getSettings().qlMarkupInvoice;
 const withMarkup = (cost, kind) => round(cost * (1 + markupFor(kind) / 100));
 // Packages of one system that came from QuickLine (extensions: ql: refs, new lines: qln: refs).
-const REF = { card: "art_card_id LIKE 'ql:%'", invoice: "art_card_id LIKE 'qln:%'" };
+const REF = { invoice: "art_card_id LIKE 'qln:%'" };
 
 // Our company for a QuickLine company name.
 const COMPANIES = [
@@ -61,8 +61,8 @@ async function syncKind(creds, kind) {
     const companyIds = new Set();
     const refs = [];
     // Companies that already had QuickLine packages: their automation is the manager's choice from now on.
-    const known = new Set(q(`SELECT DISTINCT company_id FROM packages WHERE ${REF.card} OR ${REF.invoice}`).all().map((r) => r.company_id));
-    // Each package's SIM rule, so a sale can be checked at once, before the agent pays.
+    const known = new Set(q(`SELECT DISTINCT company_id FROM packages WHERE ${REF.invoice}`).all().map((r) => r.company_id));
+    // Each package's SIM rule, so a sale can be checked at once.
     const rules = simRules();
     for (const c of items) rules[c.packageId] = { company: c.company, postalCode: c.postalCode, simLength: c.simLength, qlCompanyId: c.companyId };
     setSetting('ql_sim_rules', JSON.stringify(rules));
@@ -102,7 +102,7 @@ async function syncKind(creds, kind) {
         continue;
       }
       if (!g.gone_at || now() - g.gone_at < GONE_DAYS * 864e5) continue;
-      const used = q(`SELECT 1 FROM lines WHERE package_id = ?1 UNION ALL SELECT 1 FROM offers WHERE package_id = ?1
+      const used = q(`SELECT 1 FROM lines WHERE package_id = ?1 UNION ALL SELECT 1 FROM shop_orders WHERE package_id = ?1 AND status IN ('awaiting_payment','verifying','review','paid')
                       UNION ALL SELECT 1 FROM tasks WHERE status = 'open' AND json_valid(payload) AND json_extract(payload, '$.packageId') = ?1
                       LIMIT 1`).get(g.id);
       if (!used) {
@@ -136,7 +136,7 @@ route('POST', '/api/quickline/approve', ADMIN, ({ body }) => tx(() => {
   if (!ids.length) fail(400, 'اختر الرزم');
   let done = 0;
   for (const id of ids) {
-    const p = q(`SELECT * FROM packages WHERE id = ? AND (${REF.card} OR ${REF.invoice}) AND ${PENDING}`).get(id);
+    const p = q(`SELECT * FROM packages WHERE id = ? AND (${REF.invoice}) AND ${PENDING}`).get(id);
     if (!p) continue;
     if (mode === 'ignore') q('UPDATE packages SET art_ack = art_price WHERE id = ?').run(id);
     else if (mode === 'cost') q('UPDATE packages SET cost = art_price, art_ack = NULL WHERE id = ?').run(id);
@@ -164,14 +164,13 @@ route('GET', '/api/quickline/reprice', ADMIN, ({ query }) => {
   return { total: r.total, edited: r.edited || 0, pending: pendingCount(kind), markup: markupFor(kind) };
 });
 
-// ---------- what an agent needs to sell a new line ----------
+// ---------- what the shop needs to sell a new eSIM ----------
 function simRules() {
   try { return JSON.parse(q("SELECT value FROM settings WHERE key = 'ql_sim_rules'").get()?.value || '{}'); } catch { return {}; }
 }
 const simRuleFor = (qlPackageId) => simRules()[qlPackageId] || null;
 
-// Numbers shown to agents, remembered for a while so a sale can be checked to use one of them (in this process only:
-// after a restart the agent simply loads the numbers again).
+// Numbers offered, remembered for a while so a sale can be checked to use one of them (in this process only).
 const SERVED_MS = 2 * 60 * 60_000;
 const served = new Map();
 function remember(qlPackageId, esim, list) {
@@ -184,7 +183,7 @@ function servedNumber(qlPackageId, esim, numberId) {
   return v && now() - v.at < SERVED_MS ? v : null;
 }
 
-// What agents call: neutral paths and messages, so neither names who activates their lines (see privacy.js).
+// Neutral messages: the customer is never told who activates the line.
 const agentWrap = async (fn) => {
   if (!getSettings().qlConfigured) fail(503, 'الأرقام غير متاحة الآن. تواصل مع المدير.');
   try {
@@ -205,7 +204,6 @@ function newLinePackage(id) {
 }
 
 // Free numbers of a new-line package that picks its number from a list (esim=1 for eSIM numbers). exclude: ids shown.
-// Also used by the WhatsApp agent, so it offers exactly the numbers the portal does.
 function freeNumbersFor(packageId, esim = false, exclude = []) {
   const art = q('SELECT art_card_id FROM packages WHERE id = ? AND active = 1').get(Number(packageId))?.art_card_id || '';
   // A Layan new line picks one of the dealer's suspended numbers (or Layan's free eSIM numbers when esim).
@@ -221,18 +219,6 @@ function freeNumbersFor(packageId, esim = false, exclude = []) {
     return list.map((n) => ({ id: n.id, phone: n.phone }));
   });
 }
-route('GET', '/api/numbers/free', ANY, ({ query }) => freeNumbersFor(query.packageId, query.esim === '1',
-  String(query.exclude || '').split(',').map(Number).filter(Boolean).slice(0, 500)));
-
-// Companies a number can be ported from.
-route('GET', '/api/numbers/port-companies', ANY, () => agentWrap(async (creds) => (await ql.companies(creds)).map((c) => ({ id: c.id, name: c.name }))));
-
-// The dealer's lines at QuickLine, so the manager can see which numbers an extension can be sold for.
-route('GET', '/api/quickline/lines', ADMIN, () => wrap(async (creds) => {
-  const subs = await ql.subscriptions(creds);
-  return { total: subs.length, extendable: subs.filter((s) => s.canExtend).length, lines: subs.slice(0, 500) };
-}));
-
 // remember: the customer shop keeps the number a customer picked with the order (payment can take longer than this
 // list lasts), and puts it back here before selling it.
 module.exports = { syncKind, REF, simRuleFor, servedNumber, remember, companyFor, freeNumbersFor, COMPANIES };

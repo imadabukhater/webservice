@@ -4,10 +4,10 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { q, db, getSettings, setSetting } = require('../db');
-const { fail, now, str, num, int } = require('../util');
+const { fail, now, str, num } = require('../util');
 const { hashPassword, verifyPassword, sha } = require('../passwords');
 const { publicUser } = require('../domain');
-const { route, ADMIN, ANY } = require('../router');
+const { route, ADMIN } = require('../router');
 
 const SESSION_DAYS = 30;
 
@@ -41,34 +41,26 @@ route('POST', '/api/login', null, ({ body, ip }) => {
   const a = attempts.get(key);
   const ipA = attempts.get(ipKey);
   if ((a && a.until > now()) || (ipA && ipA.until > now())) fail(429, 'محاولات كثيرة. حاول بعد دقيقة.');
-  const u = q('SELECT * FROM users WHERE username = ?').get(username);
+  // Only the manager signs in: there are no agent accounts any more.
+  const u = q("SELECT * FROM users WHERE username = ? AND role = 'admin'").get(username);
   if (!u || !verifyPassword(String(body.password || ''), u.password_hash)) {
     recordAttempt(key, 5);
     recordAttempt(ipKey, 20);
     fail(401, 'اسم المستخدم أو كلمة المرور غير صحيحة');
   }
   attempts.delete(key);
-  if (!u.active) fail(403, 'هذا الحساب موقوف. تواصل مع المدير.');
-  return { token: createSession(u.id), user: publicUser(u), settings: settingsFor(u) };
+  if (!u.active) fail(403, 'هذا الحساب موقوف.');
+  return { token: createSession(u.id), user: publicUser(u), settings: getSettings() };
 });
 
-route('POST', '/api/logout', ANY, ({ token }) => {
+route('POST', '/api/logout', ADMIN, ({ token }) => {
   q('DELETE FROM sessions WHERE token_hash = ?').run(sha(token));
   return { ok: true };
 });
 
-route('GET', '/api/me', ANY, ({ user }) => ({ user: publicUser(user), settings: settingsFor(user) }));
+route('GET', '/api/me', ADMIN, ({ user }) => ({ user: publicUser(user), settings: getSettings() }));
 
-// Agents see only what their screens need — never the suppliers' accounts, the manager's profit percentages or the
-// backups. A list of what to show, so a setting added later stays the manager's unless it is added here.
-const AGENT_SETTINGS = ['appName', 'warnDays', 'lowBalance', 'esimFee', 'supportWhatsapp'];
-function settingsFor(user) {
-  const s = getSettings();
-  if (user.role === 'admin') return s;
-  return Object.fromEntries(AGENT_SETTINGS.map((k) => [k, s[k]]));
-}
-
-route('POST', '/api/me/password', ANY, ({ user, body, token }) => {
+route('POST', '/api/me/password', ADMIN, ({ user, body, token }) => {
   if (!verifyPassword(String(body.current || ''), user.password_hash)) fail(400, 'كلمة المرور الحالية غير صحيحة');
   const pw = String(body.password || '');
   if (pw.length < 6) fail(400, 'كلمة المرور الجديدة يجب أن تكون 6 أحرف على الأقل');
@@ -86,16 +78,12 @@ route('PUT', '/api/settings', ADMIN, ({ body }) => {
     if (!name) fail(400, 'اكتب اسم التطبيق');
     setSetting('app_name', name);
   }
-  if (body.warnDays !== undefined) setSetting('warn_days', int(Number(body.warnDays), 'أيام التنبيه', 1, 60));
-  if (body.lowBalance !== undefined) setSetting('low_balance', Math.max(0, num(body.lowBalance, 'حد الرصيد المنخفض')));
   if (body.esimFee !== undefined) {
     const fee = num(body.esimFee, 'رسوم eSIM');
     if (fee < 0) fail(400, 'رسوم eSIM لا تكون سالبة');
     setSetting('esim_fee', fee);
   }
-  if (body.artUser !== undefined) setSetting('art_user', str(body.artUser, 80));
   // Write-only: an empty password keeps the saved one.
-  if (body.artPass) setSetting('art_pass', String(body.artPass).slice(0, 200));
   if (body.qlUser !== undefined) setSetting('ql_user', str(body.qlUser, 120));
   if (body.qlPass) setSetting('ql_pass', String(body.qlPass).slice(0, 200));
   if (body.aylolUser !== undefined) setSetting('aylol_user', str(body.aylolUser, 120));
@@ -123,11 +111,8 @@ route('PUT', '/api/settings', ADMIN, ({ body }) => {
     if (body[field] !== undefined) setSetting(key, str(body[field], 80));
   }
   if (body.tcMailPass) setSetting('tc_mail_pass', String(body.tcMailPass).replace(/\s+/g, '').slice(0, 200));
-  for (const [field, key] of [['artMarkupCard', 'art_markup_card'], ['artMarkupInvoice', 'art_markup_invoice'],
-    ['qlMarkupCard', 'ql_markup_card'], ['qlMarkupInvoice', 'ql_markup_invoice'],
-    ['lyMarkupCard', 'ly_markup_card'], ['lyMarkupInvoice', 'ly_markup_invoice'],
-    ['tcMarkupCard', 'tc_markup_card'], ['tcMarkupInvoice', 'tc_markup_invoice'],
-    ['aylolMarkupCard', 'aylol_markup_card'], ['aylolMarkupInvoice', 'aylol_markup_invoice']]) {
+  for (const [field, key] of [['qlMarkupInvoice', 'ql_markup_invoice'], ['lyMarkupInvoice', 'ly_markup_invoice'],
+    ['tcMarkupInvoice', 'tc_markup_invoice'], ['aylolMarkupInvoice', 'aylol_markup_invoice']]) {
     if (body[field] === undefined) continue;
     const m = num(body[field], 'نسبة الربح');
     if (m < 0 || m > 200) fail(400, 'نسبة الربح بين 0 و200%');
@@ -186,7 +171,7 @@ route('PUT', '/api/settings', ADMIN, ({ body }) => {
     setSetting('support_whatsapp', wa);
   }
   // A supplier's account just saved: its packages are synced now, not at the next daily sync.
-  const SYNC_ON = { art: ['artUser', 'artPass'], ql: ['qlUser', 'qlPass'], ay: ['aylolUser', 'aylolPass', 'aylolSecret'], ly: ['lyUser', 'lyPass', 'lySecret'],
+  const SYNC_ON = { ql: ['qlUser', 'qlPass'], ay: ['aylolUser', 'aylolPass', 'aylolSecret'], ly: ['lyUser', 'lyPass', 'lySecret'],
     tc: ['tcUser', 'tcPass', 'tcMailUser', 'tcMailPass'] };
   for (const [key, fields] of Object.entries(SYNC_ON)) if (fields.some((f) => body[f])) require('../autosync').syncSoon(key);
   return getSettings();

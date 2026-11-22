@@ -236,9 +236,6 @@ function shell(body, { sub = '' } = {}) {
           <a href="#/compat" class="shop-nav-link ${hash === 'compat' ? 'active' : ''}">
             ${icon('chip')}<span>فحص التوافق</span>
           </a>
-          <a href="#/renew" class="shop-nav-link ${hash === 'renew' ? 'active' : ''}">
-            ${icon('refresh')}<span>تمديد اشتراك</span>
-          </a>
           <a href="#/terms" class="shop-nav-link ${onLegal ? 'active' : ''}">
             ${icon('shield')}<span>الضمان والشروط</span>
           </a>
@@ -282,8 +279,7 @@ function shell(body, { sub = '' } = {}) {
               <h3 class="ttl">عام والخدمات</h3>
               <a href="#/" data-act="nav-esim">باقات شرائح eSIM</a>
               <a href="#/compat" class="${hash === 'compat' ? 'active' : ''}">فحص توافق الهاتف مع eSIM</a>
-              <a href="#/renew" class="${hash === 'renew' ? 'active' : ''}">تمديد اشتراك رقم</a>
-              <a href="#/track" class="${hash === 'track' ? 'active' : ''}">تتبّع حالة طلب / فحص الرصيد</a>
+              <a href="#/track" class="${hash === 'track' ? 'active' : ''}">تتبّع حالة طلب</a>
             </div>
             <div>
               <h3 class="ttl">الشروط والدعم</h3>
@@ -291,7 +287,7 @@ function shell(body, { sub = '' } = {}) {
               <a href="#/esim-policy" class="${hash === 'esim-policy' ? 'active' : ''}">سياسة كود eSIM QR</a>
               <a href="#/guarantee" class="${hash === 'guarantee' ? 'active' : ''}">ضمان المتجر واسترجاع المبلغ</a>
               ${wa ? `<a href="${esc(wa)}" target="_blank" rel="noopener">تواصل معنا عبر واتساب</a>` : ''}
-              <a href="/portal" style="opacity:0.75;display:inline-flex;align-items:center;gap:6px;margin-top:6px">${icon('key')}بوابة الوكلاء والإدارة</a>
+              <a href="/portal" style="opacity:0.75;display:inline-flex;align-items:center;gap:6px;margin-top:6px">${icon('key')}دخول الإدارة</a>
             </div>
           </div>
         </div>
@@ -325,7 +321,7 @@ function shell(body, { sub = '' } = {}) {
   bindGlobalTriggers(root);
 }
 
-// The shop sells eSIMs only: one catalog, no recharge tab.
+// The shop sells eSIMs only: one catalog.
 function switchCatalogTab(_kind, { scroll = false } = {}) {
   const packages = S.data?.packages || [];
   if (S.companyId !== 'all' && !packages.some((p) => String(p.companyId) === String(S.companyId))) {
@@ -636,77 +632,6 @@ function viewCompatPage() {
     bindCompatEvents(mount, update);
   };
   update();
-}
-
-// ---------- renewing a number ----------
-// The customer writes a number in the system: its company and expiry (never whose it is), the packages that renew it
-// at the shop's price; one picked makes a renewal order, paid on the order's page like any other.
-function viewRenewPage() {
-  shell(`
-    <section class="esim-page-wrap">
-      <div class="esim-page-head">
-        <div>
-          <span class="esim-hero-kicker">${icon('refresh')}<span>تمديد اشتراك</span></span>
-          <h1>تمديد اشتراك رقم</h1>
-          <p class="muted">اكتب رقم الخط اللي بدك تمدّده، واختر رزمة التمديد، وادفع — يتمدّد تلقائياً.</p>
-        </div>
-        <a href="#/" class="btn ghost btn-sm">← المتجر</a>
-      </div>
-      <div class="card">
-        <form id="renew-f" class="form" autocomplete="off">
-          <div class="field">
-            <label for="renew-number">رقم الخط</label>
-            <input id="renew-number" name="number" class="input ltr" inputmode="tel" maxlength="16" placeholder="05XXXXXXXX" value="${esc(S.renewNumber || '')}" required>
-          </div>
-          <button class="btn primary lg" type="submit">${icon('search')}<span>عرض رزم التمديد</span></button>
-        </form>
-      </div>
-      <div id="renew-body"></div>
-    </section>
-  `, { sub: 'تمديد اشتراك' });
-  const form = document.getElementById('renew-f');
-  const body = document.getElementById('renew-body');
-  const show = (v) => {
-    const until = v.expiresAt ? fmtDate(v.expiresAt) : '';
-    body.innerHTML = `
-      <div class="card" style="margin-top:12px">
-        <div class="shop-breakdown-box">
-          <div class="shop-bd-row"><span>الرقم</span><b class="ltr mono">${esc(fmtPhone(v.number))}</b></div>
-          ${v.company ? `<div class="shop-bd-row"><span>الشركة</span><b>${esc(v.company)}</b></div>` : ''}
-          ${v.packageLabel ? `<div class="shop-bd-row"><span>الرزمة الحالية</span><b>${esc(v.packageLabel)}</b></div>` : ''}
-          ${until ? `<div class="shop-bd-row"><span>ينتهي في</span><b>${esc(until)}</b></div>` : ''}
-        </div>
-        ${v.options.length ? `
-          <h3 style="margin:12px 0 6px">رزم التمديد</h3>
-          <div class="list">${v.options.map((o) => `
-            <button type="button" class="item clickable" data-renew="${o.id}" style="width:100%;text-align:start">
-              <span class="grow"><b>${esc(o.name)}</b><small class="muted"> · ${o.days} يوم</small></span>
-              <b class="ltr mono">${fmtMoney(o.price)}</b>
-            </button>`).join('')}</div>`
-          : `<div class="esim-ready-notice">${icon('info')}<span>لا توجد رزم تمديد لهذا الرقم في المتجر حالياً — تواصل معنا.</span></div>`}
-      </div>`;
-    body.querySelectorAll('[data-renew]').forEach((b) => {
-      b.onclick = async () => {
-        b.disabled = true;
-        try {
-          const o = await jfetch('/api/shop/renewals', { method: 'POST', body: { number: v.number, packageId: Number(b.dataset.renew) } });
-          rememberOrderCode(o.code);
-          location.hash = `#/order/${encodeURIComponent(o.code)}`;
-        } catch (err) { notify(err.message, true); b.disabled = false; }
-      };
-    });
-  };
-  form.onsubmit = async (e) => {
-    e.preventDefault();
-    const number = String(new FormData(form).get('number') || '').trim();
-    if (!number) return;
-    S.renewNumber = number;
-    const btn = form.querySelector('[type="submit"]');
-    btn.disabled = true;
-    try { show(await jfetch(`/api/shop/renew?number=${encodeURIComponent(number)}`)); } catch (err) {
-      body.innerHTML = `<div class="card" style="margin-top:12px"><div class="esim-ready-notice">${icon('alert')}<span>${esc(err.message)}</span></div></div>`;
-    } finally { btn.disabled = false; }
-  };
 }
 
 // Modal Sheet: openCompatSheet()
@@ -1934,14 +1859,9 @@ const STAGES_AR = {
   processing: { label: 'تم الدفع — جارٍ التفعيل…', cls: 's-open', step: 2, desc: 'يتم الآن تفعيل الباقة وإصدار كود الـ QR.' },
   paid_issue: { label: 'تم الدفع — قيد المعالجة', cls: 's-open', step: 2, desc: 'يتابع الفريق إتمام التفعيل.' },
   done: { label: 'مفعّل وجاهز', cls: 's-done', step: 3, desc: 'تم تفعيل طلبك بنجاح.' },
-  failed: { label: 'تعذّر التنفيذ — تواصل مع الدعم', cls: 's-bad', step: 0, desc: 'تواصل مع الدعم لاسترجاع المبلغ أو إعادة المحاولة.' },
+  failed: { label: 'تعذّر التفعيل — تواصل مع الدعم', cls: 's-bad', step: 0, desc: 'تواصل مع الدعم لاسترجاع المبلغ أو إعادة المحاولة.' },
   rejected: { label: 'مرفوض — تواصل مع الدعم', cls: 's-bad', step: 0, desc: '' },
   cancelled: { label: 'ملغى', cls: 's-bad', step: 0, desc: 'تم إلغاء الطلبية وإتاحة الرقم من جديد.' },
-};
-const RENEW_STAGES = {
-  processing: { label: 'تم الدفع — جارٍ التمديد…', desc: 'نمدّد الرقم الآن عند الشركة.' },
-  done: { label: 'تم التمديد', desc: 'تم تمديد الرقم بنجاح.' },
-  failed: { label: 'تعذّر التمديد — تواصل مع الدعم', desc: '' },
 };
 const PAYABLE_STATUSES = ['awaiting_payment', 'verifying', 'review'];
 const FINAL_STAGES = ['done', 'cancelled', 'rejected', 'failed'];
@@ -2136,9 +2056,7 @@ function renderOrder() {
   clearInterval(S.countdownTimer);
   clearInterval(S.jcTimer);
   const o = S.order;
-  const base = STAGES_AR[o.stage] || STAGES_AR[o.status] || STAGES_AR.awaiting_payment;
-  // A renewal: its own words once paid (extending, extended), not an activation's.
-  const st = o.kind === 'recharge' && RENEW_STAGES[o.stage] ? { ...base, ...RENEW_STAGES[o.stage] } : base;
+  const st = STAGES_AR[o.stage] || STAGES_AR[o.status] || STAGES_AR.awaiting_payment;
   const jp = S.data?.jawwalpay || {};
   const pp = S.data?.palpay || {};
   const hasSeparatePalpay = Boolean(pp.number && pp.number !== jp.number);
@@ -2158,7 +2076,7 @@ function renderOrder() {
   const isSupportNeeded = Boolean(transferChecking && (o.needsSupport || (o.waitUntil && Date.now() >= Number(o.waitUntil))));
   const statusPillCls = isSupportNeeded ? 's-bad' : st.cls;
   const stageDesc = o.status === 'awaiting_payment' && showDirect && !canShowForm
-    ? `ادفع مباشرة من محفظة جوال باي${directBanks().length ? ` أو ${directBanks().map((b) => b.name).join(' أو ')}` : ''}: اكتب رقمك ويصلك رمز تحقق، وبعد الدفع ${o.kind === 'recharge' ? 'يتمدّد الرقم' : 'يتفعّل طلبك'} تلقائياً.`
+    ? `ادفع مباشرة من محفظة جوال باي${directBanks().length ? ` أو ${directBanks().map((b) => b.name).join(' أو ')}` : ''}: اكتب رقمك ويصلك رمز تحقق، وبعد الدفع يتفعّل طلبك تلقائياً.`
     : jcChecking ? 'نتأكد من دفعتك لدى جوال باي — لا تدفع مرة أخرى.' : st.desc;
   const statusPillLabel = isSupportNeeded ? 'يرجى التحدث مع الدعم' : jcChecking ? 'جارٍ التحقق من الدفع…' : (transferChecking ? 'بانتظار التحقق (حتى 15 دقيقة)' : st.label);
   const wa = waHref(S.data?.supportWhatsapp, `مرحباً، بخصوص الطلب ${o.code}`);
@@ -2180,7 +2098,7 @@ function renderOrder() {
       <div class="shop-steps no-print" aria-label="مراحل الطلب">
         <span class="${st.step >= 1 ? 'done' : ''}"><i>1</i>البيانات</span>
         <span class="${st.step >= 3 ? 'done' : payable || st.step === 2 ? 'current' : ''}"><i>2</i>الدفع</span>
-        <span class="${st.step >= 3 || hasQr ? 'done' : ''}"><i>3</i>${isEsim ? 'استلام QR' : o.kind === 'recharge' ? 'التمديد' : 'التفعيل'}</span>
+        <span class="${st.step >= 3 || hasQr ? 'done' : ''}"><i>3</i>${isEsim ? 'استلام QR' : 'التفعيل'}</span>
       </div>
 
       <div class="row between" style="flex-wrap:wrap;gap:10px">
@@ -2213,7 +2131,7 @@ function renderOrder() {
         ${o.reservedUntil && o.status === 'awaiting_payment' ? `
           <span class="shop-reserve-pill" title="مهلة حجز الرقم (10 دقائق)">
             ${icon('clock')}
-            <span>${o.kind === 'recharge' ? 'مهلة الدفع' : 'حجز الرقم'}: <b id="reserve-countdown" class="ltr mono">${fmtRemaining(o.reservedUntil)}</b></span>
+            <span>حجز الرقم: <b id="reserve-countdown" class="ltr mono">${fmtRemaining(o.reservedUntil)}</b></span>
           </span>
         ` : isRetryChance && o.retryUntil ? `
           <span class="shop-reserve-pill" title="مهلة المحاولة الثانية">
@@ -2598,7 +2516,6 @@ async function route() {
   window.scrollTo({ top: 0, behavior: 'instant' });
 
   if (head === 'compat') return viewCompatPage();
-  if (head === 'renew') return viewRenewPage();
   if (head === 'terms') return viewLegalPage('terms');
   if (head === 'esim-policy') return viewLegalPage('esim');
   if (head === 'guarantee') return viewLegalPage('guarantee');

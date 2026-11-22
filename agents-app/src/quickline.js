@@ -241,15 +241,6 @@ async function subscriptions(creds) {
   })).filter((s) => s.id && s.number);
 }
 
-// The one line behind a phone number. A number may appear more than once over time, so the active one wins.
-async function findSubscription(creds, number) {
-  const want = localNumber(number);
-  if (!want) return null;
-  const all = await subscriptions(creds);
-  const mine = all.filter((s) => s.number === want);
-  return mine.find((s) => s.canExtend) || mine.find((s) => s.statusValue === 2) || mine[0] || null;
-}
-
 async function balance(creds) {
   const { data } = await api(creds, 'GET', 'Home/GetHomePageData');
   return money(data?.credit);
@@ -265,37 +256,8 @@ async function homeData(creds) {
   };
 }
 
-// ---------- selling ----------
-// Extends one subscription. The portal answers with a plain message and the charge appears on the dealer's bills,
-// so the result is read back from the subscription itself (its cut date moves) rather than from an operations list.
-async function renew(creds, { subscriptionId, days }) {
-  if (!subscriptionId) throw new QuickLineError('QuickLine: لا يوجد اشتراك لهذا الرقم');
-  if (!DURATION_OK(days)) throw new QuickLineError(`QuickLine: مدة غير مقبولة (${days})`);
-  const r = await api(creds, 'POST', 'Subscriptions/Renew', { subscriptionId: Number(subscriptionId), days: Number(days) });
-  return { ok: r.status < 300, text: r.text || '' };
-}
-const DURATION_OK = (d) => [7, 30, 60, 90].includes(Number(d));
-
-// ---------- a line's state ----------
-// The portal's line actions: a final disconnect (status 4), a temporary one (status 6), and back to active (2).
-// cutNoReceive: true also stops incoming calls, as the portal does unless «קבלת שיחות» is ticked.
+// The portal's line states: active (2), finally disconnected (4), temporarily disconnected (6).
 const STATUS = { active: 2, closed: 4, paused: 6 };
-async function closeNumber(creds, subscriptionId) {
-  await api(creds, 'POST', 'Subscriptions/CloseNumber', { subscriptionId: Number(subscriptionId), cutNoReceive: true });
-}
-async function pauseNumber(creds, subscriptionId) {
-  await api(creds, 'POST', 'Subscriptions/PauseNumber', { subscriptionId: Number(subscriptionId), cutNoReceive: true });
-}
-async function activateNumber(creds, subscriptionId) {
-  await api(creds, 'POST', `Subscriptions/ActivateNumber/${encodeURIComponent(subscriptionId)}`, {});
-}
-// A new SIM for a line; like an activation, it goes without the company prefix.
-async function changeSim(creds, subscriptionId, iccid, rule) {
-  await api(creds, 'POST', 'Subscriptions/ChangeSim', {
-    subscriptionId: Number(subscriptionId), simNumber: String(iccid).replace(/\D/g, '').slice(rule.postalCode.length),
-  });
-}
-
 // Phone numbers in the portal's 10-digit local form (05XXXXXXXX).
 function localNumber(n) {
   let d = String(n).replace(/\D/g, '');
@@ -303,12 +265,11 @@ function localNumber(n) {
   return /^0\d{9}$/.test(d) ? d : null;
 }
 
-// Who supplies a package, from its ref: art-topup (ic:/pb:/pc:/inv:), QuickLine (ql:/qln:, with its package id there),
-// or nobody (typed by the manager).
+// Who supplies a package, from its ref: QuickLine (qln:, with its package id there), Layan, telecom, Aylol, or nobody
+// (typed by the manager).
 function supplierOfRef(ref) {
   if (/^ay:/i.test(String(ref || ''))) return { supplier: 'ay', qlPackage: null };
   const r = String(ref || '');
-  if (/^(ic|pb|pc|inv):/.test(r)) return { supplier: 'art', qlPackage: null };
   // Layan: its package id (a GUID) plays the part of QuickLine's package number.
   const l = /^lyn?:([0-9a-f-]{36}):/i.exec(r);
   if (l) return { supplier: 'ly', qlPackage: l[1] };
@@ -319,33 +280,13 @@ function supplierOfRef(ref) {
   return m ? { supplier: 'ql', qlPackage: Number(m[1]) } : { supplier: '', qlPackage: null };
 }
 
-// Which package may extend a line. A QuickLine line is extended there on its own package (QuickLine renews that one
-// and charges its price), so only that package's extension (ql:<same id>:) fits; an art-topup line takes no QuickLine
-// package; and a new-line package (qln:) never extends anything. Returns '' when it fits, else why not.
-function renewalProblem(lineRef, pkgRef) {
-  const line = supplierOfRef(lineRef);
-  const pkg = supplierOfRef(pkgRef);
-  // Seen by agents: says what to do, never who activates the line.
-  if (/^(qln|lyn|tcn):/.test(String(pkgRef || ''))) return 'هذه رزمة تفعيل خط جديد، وليست للتمديد';
-  // A QuickLine, Layan or telecom line is extended there, on its own package: only that package's extension fits.
-  if (['ql', 'ly', 'tc'].includes(line.supplier) && !(pkg.supplier === line.supplier && pkg.qlPackage === line.qlPackage)) {
-    return 'لا يمكن تمديد هذا الخط بهذه الرزمة: اختر رزمة التمديد الخاصة به';
-  }
-  // A line from another supplier is not extended by QuickLine or Layan (a line typed by hand may be: an older customer).
-  if (line.supplier && line.supplier !== pkg.supplier && ['ql', 'ly', 'tc'].includes(pkg.supplier)) return 'لا يمكن تمديد هذا الخط بهذه الرزمة: اختر كرتاً آخر';
-  return '';
-}
-
-// Which system a package ref belongs to: ql: an extension (sold automatically), qln: a new line (manager's request).
-const refKind = (ref) => (/^ql:/.test(ref) ? 'card' : /^qln:/.test(ref) ? 'invoice' : null);
 const parseRef = (ref) => {
   const m = /^(ql|qln):(\d+):(\d+)$/.exec(String(ref));
   return m ? { system: m[1], packageId: Number(m[2]), days: Number(m[3]) } : null;
 };
 
 module.exports = {
-  QuickLineError, DURATIONS, login, api, companies, catalog, subscriptions, findSubscription,
-  balance, homeData, renew, localNumber, refKind, parseRef, gbOf,
-  freeNumbers, simProblem, splitName, newSubscription, STATUS, closeNumber, pauseNumber, activateNumber, changeSim,
-  supplierOfRef, renewalProblem,
+  QuickLineError, DURATIONS, login, api, companies, catalog, subscriptions,
+  balance, homeData, localNumber, parseRef, gbOf,
+  freeNumbers, simProblem, splitName, newSubscription, STATUS, supplierOfRef,
 };

@@ -165,26 +165,9 @@ async function packages(creds) {
   return out;
 }
 
-// What an extension costs on the site, from the price the subscriber's page starts from (as its renew buttons work it
-// out): a month at that price, three and six in proportion, a week at the daily rate plus 2 ₪.
-function extensionPrice(supplierPrice, days) {
-  const p = Number(supplierPrice);
-  if (!(p > 0)) return null;
-  if (days === 7) return round2((p / 30) * 7 + 2);
-  if (days === 30) return round2(p);
-  if (days === 90 || days === 180) return round2((p / 30) * days);
-  return null;
-}
-
-// The two systems in the app's terms: extensions ('card': regular packages, each duration offered) and new lines
-// ('invoice': regular packages and offers). ref is what the app keeps on its package.
-async function catalog(creds, kind) {
+// New lines in the app's terms ('invoice': regular packages and offers). ref is what the app keeps on its package.
+async function catalog(creds) {
   const all = await packages(creds);
-  if (kind === 'card') {
-    return all.filter((p) => !p.offer).flatMap((p) => DURATIONS.map((days) => ({
-      ...p, days, cost: extensionPrice(p.cost, days), ref: `tc:${p.packageId}:${days}`,
-    })));
-  }
   return all.map((p) => ({ ...p, days: p.months * 30, ref: `tcn:${p.packageId}:${p.months * 30}` }));
 }
 
@@ -200,44 +183,6 @@ async function leads(creds) {
       company: text(row[3]), status, active: status === 'פעיל', updated: isoDate(text(row[5])),
     };
   }).filter((l) => l.leadId && l.number);
-}
-
-// One subscriber's page: its package, its end date, and the price an extension starts from. special: the subscriber
-// is on special terms (its own dates or prices), which the site prices differently — not extended automatically.
-async function lead(creds, leadId) {
-  const r = await page(creds, 'GET', `/app/leads/viewLead/${Number(leadId)}`);
-  const h = r.text;
-  const endDate = isoDate(inputValue(h, 'serviceEndDate'));
-  const packageId = Number(inputValue(h, 'curr_campaignId')) || null;
-  if (!endDate || !packageId) throw new TelecomError(`telecom: لم أفهم صفحة المشترك ${leadId}`);
-  const zero = (v) => !v || v === '0' || Number(v) === 0;
-  return {
-    leadId: Number(leadId), number: localNumber(inputValue(h, 'leadPhone')), packageId, endDate,
-    supplierPrice: money(inputValue(h, 'supplier_price')), provider: inputValue(h, 'lineProvider') || '',
-    special: !(zero(inputValue(h, 'special_date')) && zero(inputValue(h, 'special_date_days')) && zero(inputValue(h, 'priceSpecial'))),
-  };
-}
-
-// The subscriber of a number: the active one if there is one, else the latest.
-async function findLead(creds, number) {
-  const n = localNumber(number);
-  const list = (await leads(creds)).filter((l) => l.number === n);
-  return list.find((l) => l.active) || list.sort((a, b) => b.leadId - a.leadId)[0] || null;
-}
-
-// ---------- doing ----------
-// Extends a subscriber; the site charges the dealer's credit. A refusal ({ result: false }) means nothing was done.
-async function extend(creds, { leadId, days }) {
-  const type = RENEW_TYPES[days];
-  if (!type) throw new TelecomError(`telecom: لا يوجد تمديد لمدة ${days} يوماً`, { refused: true });
-  const r = await page(creds, 'POST', '/app/ajax/renewPhoneLineNew', { leadId: String(leadId), renew_type: type, date_choice: '' }, { ajax: true });
-  const data = json(r);
-  if (data && data.result === true) return data;
-  if (data && (data.result === false || data.result === 'false')) {
-    throw new TelecomError(`telecom رفض التمديد${data.msg ? `: ${String(data.msg).slice(0, 160)}` : ''}`, { refused: true });
-  }
-  // Anything else: it may or may not have gone through.
-  throw new TelecomError(`telecom: رد غير مفهوم على التمديد (${r.status})`);
 }
 
 // ---------- a new ALOHA eSIM line (as the site's "new subscriber" form does it) ----------
@@ -297,6 +242,6 @@ async function check(creds) {
 }
 
 module.exports = {
-  TelecomError, COMPANIES, DURATIONS, check, page, balance, packages, catalog, leads, lead, findLead, extend,
-  extensionPrice, parseRef, localNumber, esimNumbers, takeEsim, newEsimLine, qrImage, _deps: deps, _session: session,
+  TelecomError, COMPANIES, DURATIONS, check, page, balance, packages, catalog, leads,
+  parseRef, localNumber, esimNumbers, takeEsim, newEsimLine, qrImage, _deps: deps, _session: session,
 };

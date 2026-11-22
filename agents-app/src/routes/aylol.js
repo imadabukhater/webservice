@@ -1,21 +1,20 @@
 'use strict';
-// Aylol Telecom, the same shape as telecom and Layan: top-up cards ('card', ay:credit:…) and new lines ('invoice':
-// bill lines ay:bill:… and eSIMs ay:esim:…). Sales are carried out automatically by autoexec (sendAy) after the
-// agent's balance is charged; nothing here buys anything at the site, except a sale being carried out.
-// Each system has its own sync, profit percentage and list of price changes awaiting the manager.
+// Aylol Telecom, the same shape as telecom and Layan: new lines ('invoice': bill lines ay:bill:…, sold in the shop as
+// eSIMs, and eSIMs ay:esim:…). Sales are carried out automatically by autoexec (sendAy) once the customer's payment is
+// verified; nothing here buys anything at the site. Its sync, profit percentage and price changes awaiting the manager.
 const { q, tx, getSettings, setSetting, aylolCredentials } = require('../db');
 const { fail, round, now } = require('../util');
 const ay = require('../aylol');
-const { route, ADMIN, ANY } = require('../router');
+const { route, ADMIN } = require('../router');
 const { companyFor } = require('./quickline');
 
-const KINDS = ['card', 'invoice'];
+// Only new lines (sold as eSIMs in the shop): extensions and top-up cards are not sold.
+const KINDS = ['invoice'];
 const GONE_DAYS = 7;
-const kindOf = (v) => (KINDS.includes(v) ? v : fail(400, 'اختر النظام: الكروت أو الخطوط الجديدة'));
-const markupFor = (kind) => (kind === 'card' ? getSettings().aylolMarkupCard : getSettings().aylolMarkupInvoice);
+const kindOf = (v) => (v === undefined || v === '' || KINDS.includes(v) ? 'invoice' : fail(400, 'المتجر يبيع شرائح eSIM فقط: لا رزم تمديد أو كروت'));
+const markupFor = () => getSettings().aylolMarkupInvoice;
 const withMarkup = (cost, kind) => round(cost * (1 + markupFor(kind) / 100));
 const REF = {
-  card: "art_card_id LIKE 'ay:credit:%'",
   invoice: "(art_card_id LIKE 'ay:bill:%' OR art_card_id LIKE 'ay:esim:%')",
 };
 const PENDING = 'art_price IS NOT NULL AND ROUND(art_price, 2) != ROUND(cost, 2) AND (art_ack IS NULL OR ROUND(art_ack, 2) != ROUND(art_price, 2))';
@@ -67,11 +66,7 @@ route('POST', '/api/aylol/check', ADMIN, () => wrap(async (creds) => {
 }));
 
 route('POST', '/api/aylol/sync', ADMIN, ({ body }) => wrap(async (creds) => {
-  if (body.kind === 'all') {
-    const card = await syncKind(creds, 'card');
-    const invoice = await syncKind(creds, 'invoice');
-    return { card, invoice };
-  }
+  if (body.kind === 'all') return { invoice: await syncKind(creds, 'invoice') };
   return syncKind(creds, kindOf(body.kind));
 }));
 
@@ -162,7 +157,7 @@ async function agentPrices(creds) {
 }
 
 async function collectItems(creds, kind) {
-  const synced = await ay.syncAll(creds, [kind === 'card' ? 'credit' : 'bill']);
+  const synced = await ay.syncAll(creds, ['bill']);
   const prices = await agentPrices(creds);
   const agentCost = (ref, cost) => {
     const [, , cid, pid] = String(ref).split(':');
@@ -209,7 +204,7 @@ async function syncKind(creds, kind) {
     let restored = 0;
     const companyIds = new Set();
     const refs = [];
-    const known = new Set(q(`SELECT DISTINCT company_id FROM packages WHERE ${REF.card} OR ${REF.invoice}`).all().map((r) => r.company_id));
+    const known = new Set(q(`SELECT DISTINCT company_id FROM packages WHERE ${REF.invoice}`).all().map((r) => r.company_id));
     const names = new Set();
     for (const p of items) {
       refs.push(p.ref);
@@ -239,7 +234,7 @@ async function syncKind(creds, kind) {
     for (const g of gone) {
       if (g.active) { q('UPDATE packages SET active = 0, gone_at = ? WHERE id = ?').run(now(), g.id); off++; continue; }
       if (!g.gone_at || now() - g.gone_at < GONE_DAYS * 864e5) continue;
-      const used = q(`SELECT 1 FROM lines WHERE package_id = ?1 UNION ALL SELECT 1 FROM offers WHERE package_id = ?1
+      const used = q(`SELECT 1 FROM lines WHERE package_id = ?1 UNION ALL SELECT 1 FROM shop_orders WHERE package_id = ?1 AND status IN ('awaiting_payment','verifying','review','paid')
                       UNION ALL SELECT 1 FROM tasks WHERE status = 'open' AND json_valid(payload) AND json_extract(payload, '$.packageId') = ?1 LIMIT 1`).get(g.id);
       if (!used) { q('DELETE FROM packages WHERE id = ?').run(g.id); removed++; }
     }
@@ -265,7 +260,7 @@ route('POST', '/api/aylol/approve', ADMIN, ({ body }) => tx(() => {
   if (!ids.length) fail(400, 'اختر الرزم');
   let done = 0;
   for (const id of ids) {
-    const p = q(`SELECT * FROM packages WHERE id = ? AND (${REF.card} OR ${REF.invoice}) AND ${PENDING}`).get(id);
+    const p = q(`SELECT * FROM packages WHERE id = ? AND (${REF.invoice}) AND ${PENDING}`).get(id);
     if (!p) continue;
     if (mode === 'ignore') q('UPDATE packages SET art_ack = art_price WHERE id = ?').run(id);
     else if (mode === 'cost') q('UPDATE packages SET cost = art_price, art_ack = NULL WHERE id = ?').run(id);
