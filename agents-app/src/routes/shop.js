@@ -89,6 +89,8 @@ const JC_SENDS_MAX = 3;
 const JC_TRIES_MAX = 5;
 const JC_RESEND_MS = 45_000;
 const JC_HOLD_MS = 10 * 60_000;
+const JC_MOBILE_HOURLY_MAX = Number(process.env.JC_MOBILE_HOURLY_MAX) || 5;
+const jcMobileLastSent = new Map(); // target mobile -> { at, orderId } (blocks cross-order SMS bombing)
 const jcPending = (o) => !!(o.jc_invoice_id && o.jc_expires_at && o.jc_expires_at > now());
 const maskMobile = (m) => (m && m.length >= 7 ? `${m.slice(0, 3)}${'•'.repeat(m.length - 6)}${m.slice(-3)}` : m || '');
 
@@ -420,22 +422,26 @@ function orderGuards(body, { ip, clientId = '' }) {
     }
   }
 
-  // Prevent holding multiple lines with the same phone number
+  // Prevent holding multiple lines with the same phone number.
+  // Never disclose another customer's secret order code when matched only by phone number.
   const rawNum = body.contactPhone || body.number;
   if (rawNum) {
     const cleanNum = normalizePhone(rawNum);
     if (cleanNum && validPhone(cleanNum)) {
-      const activePhoneOrder = q(`SELECT id, code FROM shop_orders
+      const activePhoneOrder = q(`SELECT id, code, client_id FROM shop_orders
                                   WHERE (number = ? OR contact_phone = ?) AND status = 'awaiting_payment' AND (created_at > ? OR COALESCE(jc_expires_at, 0) > ? OR jc_unsure = 1) LIMIT 1`)
                                .get(cleanNum, cleanNum, cutoff, tNow);
       if (activePhoneOrder) {
-        fail(409, `يوجد حجز نشط بالفعل مسجل بنفس الرقم (طلب رقم ${activePhoneOrder.code}). يرجى إتمام الدفع أو إلغاء الحجز السابق أولاً.`, { code: activePhoneOrder.code });
+        if (clientId && activePhoneOrder.client_id && activePhoneOrder.client_id === clientId) {
+          fail(409, `يوجد حجز نشط بالفعل مسجل بنفس الرقم (طلب رقم ${activePhoneOrder.code}). يرجى إتمام الدفع أو إلغاء الحجز السابق أولاً.`, { code: activePhoneOrder.code });
+        }
+        fail(409, 'يوجد حجز نشط بالفعل مسجل بنفس الرقم. يرجى إتمام الدفع من صفحة طلبك أو الانتظار حتى انتهاء مهلة الحجز.');
       }
     }
   }
 
   // Network anti-hoarding limit: Max concurrent active reservations from the same IP
-  const MAX_ACTIVE_PER_IP = Number(process.env.SHOP_MAX_ACTIVE_PER_IP) || 15;
+  const MAX_ACTIVE_PER_IP = Number(process.env.SHOP_MAX_ACTIVE_PER_IP) || 6;
   const activeIpCount = q(`SELECT COUNT(*) AS c FROM shop_orders
                            WHERE ip = ? AND status = 'awaiting_payment' AND (created_at > ? OR COALESCE(jc_expires_at, 0) > ? OR jc_unsure = 1)`).get(ip, cutoff, tNow)?.c || 0;
   if (activeIpCount >= MAX_ACTIVE_PER_IP) {
@@ -690,9 +696,18 @@ async function jcSendCode(o, mobileInput, bankInput = '') {
   if (!/^05\d{8}$/.test(mobile)) fail(400, bank ? 'اكتب رقم جوالك المسجّل في البنك (10 أرقام يبدأ بـ 05)' : 'اكتب رقم جوالك المسجّل في جوال باي (10 أرقام يبدأ بـ 05)');
   if ((o.jc_sends || 0) >= JC_SENDS_MAX) fail(429, 'وصلت إلى الحد الأقصى لرموز التحقق لهذا الطلب. ادفع بالتحويل اليدوي أو تواصل معنا.');
   if (o.jc_sent_at && now() < o.jc_sent_at + JC_RESEND_MS) fail(429, `انتظر ${Math.ceil((o.jc_sent_at + JC_RESEND_MS - now()) / 1000)} ثانية قبل طلب رمز جديد`);
+  // Anti-SMS-bombing: cap OTP sends per target mobile across ALL orders and IPs, and enforce cooldown across different orders.
+  const prevMobile = jcMobileLastSent.get(mobile);
+  if (prevMobile && prevMobile.orderId !== o.id && now() < prevMobile.at + JC_RESEND_MS) {
+    fail(429, `تم إرسال رمز تحقق لهذا الرقم للتو — انتظر ${Math.ceil((prevMobile.at + JC_RESEND_MS - now()) / 1000)} ثانية قبل المحاولة مجدداً.`);
+  }
+  throttle(mobile, 'jc_mobile_otp', JC_MOBILE_HOURLY_MAX);
   if (jcBusy.has(o.id)) fail(409, 'جارٍ إرسال الرمز…');
   jcBusy.add(o.id);
   try {
+    jcMobileLastSent.delete(mobile);
+    jcMobileLastSent.set(mobile, { at: now(), orderId: o.id });
+    if (jcMobileLastSent.size > 5000) jcMobileLastSent.delete(jcMobileLastSent.keys().next().value);
     let r;
     try {
       r = await jc.sendOtp(jcCredentials(), { mobile, amount: o.amount, bank });
@@ -816,7 +831,7 @@ async function jcConfirmCode(order, otpInput) {
 }
 
 route('POST', '/api/shop/orders/:code/cancel', null, ({ params, ip }) => {
-  throttle(ip, 'cancel', 30);
+  throttle(ip, 'cancel', 15);
   return cancelOrder(byCode(params.code, ip));
 });
 // The customer cancels their order (from the page or the WhatsApp chat) as long as it is not paid: waiting for the
@@ -962,4 +977,4 @@ route('GET', '/api/shop/admin/summary', ADMIN, () => ({
 // The WhatsApp chat pays an order directly too: the order as the page would find it (direct payment on, holds expired).
 const directOrderByCode = (code) => directOrder(code);
 module.exports = { shopCatalogResponse, shopCatalog, ensureStock, submitProof, orderView, byCode, createOrder, cancelOrder, refreshStock,
-  jcSendCode, jcConfirmCode, directOrderByCode, shopKind, shopRows, publicPackageView, _resetThrottle: () => hits.clear() };
+  jcSendCode, jcConfirmCode, directOrderByCode, shopKind, shopRows, publicPackageView, _resetThrottle: () => { hits.clear(); jcMobileLastSent.clear(); } };

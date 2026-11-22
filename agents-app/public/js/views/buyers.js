@@ -53,7 +53,7 @@ async function openBuyer(id) {
   const b = await api.get(`/api/buyers/${id}`);
   sheet({
     title: b.customerName || 'بدون اسم',
-    subtitle: `طلب <span class="ltr">${esc(b.code)}</span>`,
+    subtitleHtml: `طلب <span class="ltr">${esc(b.code)}</span>`,
     body: `${statusPill(b.lineStatus)}
       <div class="kv">
         ${row('رقم الخط', b.number ? phone(b.number) : '')}

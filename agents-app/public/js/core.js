@@ -305,15 +305,16 @@ async function closeEntry(entry) {
  * `false` to stay open, or throw to show the error inside the sheet.
  * Without onSubmit the sheet is informational (no footer unless `footer` HTML is given).
  */
-export function sheet({ title, subtitle = '', body, submit = 'حفظ', danger = false, onSubmit, onInput, onMount, onClose, wide = false, footer, cancel = 'إلغاء' }) {
+export function sheet({ title, subtitle = '', subtitleHtml = '', body, submit = 'حفظ', danger = false, onSubmit, onInput, onMount, onClose, wide = false, footer, cancel = 'إلغاء' }) {
   const el = document.createElement('div');
   el.className = 'overlay';
   const formId = `sheet-form-${Date.now().toString(36)}${stack.length}`;
   const foot = onSubmit
     ? `<div class="sheet-foot"><button class="btn ${danger ? 'btn-danger solid' : 'btn-primary'}" type="submit" form="${formId}">${esc(submit)}</button>${cancel ? `<button class="btn" type="button" data-close>${esc(cancel)}</button>` : ''}</div>`
     : footer ? `<div class="sheet-foot">${footer}</div>` : '';
+  const sub = subtitleHtml || (subtitle ? esc(subtitle) : '');
   el.innerHTML = `<div class="sheet ${wide ? 'wide' : ''}" role="dialog" aria-modal="true" aria-label="${esc(title)}">
-      <div class="sheet-head"><div class="grow"><h2>${esc(title)}</h2>${subtitle ? `<small>${subtitle}</small>` : ''}</div>
+      <div class="sheet-head"><div class="grow"><h2>${esc(title)}</h2>${sub ? `<small>${sub}</small>` : ''}</div>
         <button class="icon-btn plain" type="button" data-close aria-label="إغلاق">${icon('x')}</button></div>
       <form class="sheet-body" id="${formId}" autocomplete="off" novalidate>${body}<div class="sheet-msg"></div></form>
       ${foot}</div>`;

@@ -26,6 +26,7 @@ const { ApiError } = require('./src/util');
 const seo = require('./src/seo');
 
 const PORT = Number(process.env.PORT) || 3000;
+const HOST = process.env.HOST || '127.0.0.1';
 const PUBLIC_DIR = path.join(__dirname, 'public');
 
 const MIME = {
@@ -194,6 +195,6 @@ async function handle(req, res) {
 
 const server = http.createServer(handle);
 if (require.main === module) {
-  server.listen(PORT, () => console.log(`eSIM shop running on http://localhost:${PORT}`));
+  server.listen(PORT, HOST, () => console.log(`eSIM shop running on http://${HOST}:${PORT}`));
 }
 module.exports = { server };

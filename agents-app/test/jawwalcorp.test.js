@@ -2,6 +2,7 @@
 // Direct Jawwal Pay through the MaalCards corporate API, against a fake API that keeps its sign-in rules:
 // one seat, a token reused until it ends, 429 token_still_valid while the seat is held, 401 token_revoked.
 process.env.DB_FILE = ':memory:';
+process.env.SHOP_MAX_ACTIVE_PER_IP = '25';
 process.env.ADMIN_USERNAME = 'admin';
 process.env.ADMIN_PASSWORD = 'admin-pass';
 process.env.SHOP_RESERVE_MS = '3000';

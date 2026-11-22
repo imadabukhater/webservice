@@ -41,7 +41,7 @@ function resolveTask(t) {
   let qr = '';
   sheet({
     title: 'تنفيذ تفعيل eSIM',
-    subtitle: t.lineNumber ? esc(t.lineNumber) : '',
+    subtitle: t.lineNumber || '',
     body: `${t.note ? `<div class="msg info" style="align-items:center">${icon('info')}<span class="grow">${esc(t.note)}</span>
         <button type="button" class="btn btn-sm" data-copy-note>${icon('copy')}نسخ</button></div>` : ''}
       <div class="field"><label for="rs-code">رمز تفعيل eSIM (LPA) <span class="opt">(يرسم QR تلقائياً إن لم ترفق صورة)</span></label><textarea class="input ltr" id="rs-code" name="esimCode" rows="2" placeholder="LPA:1$…"></textarea></div>

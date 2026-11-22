@@ -341,11 +341,17 @@ async function onRaw(m, linkId = MAIN) {
   if (!text && !image) return;
   await handle({ jid, phone: pn ? phoneOfJid(pn) : '', text, image });
 }
+const MAX_WA_IMAGE_BYTES = 1_400_000;
 async function downloadImage(m, im, linkId = MAIN) {
   if (downloader) return downloader(m);
   const sock = links.get(linkId)?.sock;
   if (!lib || !sock) throw new Error('واتساب غير مربوط');
+  // Check reported media size BEFORE downloading into RAM to prevent memory exhaustion DoS.
+  const rawLen = im?.fileLength;
+  const declaredLen = rawLen && typeof rawLen === 'object' ? (typeof rawLen.toNumber === 'function' ? rawLen.toNumber() : Number(rawLen.low) || 0) : Number(rawLen || 0);
+  if (declaredLen > MAX_WA_IMAGE_BYTES) throw new Error('الصورة كبيرة جداً');
   const buffer = await lib.downloadMediaMessage(m, 'buffer', {}, { logger: logger(), reuploadRequest: sock.updateMediaMessage });
+  if (!buffer?.length || buffer.length > MAX_WA_IMAGE_BYTES) throw new Error('الصورة كبيرة أو فاضية');
   return { buffer, mime: /^image\/(png|jpe?g|webp)$/.test(im.mimetype || '') ? im.mimetype : 'image/jpeg' };
 }
 
@@ -717,10 +723,11 @@ async function customerImage(jid, getImage) {
 }
 
 // ---------- free text understood by Gemini on the owner's Google Cloud (it only chooses among the actions above) ----------
-// At most 200 questions an hour go to it (strangers cannot run the key's bill up), and what it writes carries no link.
+// Strict hourly caps (global + per-chat) so strangers cannot abuse Vertex AI or run up the bill, and no links in replies.
 const aiCalls = [];
 const aiCallsByChat = new Map(); // one chat cannot use up everyone's allowance
-const AI_PER_CHAT_HOUR = 40; // a customer's message may take two or three questions (the shop's answers in between)
+const AI_GLOBAL_HOUR = Number(process.env.WA_AI_GLOBAL_HOUR) || 120;
+const AI_PER_CHAT_HOUR = Number(process.env.WA_AI_PER_CHAT_HOUR) || 20; // a customer's message may take two or three questions (the shop's answers in between)
 const noLinks = (text) => String(text || '').replace(/(?:https?:\/\/|www\.)\S+/gi, '').replace(/\b[\w-]+\.(?:com|net|org|io|me|co|shop|xyz|info)\b\S*/gi, '').trim();
 // The only prices and phone numbers a written reply may name: the ones the person was shown.
 function shopGuard(shop) {
@@ -778,11 +785,11 @@ function saidBefore(jid, text) {
   if (w.length < 12) return false; // «تمام 👍», «تكرم»: short words may come again
   return (history.get(jid) || []).some((m) => m.role === 'model' && plainWords(m.text).includes(w));
 }
-// One question to the model, within the allowances (200 an hour in all, 20 per chat). Its JSON answer, or null.
+// One question to the model, within the allowances (global and per chat).
 function aiAllowed(jid) {
   const hourAgo = Date.now() - 60 * 60_000;
   while (aiCalls.length && aiCalls[0] < hourAgo) aiCalls.shift();
-  if (aiCalls.length >= 200) return false;
+  if (aiCalls.length >= AI_GLOBAL_HOUR) return false;
   const mine = (aiCallsByChat.get(jid) || []).filter((x) => x >= hourAgo);
   if (mine.length >= AI_PER_CHAT_HOUR) return false;
   mine.push(Date.now());
@@ -793,12 +800,26 @@ function aiAllowed(jid) {
 }
 // ---------- what the assistant costs (counted in src/waconfig.js), stopped at the owner's limit ----------
 function setAiError(text) { state.aiError = text; state.aiErrorFor = text ? aiSig() : ''; }
-// Before a question: would it pass the day's limit? (its size from the text, ~2.5 characters a token, a short answer)
-function withinBudget(system, user) {
+// Atomic in-flight reservation: prevents concurrent requests from racing past the daily spend cap or flooding Vertex AI.
+const MAX_CONCURRENT_AI = Number(process.env.WA_AI_MAX_CONCURRENT) || 4;
+let inFlightAi = 0;
+let inFlightUsd = 0;
+function reserveBudget(system, user) {
+  if (inFlightAi >= MAX_CONCURRENT_AI) return null;
   const c = config();
   const s = spendToday();
-  const est = costOf(Math.ceil((system.length + user.length) / 2.5), 400, priceOf(c));
-  if (s.usd + est <= c.aiDailyUsd) return true;
+  const est = costOf(Math.ceil((system.length + user.length) / 2.5), 600, priceOf(c));
+  if (s.usd + inFlightUsd + est <= c.aiDailyUsd) {
+    inFlightAi += 1;
+    inFlightUsd += est;
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      inFlightAi = Math.max(0, inFlightAi - 1);
+      inFlightUsd = Math.max(0, inFlightUsd - est);
+    };
+  }
   setAiError(c.aiDailyUsd > 0 ? `وصل حد الصرف اليومي (${c.aiDailyUsd}$). يرجع المساعد بكرة.` : 'المساعد موقوف: حد الصرف اليومي 0$.');
   if (!s.stoppedAt && c.aiDailyUsd > 0) {
     s.stoppedAt = Date.now();
@@ -807,7 +828,7 @@ function withinBudget(system, user) {
     try { require('./domain').notify({ role: 'admin', kind: 'task', title: 'حد صرف المساعد الذكي', body: text, link: '#/settings' }); } catch {}
     tellAdmins(`⚠️ ${text}`).catch(() => {});
   }
-  return false;
+  return null;
 }
 function spent(usage, system, user, answer, model = '') {
   const p = priceOf(model ? { ...config(), aiModel: model } : config());
@@ -875,12 +896,12 @@ async function vertexGenerate(payload, timeout) {
 
 // One question to Gemini on the owner's Google Cloud project (Vertex AI), by the server's own identity: JSON only,
 // the instructions apart from the person's words. Its answer, or null (nothing made up when it fails).
-async function askModel(system, user, { temperature = 0.1, timeout = 15_000 } = {}) {
-  const cfg = config();
+async function askModel(system, user, { temperature = 0.1, timeout = 15_000, maxOutputTokens = 600 } = {}) {
   const name = 'Vertex AI';
-  if (!withinBudget(system, user)) return null;
+  const release = reserveBudget(system, user);
+  if (!release) return null;
   try {
-    const { res, model } = await vertexGenerate({ systemInstruction: { parts: [{ text: system }] }, contents: [{ role: 'user', parts: [{ text: user }] }], generationConfig: { temperature, responseMimeType: 'application/json' } }, timeout);
+    const { res, model } = await vertexGenerate({ systemInstruction: { parts: [{ text: system }] }, contents: [{ role: 'user', parts: [{ text: user }] }], generationConfig: { temperature, maxOutputTokens, responseMimeType: 'application/json' } }, timeout);
     if (!res.ok) {
       if (res.status === 401) vertexAuth.token = '';
       const err = await res.json().catch(() => null);
@@ -896,6 +917,8 @@ async function askModel(system, user, { temperature = 0.1, timeout = 15_000 } = 
   } catch (e) {
     setAiError(`${name}: ${String(e.message).slice(0, 200)}`);
     return null;
+  } finally {
+    release();
   }
 }
 const DIALECT = 'اكتب بالعامية الفلسطينية زي ما بيحكوا الزبائن بغزة والضفة (مثل: أهلين، شو بتحب، هاي، منيح، تكرم، ولا يهمك)، بلطف ومن غير مبالغة، وإيموجي واحد على الأكثر.';
@@ -976,28 +999,40 @@ ${shop.packages ? shopSheet(shop) : ''}
 - لا تخترع باقة أو سعر أو موعد أو رقم هاتف أو رقم دفع، ولا تحط روابط.${k ? `\nمعلومات من المتجر (اعتمد عليها): ${k}` : ''}`;
 }
 
-// The whole conversation so far (until 10 minutes without a message), as Gemini takes it: turns alternating customer /
-// shop, ending with this message.
+// Recent conversation (bounded in turn count and total characters to prevent token-burn abuse), alternating customer / shop.
+const AGENT_HISTORY_MAX = 40;
+const AGENT_TURN_CHARS = 500;
+const AGENT_TOTAL_CHARS = 8000;
 function agentContents(jid, raw) {
+  const prior = (history.get(jid) || []).slice(0, -1).slice(-AGENT_HISTORY_MAX);
+  // Keep only the newest turns within the total character budget.
+  const kept = [];
+  let chars = 0;
+  for (let i = prior.length - 1; i >= 0; i--) {
+    const txt = String(prior[i].text || '').slice(0, AGENT_TURN_CHARS);
+    if (chars + txt.length > AGENT_TOTAL_CHARS && kept.length) break;
+    chars += txt.length;
+    kept.unshift({ role: prior[i].role, text: txt });
+  }
   const turns = [];
-  for (const m of (history.get(jid) || []).slice(0, -1)) { // the last one recorded is this message
+  for (const m of kept) {
     const role = m.role === 'user' ? 'user' : 'model';
     if (turns.length && turns.at(-1).role === role) turns.at(-1).parts[0].text += `\n${m.text}`;
-    else turns.push({ role, parts: [{ text: String(m.text) }] });
+    else turns.push({ role, parts: [{ text: m.text }] });
   }
   while (turns.length && turns[0].role !== 'user') turns.shift();
-  const now = String(raw).slice(0, 800);
-  if (turns.length && turns.at(-1).role === 'user') turns.at(-1).parts[0].text += `\n${now}`;
-  else turns.push({ role: 'user', parts: [{ text: now }] });
+  const cur = String(raw).slice(0, 800);
+  if (turns.length && turns.at(-1).role === 'user') turns.at(-1).parts[0].text += `\n${cur}`;
+  else turns.push({ role: 'user', parts: [{ text: cur }] });
   return turns;
 }
 
 // One step of the conversation with Gemini (Vertex AI), within the day's limit: its parts (text, or the shop's tools it
 // asks for), or null.
 async function askAgent(system, contents) {
-  const cfg = config();
   const size = JSON.stringify(contents) + JSON.stringify(AGENT_TOOLS);
-  if (!withinBudget(system, size)) return null;
+  const release = reserveBudget(system, size);
+  if (!release) return null;
   try {
     const { res, model } = await vertexGenerate({ systemInstruction: { parts: [{ text: system }] }, contents, tools: AGENT_TOOLS,
       toolConfig: { functionCallingConfig: { mode: 'AUTO' } }, generationConfig: { temperature: 0.4, maxOutputTokens: 700 } }, 20_000);
@@ -1015,6 +1050,8 @@ async function askAgent(system, contents) {
   } catch (e) {
     setAiError(`Vertex AI: ${String(e.message).slice(0, 200)}`);
     return null;
+  } finally {
+    release();
   }
 }
 
@@ -1371,5 +1408,5 @@ linkIds().filter((id) => linked(id)).forEach((id, i) => {
 
 module.exports = {
   start, logout, status, addLink, removeLink, config, configView, saveConfig, sendTo, handle, tellAdmins, jidOf, askModel,
-  _test: { payChoice, links, link, linkFor, chatLink, linkIds, follow, phoneIn, drafts, agentTool, saidBefore, seenMessages, payHere, payState, otpIn, payMobileIn, orderFacts, unansweredAt, checkReply, waFormat, askModel, vertexAuth, spendToday, priceOf, safeReply, AGENT_TOOLS, agentSystem, vertexAccess, vertexUrl, aiCallsByChat, askedAbout, sessions, setTransport: (fn) => { transport = fn; }, setDownloader: (fn) => { downloader = fn; }, recent, norm, onRaw, jidOf, watchShop, history },
+  _test: { payChoice, links, link, linkFor, chatLink, linkIds, follow, phoneIn, drafts, agentTool, saidBefore, seenMessages, payHere, payState, otpIn, payMobileIn, orderFacts, unansweredAt, checkReply, waFormat, askModel, vertexAuth, spendToday, priceOf, safeReply, AGENT_TOOLS, agentSystem, agentContents, reserveBudget, downloadImage, vertexAccess, vertexUrl, aiCallsByChat, askedAbout, sessions, setTransport: (fn) => { transport = fn; }, setDownloader: (fn) => { downloader = fn; }, recent, norm, onRaw, jidOf, watchShop, history },
 };

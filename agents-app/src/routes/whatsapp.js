@@ -8,7 +8,7 @@ const wa = require('../whatsapp');
 // The shop's address, from the address the manager uses, until one is set.
 function shopUrlFrom(req) {
   if (wa.config().shopUrl) return;
-  const host = String(req?.headers?.['x-forwarded-host'] || req?.headers?.host || '').split(',')[0].trim();
+  const host = String(req?.headers?.host || '').split(',')[0].trim();
   if (/^[\w.-]+(:\d+)?$/.test(host) && !/^(localhost|127\.|\[)/.test(host)) wa.saveConfig({ shopUrl: `https://${host}/shop` });
 }
 

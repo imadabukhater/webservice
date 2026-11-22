@@ -36,9 +36,12 @@ function backupNow() {
   running ??= (async () => {
     const b = await bucket();
     if (!b) throw new Error('لم يُحدَّد مكان النسخ السحابي بعد (backup-bucket)');
-    const file = path.join(os.tmpdir(), `agents-cloud-${process.pid}-${now()}.db`);
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agents-cloud-'));
+    try { fs.chmodSync(dir, 0o700); } catch {}
+    const file = path.join(dir, 'backup.db');
     try {
       db.exec(`VACUUM INTO '${file.replace(/'/g, "''")}'`);
+      try { fs.chmodSync(file, 0o600); } catch {}
       const body = zlib.gzipSync(fs.readFileSync(file));
       let token;
       try {
@@ -72,7 +75,7 @@ function backupNow() {
       setSetting('backup_error', '');
       return { bucket: b, name, bytes: body.length };
     } finally {
-      fs.rm(file, { force: true }, () => {});
+      fs.rm(dir, { recursive: true, force: true }, () => {});
     }
   })().finally(() => { running = null; });
   return running;

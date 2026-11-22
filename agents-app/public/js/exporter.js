@@ -23,14 +23,22 @@ const safeName = (title) => String(title).replace(/[\\/:*?"<>|]+/g, ' ').trim();
 // Download names stay ASCII: several phone browsers replace Arabic file names with "download".
 const fileName = (base, ext) => `${String(base || 'report').replace(/[^A-Za-z0-9_-]+/g, '-')}-${stamp()}.${ext}`;
 
+// Neutralize Excel/Calc formula injection (values starting with =, +, -, @, tab, CR) on non-numeric cells.
+const safeSpreadsheetText = (v, type) => {
+  if (type === 'money' || type === 'num') return String(v ?? '');
+  const s = String(v ?? '');
+  return /^[=+\-@\t\r]/.test(s) ? `'${s}` : s;
+};
+
 export function exportCSV(title, columns, rows, base) {
-  const quote = (s) => /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  const quote = (s) => /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
   const lines = [columns.map((c) => quote(c.label)).join(',')];
   for (const r of rows) {
     lines.push(columns.map((c) => {
       const v = rawValue(c, r[c.key]);
-      // Long digit strings (ICCIDs, phone numbers with a leading 0) must not become numbers in Excel.
-      return quote((c.type === 'iccid' || c.type === 'phone') && v ? `="${v}"` : v);
+      // Long digit strings (ICCIDs, phone numbers with a leading 0) must not become numbers in Excel; only allow pure digits inside ="...".
+      if ((c.type === 'iccid' || c.type === 'phone') && /^\+?\d+$/.test(v)) return quote(`="${v}"`);
+      return quote(safeSpreadsheetText(v, c.type));
     }).join(','));
   }
   downloadBlob(new Blob(['\ufeff' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8' }), fileName(base, 'csv'));
@@ -39,7 +47,7 @@ export function exportCSV(title, columns, rows, base) {
 export function exportExcel(title, columns, rows, base) {
   const head = columns.map((c) => `<th>${esc(c.label)}</th>`).join('');
   const body = rows.map((r) => `<tr>${columns.map((c) => {
-    const v = rawValue(c, r[c.key]);
+    const v = safeSpreadsheetText(rawValue(c, r[c.key]), c.type);
     const style = c.type === 'iccid' || c.type === 'phone' ? ' style="mso-number-format:\'\\@\'"' : '';
     return `<td${style}>${esc(v)}</td>`;
   }).join('')}</tr>`).join('');

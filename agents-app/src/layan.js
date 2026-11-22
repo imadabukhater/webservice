@@ -11,7 +11,7 @@
 const crypto = require('node:crypto');
 const { sniffImageMime } = require('./util');
 
-const BASE = process.env.LY_BASE || 'https://api.layan-t.net';
+const BASE = () => process.env.LY_BASE || 'https://api.layan-t.net';
 const TIMEOUT_MS = 30_000;
 const ACTIVE = 'פעיל';
 const SUSPENDED = 'מושהה';
@@ -89,7 +89,7 @@ const credKey = ({ user, pass, secret } = {}) => `${user}\n${pass}\n${secret || 
 async function request(method, route, { body, jwt } = {}) {
   let res;
   try {
-    res = await fetch(`${BASE}/api/${route}`, {
+    res = await fetch(`${BASE()}/api/${route}`, {
       method,
       signal: AbortSignal.timeout(TIMEOUT_MS),
       headers: { 'Content-Type': 'application/json', Language: 'ar', ...(jwt ? { Authorization: `Bearer ${jwt}` } : {}) },
@@ -240,11 +240,24 @@ async function esimStatus(creds, asyncActionId) {
   return { status: data?.status || '', esimLink: data?.esimLink || '', esimUrl: data?.esimUrl || '' };
 }
 // A QR code image Layan links to, kept as a data URL (so it stays with the line and can be e-mailed).
+// Strictly allowlisted to Layan's own origin/subdomains or Azure Blob Storage with redirects disabled (anti-SSRF).
 // Azure Blob Storage often serves .png QR images with Content-Type: application/octet-stream, so sniff real image bytes.
 async function imageDataUrl(url) {
   if (!url) return '';
   if (/^data:image\/(?:png|jpe?g|webp|gif);base64,/i.test(url)) return url.replace(/^data:image\/jpg;/i, 'data:image/jpeg;');
-  const res = await fetch(new URL(url, BASE), { signal: AbortSignal.timeout(TIMEOUT_MS) });
+  let u;
+  try { u = new URL(String(url), BASE()); } catch { throw new LayanError('ليان: رابط رمز QR غير صالح'); }
+  const site = new URL(BASE());
+  const host = u.hostname.toLowerCase();
+  const trusted = u.origin === site.origin
+    || (u.protocol === 'https:' && (host === 'layan-t.net' || host.endsWith('.layan-t.net') || host.endsWith('.blob.core.windows.net')));
+  if (!trusted) throw new LayanError('ليان: رابط رمز QR من مصدر غير موثوق');
+  let res;
+  try {
+    res = await fetch(u, { signal: AbortSignal.timeout(TIMEOUT_MS), redirect: 'error' });
+  } catch (e) {
+    throw new LayanError(`ليان: تعذّر تحميل رمز QR (${e.name === 'TimeoutError' ? 'انتهى الوقت' : 'غير مسموح'})`);
+  }
   if (!res.ok) throw new LayanError(`ليان: رمز QR غير متاح (${res.status})`);
   const buf = Buffer.from(await res.arrayBuffer());
   if (!buf.length) throw new LayanError(`ليان: رمز QR غير متاح (${res.status})`);

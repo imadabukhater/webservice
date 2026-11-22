@@ -5,7 +5,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { q, tx, db, getSettings, setSetting } = require('../db');
 const { fail, now, str, num } = require('../util');
-const { hashPassword, verifyPassword, sha } = require('../passwords');
+const { hashPassword, verifyPasswordAsync, sha } = require('../passwords');
 const { publicUser } = require('../domain');
 const { route, ADMIN } = require('../router');
 
@@ -18,12 +18,22 @@ function createSession(userId) {
   return token;
 }
 
-// Login attempts: in-memory throttle per username + address and per address overall.
+// Login attempts: exponential lockout per username + address and per address overall (1m -> 5m -> 15m -> 60m).
 const attempts = new Map();
+const LOCKOUT_STEPS_MS = [60_000, 5 * 60_000, 15 * 60_000, 60 * 60_000];
+const STRIKE_RESET_MS = 2 * 60 * 60_000;
 function recordAttempt(key, limit) {
-  const a = attempts.get(key) || { n: 0, until: 0 };
+  const t = now();
+  const a = attempts.get(key) || { n: 0, strikes: 0, until: 0, lastAt: 0 };
+  if (a.lastAt && t - a.lastAt > STRIKE_RESET_MS) { a.strikes = 0; a.n = 0; }
+  a.lastAt = t;
   a.n += 1;
-  if (a.n >= limit) { a.until = now() + 60_000; a.n = 0; }
+  if (a.n >= limit) {
+    const dur = LOCKOUT_STEPS_MS[Math.min(a.strikes, LOCKOUT_STEPS_MS.length - 1)];
+    a.until = t + dur;
+    a.strikes += 1;
+    a.n = 0;
+  }
   attempts.delete(key);
   attempts.set(key, a);
   if (attempts.size > 5000) attempts.delete(attempts.keys().next().value);
@@ -34,16 +44,20 @@ route('GET', '/api/public', null, () => {
   return { appName, supportWhatsapp };
 });
 
-route('POST', '/api/login', null, ({ body, ip }) => {
+route('POST', '/api/login', null, async ({ body, ip }) => {
   const username = str(body.username, 64);
   const key = username.toLowerCase() + '|' + ip;
   const ipKey = 'ip|' + ip;
   const a = attempts.get(key);
   const ipA = attempts.get(ipKey);
-  if ((a && a.until > now()) || (ipA && ipA.until > now())) fail(429, 'محاولات كثيرة. حاول بعد دقيقة.');
+  const until = Math.max(a?.until || 0, ipA?.until || 0);
+  if (until > now()) {
+    const mins = Math.max(1, Math.ceil((until - now()) / 60_000));
+    fail(429, mins > 1 ? `محاولات كثيرة. حاول بعد ${mins} دقائق.` : 'محاولات كثيرة. حاول بعد دقيقة.');
+  }
   // Only the manager signs in: there are no agent accounts any more.
   const u = q("SELECT * FROM users WHERE username = ? AND role = 'admin'").get(username);
-  if (!u || !verifyPassword(String(body.password || ''), u.password_hash)) {
+  if (!u || !(await verifyPasswordAsync(String(body.password || ''), u.password_hash))) {
     recordAttempt(key, 5);
     recordAttempt(ipKey, 20);
     fail(401, 'اسم المستخدم أو كلمة المرور غير صحيحة');
@@ -60,10 +74,10 @@ route('POST', '/api/logout', ADMIN, ({ token }) => {
 
 route('GET', '/api/me', ADMIN, ({ user }) => ({ user: publicUser(user), settings: getSettings() }));
 
-route('POST', '/api/me/password', ADMIN, ({ user, body, token }) => {
-  if (!verifyPassword(String(body.current || ''), user.password_hash)) fail(400, 'كلمة المرور الحالية غير صحيحة');
+route('POST', '/api/me/password', ADMIN, async ({ user, body, token }) => {
+  if (!(await verifyPasswordAsync(String(body.current || ''), user.password_hash))) fail(400, 'كلمة المرور الحالية غير صحيحة');
   const pw = String(body.password || '');
-  if (pw.length < 6) fail(400, 'كلمة المرور الجديدة يجب أن تكون 6 أحرف على الأقل');
+  if (pw.length < 10) fail(400, 'كلمة المرور الجديدة يجب أن تكون 10 أحرف على الأقل');
   q('UPDATE users SET password_hash = ? WHERE id = ?').run(hashPassword(pw), user.id);
   // Sign out every other device.
   q('DELETE FROM sessions WHERE user_id = ? AND token_hash != ?').run(user.id, sha(token));
@@ -207,16 +221,37 @@ route('POST', '/api/backup/cloud', ADMIN, async () => {
 });
 
 route('GET', '/api/backup', ADMIN, ({ res }) => {
-  const file = path.join(os.tmpdir(), `agents-backup-${process.pid}-${now()}.db`);
-  db.exec(`VACUUM INTO '${file.replace(/'/g, "''")}'`);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agents-bkp-'));
+  try { fs.chmodSync(dir, 0o700); } catch {}
+  const file = path.join(dir, 'backup.db');
+  let cleaned = false;
+  const cleanup = () => {
+    if (cleaned) return;
+    cleaned = true;
+    fs.rm(dir, { recursive: true, force: true }, () => {});
+  };
+  try {
+    db.exec(`VACUUM INTO '${file.replace(/'/g, "''")}'`);
+    try { fs.chmodSync(file, 0o600); } catch {}
+  } catch (e) {
+    cleanup();
+    throw e;
+  }
   const stamp = new Date().toISOString().slice(0, 10);
   res.writeHead(200, {
     'Content-Type': 'application/octet-stream',
     'Content-Disposition': `attachment; filename="agents-backup-${stamp}.db"`,
     'Cache-Control': 'no-store',
+    'X-Content-Type-Options': 'nosniff',
+    'X-Frame-Options': 'DENY',
+    'X-Robots-Tag': 'noindex, nofollow',
+    'Referrer-Policy': 'strict-origin-when-cross-origin',
   });
   const stream = fs.createReadStream(file);
+  stream.on('error', () => { cleanup(); if (!res.destroyed) res.destroy(); });
+  stream.on('close', cleanup);
+  res.on('close', cleanup);
+  res.on('finish', cleanup);
   stream.pipe(res);
-  stream.on('close', () => fs.rm(file, { force: true }, () => {}));
   return { raw: true };
 });

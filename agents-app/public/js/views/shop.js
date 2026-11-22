@@ -150,7 +150,7 @@ async function openOrder(id) {
   const kv = (k, v) => (v ? `<div>${k}</div><div>${v}</div>` : '');
   sheet({
     title: `طلب ${o.code}`,
-    subtitle: `${esc(o.packageLabel)} · ${fmtMoney(o.amount)}`,
+    subtitle: `${o.packageLabel || ''} · ${fmtMoney(o.amount)}`,
     wide: true,
     body: `
       <div class="kv">${kv('الرقم', phone(o.number))}${kv('الشريحة', o.sim ? `<span class="ltr">${esc(o.sim)}</span>` : '')}${kv('الزبون', esc(o.customerName))}
@@ -261,7 +261,7 @@ export default {
     'open-order': (btn) => openOrder(Number(btn.dataset.id)),
     async 'open-mail'(btn) {
       const m = await api.get(`/api/shop/admin/mails/${btn.dataset.id}`);
-      sheet({ title: m.subject || 'إشعار', subtitle: esc(m.from), body: `<pre class="small" style="white-space:pre-wrap">${esc(m.body)}</pre>`, submit: 'إغلاق', async onSubmit() { return ''; } });
+      sheet({ title: m.subject || 'إشعار', subtitle: m.from || '', body: `<pre class="small" style="white-space:pre-wrap">${esc(m.body)}</pre>`, submit: 'إغلاق', async onSubmit() { return ''; } });
     },
     retry(btn) {
       const o = byId(V.orders, btn);

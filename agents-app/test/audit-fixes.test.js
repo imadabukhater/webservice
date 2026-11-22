@@ -440,12 +440,15 @@ test('Medium 4-6: PUT /api/settings rolls back atomically, /api/health returns a
     res.writeHead(404); res.end();
   });
   await new Promise((r) => imgSrv.listen(0, '127.0.0.1', r));
+  const prevLyBase = process.env.LY_BASE;
   try {
     const imgBase = `http://127.0.0.1:${imgSrv.address().port}`;
+    process.env.LY_BASE = imgBase;
     const jpg = await ly.imageDataUrl(`${imgBase}/ok.jpg`);
     assert.match(jpg, /^data:image\/jpeg;base64,/);
     await assert.rejects(() => ly.imageDataUrl(`${imgBase}/bad.svg`), /غير متاح/);
   } finally {
+    if (prevLyBase === undefined) delete process.env.LY_BASE; else process.env.LY_BASE = prevLyBase;
     imgSrv.close();
   }
 
@@ -556,9 +559,11 @@ test('Payment & QR audit fixes: Azure octet-stream PNG sniffing (Layan & Aylol),
   });
   await new Promise((r) => qrSrv.listen(0, '127.0.0.1', r));
   const prevAyBase = process.env.AYLOL_BASE;
+  const prevLyBase2 = process.env.LY_BASE;
   try {
     const base = `http://127.0.0.1:${qrSrv.address().port}`;
     process.env.AYLOL_BASE = base;
+    process.env.LY_BASE = base;
     const lyPng = await ly.imageDataUrl(`${base}/blob.png`);
     assert.equal(lyPng, `data:image/png;base64,${PNG_BYTES.toString('base64')}`, 'Layan accepts PNG with application/octet-stream');
     await assert.rejects(() => ly.imageDataUrl(`${base}/blob.html`), /غير متاح/, 'Layan rejects non-image octet-stream');
@@ -570,6 +575,7 @@ test('Payment & QR audit fixes: Azure octet-stream PNG sniffing (Layan & Aylol),
     assert.equal(await ay.qrImage(`${base}/bad.svg`), '', 'Aylol rejects SVG');
   } finally {
     if (prevAyBase === undefined) delete process.env.AYLOL_BASE; else process.env.AYLOL_BASE = prevAyBase;
+    if (prevLyBase2 === undefined) delete process.env.LY_BASE; else process.env.LY_BASE = prevLyBase2;
     qrSrv.close();
   }
 
@@ -793,4 +799,128 @@ test('Nearest-shekel rounding, SSR /package/:id SEO pages, /api/shop/package/:id
   } finally {
     await ok(call(admin, 'PUT', '/api/settings', { googleSiteVerification: '' }));
   }
+});
+
+test('Security audit hardening: no order-code leak, AI payment & Gemini abuse guards, Layan SSRF, OTP bombing, backup headers, mail auth', async () => {
+  const { q } = require('../src/db');
+  const aipay = require('../src/aipay');
+  const ly = require('../src/layan');
+  const mail = require('../src/mail');
+  const wa = require('../src/whatsapp');
+  const shopRoute = require('../src/routes/shop');
+  const seo = require('../src/seo');
+
+  shopRoute._resetThrottle();
+
+  // 1) Order code MUST NOT leak when another client conflicts on contactPhone
+  const cat = await ok(call(admin, 'GET', '/api/catalog'));
+  const qlPkg = cat.packages.find((p) => p.supplier === 'ql' && p.inShop);
+  assert.ok(qlPkg);
+  const victim = await ok(call(null, 'POST', '/api/shop/orders', {
+    packageId: qlPkg.id, kind: 'esim', customerName: 'زبون حقيقي', contactPhone: '0599887766',
+  }, { 'X-Client-Id': 'victim-browser-uuid' }));
+  const probe = await call(null, 'POST', '/api/shop/orders', {
+    packageId: qlPkg.id, kind: 'esim', customerName: 'طرف آخر', contactPhone: '0599887766',
+  }, { 'X-Client-Id': 'other-browser-uuid' });
+  assert.equal(probe.status, 409);
+  assert.equal(probe.body.code, undefined, '409 on phone conflict must NOT expose victim order code');
+  assert.equal(String(probe.body.error).includes(victim.code), false, 'error text must NOT contain victim order code');
+
+  // Same clientId still gets their own code so their browser can resume cleanly
+  const sameBrowser = await call(null, 'POST', '/api/shop/orders', {
+    packageId: qlPkg.id, kind: 'esim', customerName: 'زبون حقيقي', contactPhone: '0599887766',
+  }, { 'X-Client-Id': 'victim-browser-uuid' });
+  assert.equal(sameBrowser.status, 409);
+  assert.equal(sameBrowser.body.code, victim.code);
+  await ok(call(null, 'POST', `/api/shop/orders/${victim.code}/cancel`));
+
+  // 2) Cross-order SMS bombing to same target mobile is blocked even after cancelling & creating a new order
+  const oSms1 = await ok(call(null, 'POST', '/api/shop/orders', { packageId: qlPkg.id, kind: 'esim', customerName: 'طالب أول' }, { 'X-Client-Id': 'sms-c1' }));
+  await ok(call(null, 'POST', `/api/shop/orders/${oSms1.code}/jawwal/otp`, { mobile: '0599771122' }));
+  await ok(call(null, 'POST', `/api/shop/orders/${oSms1.code}/cancel`));
+  const oSms2 = await ok(call(null, 'POST', '/api/shop/orders', { packageId: qlPkg.id, kind: 'esim', customerName: 'طالب ثاني' }, { 'X-Client-Id': 'sms-c2' }));
+  const bombRes = await call(null, 'POST', `/api/shop/orders/${oSms2.code}/jawwal/otp`, { mobile: '0599771122' });
+  assert.equal(bombRes.status, 429, 'rapid OTP to same mobile on a new order is blocked');
+  await ok(call(null, 'POST', `/api/shop/orders/${oSms2.code}/cancel`));
+
+  // 3) aipay.allowed enforces deterministic phone/ref agreement & blocks extreme overpayment theft
+  const tNow = Date.now();
+  const baseOrder = { amount: 30, created_at: tNow - 60_000, pay_phone: '0599111111', pay_reference: 'REF999888' };
+  const baseMail = { order_id: null, trusted: 1, amount: 30, received_at: tNow - 10_000, sender_phone: '0599111111', reference: 'REF999888' };
+  assert.equal(aipay.allowed(baseOrder, baseMail, tNow), true);
+  assert.equal(aipay.allowed(baseOrder, { ...baseMail, amount: 126 }, tNow), false, 'huge overpayment (126 for 30) blocked');
+  assert.equal(aipay.allowed(baseOrder, { ...baseMail, sender_phone: '0599222222' }, tNow), false, 'mismatched sender phone blocked');
+  assert.equal(aipay.allowed(baseOrder, { ...baseMail, reference: 'OTHER12345' }, tNow), false, 'mismatched reference blocked');
+
+  // 4) Gemini API abuse protection: bounded conversation history & concurrent budget/concurrency lock
+  const spamJid = '970599000999@s.whatsapp.net';
+  wa._test.history.set(spamJid, Array.from({ length: 100 }, (_, i) => ({
+    role: i % 2 === 0 ? 'user' : 'model', text: 'س'.repeat(1800), at: tNow,
+  })));
+  const turns = wa._test.agentContents(spamJid, 'مرحبا');
+  const totalChars = turns.reduce((n, tr) => n + tr.parts[0].text.length, 0);
+  assert.ok(totalChars <= 9000, `agentContents capped total prompt chars (got ${totalChars})`);
+  wa._test.history.delete(spamJid);
+
+  assert.equal(wa._test.reserveBudget('sys', 'usr'), null, 'budget 0 blocks Gemini completely');
+  const prevDaily = process.env.WA_AI_DAILY_USD;
+  process.env.WA_AI_DAILY_USD = '0.5';
+  try {
+    const holds = [];
+    for (let i = 0; i < 6; i++) holds.push(wa._test.reserveBudget('sys', 'usr'));
+    assert.equal(holds.filter(Boolean).length, 4, 'at most 4 concurrent Vertex AI requests allowed');
+    for (const rel of holds) if (rel) rel();
+  } finally {
+    if (prevDaily === undefined) delete process.env.WA_AI_DAILY_USD; else process.env.WA_AI_DAILY_USD = prevDaily;
+  }
+
+  // 5) Layan QR SSRF protection: blocks arbitrary hosts, cloud metadata IP, and redirects
+  const redirSrv = http.createServer((req, res) => {
+    res.writeHead(302, { Location: 'http://169.254.169.254/latest/meta-data/' });
+    res.end();
+  });
+  await new Promise((r) => redirSrv.listen(0, '127.0.0.1', r));
+  const prevLy = process.env.LY_BASE;
+  try {
+    await assert.rejects(() => ly.imageDataUrl('http://169.254.169.254/computeMetadata/v1/'), /غير موثوق/);
+    await assert.rejects(() => ly.imageDataUrl('https://evil.example.com/qr.png'), /غير موثوق/);
+    process.env.LY_BASE = `http://127.0.0.1:${redirSrv.address().port}`;
+    await assert.rejects(() => ly.imageDataUrl(`http://127.0.0.1:${redirSrv.address().port}/redir`), /تعذّر تحميل/);
+  } finally {
+    if (prevLy === undefined) delete process.env.LY_BASE; else process.env.LY_BASE = prevLy;
+    redirSrv.close();
+  }
+
+  // 6) Mail authentication requires mx.google.com and blocks look-alike domains on dot-less terms
+  assert.equal(mail.authenticSender({
+    from: 'Fake <a@evil-jawwal.com>',
+    auth: 'mx.google.com; dkim=pass header.i=@evil-jawwal.com; dmarc=pass header.from=evil-jawwal.com',
+  }, 'jawwal'), false);
+  assert.equal(mail.authenticSender({
+    from: 'Jawwal <noreply@jawwalpay.ps>',
+    auth: 'spoofed.attacker.com; dkim=pass header.i=@jawwalpay.ps; dmarc=pass header.from=jawwalpay.ps',
+  }, 'jawwalpay.ps'), false);
+
+  // 7) Password policy enforces >= 10 chars & GET /api/backup includes security headers
+  const shortPw = await call(admin, 'POST', '/api/me/password', { current: 'admin-pass', password: 'short7' });
+  assert.equal(shortPw.status, 400);
+  const bkp = await new Promise((resolve, reject) => {
+    const req = http.request(`${base}/api/backup`, {
+      method: 'GET',
+      headers: { Authorization: `Bearer ${admin}` },
+    }, (res) => {
+      const chunks = [];
+      res.on('data', (c) => chunks.push(c));
+      res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, size: Buffer.concat(chunks).length }));
+    });
+    req.on('error', reject);
+    req.end();
+  });
+  assert.equal(bkp.status, 200);
+  assert.ok(bkp.size > 1000);
+  assert.equal(bkp.headers['x-content-type-options'], 'nosniff');
+  assert.match(bkp.headers['x-robots-tag'] || '', /noindex/);
+
+  // 8) seo.siteOrigin rejects malformed Host headers
+  assert.equal(seo.siteOrigin({ headers: { host: 'evil.com/path?x=1' } }), 'https://www.hotesim.shop');
 });

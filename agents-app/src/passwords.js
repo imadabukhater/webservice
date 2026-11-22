@@ -15,6 +15,18 @@ function verifyPassword(pw, stored) {
   return expected.length === hash.length && crypto.timingSafeEqual(hash, expected);
 }
 
+function verifyPasswordAsync(pw, stored) {
+  const [, saltHex, hashHex] = String(stored).split('$');
+  if (!saltHex || !hashHex) return Promise.resolve(false);
+  return new Promise((resolve, reject) => {
+    crypto.scrypt(String(pw), Buffer.from(saltHex, 'hex'), 64, (err, hash) => {
+      if (err) return reject(err);
+      const expected = Buffer.from(hashHex, 'hex');
+      resolve(expected.length === hash.length && crypto.timingSafeEqual(hash, expected));
+    });
+  });
+}
+
 const sha = (s) => crypto.createHash('sha256').update(s).digest('hex');
 
-module.exports = { hashPassword, verifyPassword, sha };
+module.exports = { hashPassword, verifyPassword, verifyPasswordAsync, sha };

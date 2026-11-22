@@ -179,7 +179,7 @@ function buildPackageFaqs(sp, shopName) {
 function siteOrigin(req) {
   if (process.env.SHOP_URL) return process.env.SHOP_URL.replace(/\/+$/, '');
   const host = String(req?.headers?.host || '').trim();
-  if (!host || /^(localhost|127\.0\.0\.1|\[::1\])(?::|$)/i.test(host) || /^(?:www\.)?hotesim\.shop(?::\d+)?$/i.test(host)) {
+  if (!host || !/^[a-z0-9.-]+(?::\d+)?$/i.test(host) || /^(localhost|127\.0\.0\.1|\[::1\])(?::|$)/i.test(host) || /^(?:www\.)?hotesim\.shop(?::\d+)?$/i.test(host)) {
     return 'https://www.hotesim.shop';
   }
   const proto = req.headers['x-forwarded-proto'] === 'http' ? 'http' : 'https';

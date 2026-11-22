@@ -66,7 +66,7 @@ class Conn {
   }
 }
 
-const quote = (s) => `"${String(s).replace(/[\\"]/g, (c) => '\\' + c)}"`;
+const quote = (s) => `"${String(s).replace(/[\r\n\0]+/g, ' ').replace(/[\\"]/g, (c) => '\\' + c)}"`;
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const imapDate = (ts) => { const d = new Date(ts); return `${d.getUTCDate()}-${MONTHS[d.getUTCMonth()]}-${d.getUTCFullYear()}`; };
 
@@ -302,7 +302,9 @@ function extractEmail(from) {
 function authenticSender({ from, auth }, term) {
   const rawTerms = String(term || '').toLowerCase().split(/[,;\s]+/).map((s) => s.trim()).filter(Boolean);
   if (!rawTerms.length || !auth) return false;
-  const a = auth.toLowerCase();
+  const a = String(auth).trim().toLowerCase();
+  // Only trust Authentication-Results stamped by Gmail's own receiving MTA.
+  if (!/^mx\.google\.com\b/.test(a)) return false;
   const senderEmail = extractEmail(from);
   const fromDomain = senderEmail.split('@')[1] || (String(from).toLowerCase().match(/@([a-z0-9.-]+)/) || [])[1] || '';
   const dkimDomains = [...a.matchAll(/\bdkim=pass\b[^;]*?header\.(?:d|i)=@?([a-z0-9.-]+)/g)].map((m) => m[1]);
@@ -313,7 +315,9 @@ function authenticSender({ from, auth }, term) {
       const dom = t.split('@')[1];
       return Boolean(dom && ((dmarcPass && fromDomain === dom) || dkimDomains.some((d) => d === dom || d.endsWith(`.${dom}`))));
     }
-    const fits = (d) => (t.includes('.') ? d === t || d.endsWith(`.${t}`) : d.includes(t));
+    const fits = (d) => (t.includes('.')
+      ? d === t || d.endsWith(`.${t}`)
+      : d.split('.').some((lbl) => lbl === t || (t.length >= 4 && lbl.startsWith(t) && /^[a-z0-9]+$/.test(lbl))));
     if (dmarcPass && fits(fromDomain)) return true;
     return dkimDomains.some((d) => fits(d));
   });

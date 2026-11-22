@@ -85,7 +85,7 @@ async function dispatch(req, res, url) {
   if (['POST', 'PUT', 'DELETE'].includes(req.method) && req.headers?.origin) {
     let originHost = '';
     try { originHost = new URL(String(req.headers.origin)).host.toLowerCase(); } catch { fail(403, 'مصدر الطلب غير مصرح به'); }
-    const reqHost = String((TRUST_PROXY && req.headers['x-forwarded-host']) || req.headers.host || '').split(',')[0].trim().toLowerCase();
+    const reqHost = String(req.headers.host || '').split(',')[0].trim().toLowerCase();
     if (reqHost && originHost !== reqHost) fail(403, 'مصدر الطلب غير مصرح به');
   }
   const body = ['POST', 'PUT', 'DELETE'].includes(req.method) ? await readBody(req, r.maxBody) : {};

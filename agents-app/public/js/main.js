@@ -244,8 +244,8 @@ function openAccount() {
       <div class="divider"></div>
       <h3>تغيير كلمة المرور</h3>
       <div class="field"><label for="pw-cur">كلمة المرور الحالية</label><input class="input ltr" id="pw-cur" name="current" type="password" autocomplete="current-password"></div>
-      <div class="field"><label for="pw-new">كلمة المرور الجديدة</label><input class="input ltr" id="pw-new" name="password" type="password" autocomplete="new-password" minlength="6">
-        <span class="hint">6 أحرف على الأقل. سيُسجَّل خروجك من الأجهزة الأخرى.</span></div>
+      <div class="field"><label for="pw-new">كلمة المرور الجديدة</label><input class="input ltr" id="pw-new" name="password" type="password" autocomplete="new-password" minlength="10">
+        <span class="hint">10 أحرف على الأقل. سيُسجَّل خروجك من الأجهزة الأخرى.</span></div>
       <div class="divider"></div>
       <button type="button" class="btn btn-danger btn-block" id="logout-btn">${icon('logout')}تسجيل الخروج</button>`,
     submit: 'حفظ كلمة المرور',
