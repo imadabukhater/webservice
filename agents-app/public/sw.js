@@ -1,5 +1,5 @@
 // App shell cache: pages and code load instantly and work offline; API calls always go to the network.
-const CACHE = 'esim-admin-shell-v41';
+const CACHE = 'esim-admin-shell-v42';
 const SHELL = [
   '/portal',
   '/css/app.css',

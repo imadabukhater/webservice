@@ -105,6 +105,9 @@ export default {
             <div class="field"><label for="st-wa">واتساب الدعم الفني</label><input class="input ltr" id="st-wa" name="supportWhatsapp" inputmode="tel" placeholder="972567725080" value="${esc(s.supportWhatsapp)}">
               <span class="hint">بالصيغة الدولية بدون + أو 0 في البداية. يظهر للزبائن في المتجر وفي رسالة رمز eSIM. اتركه فارغاً لإخفائه.</span></div>
           </div>
+          <div class="field"><label for="st-gsc">كود تحقق Google Search Console <span class="muted">(اختياري)</span></label>
+            <input class="input ltr" id="st-gsc" name="googleSiteVerification" placeholder="الصق كود content أو وسم meta من Google Search Console" value="${esc(s.googleSiteVerification || '')}">
+            <span class="hint">يُضاف تلقائياً للصفحة الرئيسية وصفحات الباقات لتأكيد الملكية في Google Search Console. رابط الخريطة: <b class="ltr">https://www.hotesim.shop/sitemap.xml</b></span></div>
           <div id="settings-msg"></div>
           <button class="btn btn-primary" type="submit">${icon('check')}حفظ الإعدادات</button>
         </form>
@@ -290,6 +293,7 @@ export default {
       try {
         S.settings = await api.put('/api/settings', {
           appName: field(form, 'appName'), esimFee: field(form, 'esimFee'), supportWhatsapp: field(form, 'supportWhatsapp'),
+          googleSiteVerification: field(form, 'googleSiteVerification'),
         });
         toast('تم حفظ الإعدادات');
         changed({ keepView: true });

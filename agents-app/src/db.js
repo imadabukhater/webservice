@@ -398,6 +398,8 @@ const DEFAULT_SETTINGS = {
   shop_auto_max: '200', shop_hour_limit: '3', aylol_low_balance: '100',
   // The shop's price: the supplier's price + this percentage.
   shop_markup: '20',
+  // Optional Google Search Console HTML-tag verification token.
+  google_site_verification: '',
 };
 function getSettings() {
   const out = { ...DEFAULT_SETTINGS };
@@ -449,6 +451,7 @@ function getSettings() {
     aylolLowBalance: Math.max(0, Number(out.aylol_low_balance ?? 100) || 0),
     shopTitle: out.shop_title || '',
     shopSubtitle: out.shop_subtitle || '',
+    googleSiteVerification: out.google_site_verification || '',
     jawwalpayNumber: out.jawwalpay_number,
     jawwalpayName: out.jawwalpay_name,
     palpayNumber: out.palpay_number,

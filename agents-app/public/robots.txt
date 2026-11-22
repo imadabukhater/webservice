@@ -2,15 +2,13 @@
 User-agent: *
 Allow: /
 Allow: /package/
-Allow: /shop
-Allow: /shop.html
 Allow: /css/
 Allow: /js/
 Allow: /icon.svg
 Allow: /icon-512.png
 Allow: /icon-192.png
 
-# Disallow internal agent management portals and sensitive APIs
+# Disallow internal management portal and APIs
 Disallow: /portal
 Disallow: /admin
 Disallow: /agent

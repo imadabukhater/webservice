@@ -52,13 +52,30 @@ const CSP = [
 ].join('; ');
 
 function sendJson(res, status, data) {
-  res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'Content-Security-Policy': "default-src 'none'; frame-ancestors 'none'", ...SECURITY_HEADERS });
+  res.writeHead(status, {
+    'Content-Type': 'application/json; charset=utf-8',
+    'Cache-Control': 'no-store',
+    'X-Robots-Tag': 'noindex, nofollow',
+    'Content-Security-Policy': "default-src 'none'; frame-ancestors 'none'",
+    ...SECURITY_HEADERS,
+  });
   res.end(JSON.stringify(data));
 }
 
-function serveStatic(req, res, pathname) {
+function serveStatic(req, res, pathname, url) {
   if (pathname.split('/').some((seg) => seg.startsWith('.') && seg !== '.')) {
     res.writeHead(403);
+    return res.end();
+  }
+  // Canonical host redirect for Google Search Console: apex hotesim.shop -> https://www.hotesim.shop
+  const reqHost = String(req.headers.host || '').trim();
+  if (/^hotesim\.shop(?::\d+)?$/i.test(reqHost)) {
+    res.writeHead(301, { Location: `https://www.hotesim.shop${req.url}`, ...SECURITY_HEADERS });
+    return res.end();
+  }
+  // Duplicate homepage URLs (/shop, /shop/, /shop.html) -> 301 to canonical /
+  if (/^\/shop\/?$/i.test(pathname) || pathname.toLowerCase() === '/shop.html') {
+    res.writeHead(301, { Location: `/${url.search || ''}`, ...SECURITY_HEADERS });
     return res.end();
   }
   // Dynamic XML sitemap with live /package/:id entries for Google Search.
@@ -71,6 +88,17 @@ function serveStatic(req, res, pathname) {
     });
     return res.end(req.method === 'HEAD' ? undefined : xml);
   }
+  // Dynamic server-rendered homepage (/) with live packages, prices, hreflang & Google Search Console schemas.
+  if (pathname === '/') {
+    const html = seo.renderHomeHtml({ siteUrl: seo.siteOrigin(req) });
+    res.writeHead(200, {
+      'Content-Type': 'text/html; charset=utf-8',
+      'Cache-Control': 'no-cache',
+      'Content-Security-Policy': CSP,
+      ...SECURITY_HEADERS,
+    });
+    return res.end(req.method === 'HEAD' ? undefined : html);
+  }
   // Server-rendered SEO package pages (/package/:id) with tailored meta, JSON-LD & pre-rendered Arabic/English content.
   const pkgMatch = pathname.match(/^\/package\/(\d+)(?:\/.*)?$/);
   if (pkgMatch) {
@@ -79,15 +107,14 @@ function serveStatic(req, res, pathname) {
       'Content-Type': 'text/html; charset=utf-8',
       'Cache-Control': 'no-cache',
       'Content-Security-Policy': CSP,
+      ...(status === 404 ? { 'X-Robots-Tag': 'noindex, nofollow' } : {}),
       ...SECURITY_HEADERS,
     });
     return res.end(req.method === 'HEAD' ? undefined : html);
   }
-  // Main site / root ('/') is the customer shop (Hot eSIM storefront).
-  // The manager's portal is served on /portal, /admin, /agent, /agents, or /index.html.
+  // The manager's portal is served on /portal, /admin, /agent, /agents, or /index.html (never indexed by Google).
   const isPortal = /^\/(portal|admin|agent|agents)(\/|$)/i.test(pathname) || pathname === '/index.html';
-  const isShop = pathname === '/' || /^\/shop(\/|$)/i.test(pathname) || pathname === '/shop.html';
-  const page = isPortal ? 'index.html' : isShop ? 'shop.html' : pathname;
+  const page = isPortal ? 'index.html' : pathname;
   let file = path.normalize(path.join(PUBLIC_DIR, page));
   // Inside public/ only (with the separator, so a sibling folder whose name starts with "public" is not inside).
   if (!file.startsWith(PUBLIC_DIR + path.sep)) {
@@ -95,7 +122,20 @@ function serveStatic(req, res, pathname) {
     return res.end();
   }
   if (!fs.existsSync(file) || fs.statSync(file).isDirectory()) {
-    file = path.join(PUBLIC_DIR, isPortal ? 'index.html' : 'shop.html');
+    if (isPortal) {
+      file = path.join(PUBLIC_DIR, 'index.html');
+    } else {
+      // Return a genuine HTTP 404 for unknown URLs so Google Search Console never flags Soft 404s.
+      const { html } = seo.renderNotFoundHtml(seo.siteOrigin(req));
+      res.writeHead(404, {
+        'Content-Type': 'text/html; charset=utf-8',
+        'Cache-Control': 'no-cache',
+        'X-Robots-Tag': 'noindex, nofollow',
+        'Content-Security-Policy': CSP,
+        ...SECURITY_HEADERS,
+      });
+      return res.end(req.method === 'HEAD' ? undefined : html);
+    }
   }
   const ext = path.extname(file);
   const shell = ext === '.html' || file.endsWith('sw.js');
@@ -104,8 +144,10 @@ function serveStatic(req, res, pathname) {
     // Code and styles revalidate on every load so an update reaches phones right away.
     'Cache-Control': shell || ext === '.js' || ext === '.css' ? 'no-cache' : 'public, max-age=86400',
     ...SECURITY_HEADERS,
+    ...(isPortal ? { 'X-Robots-Tag': 'noindex, nofollow' } : {}),
     ...(ext === '.html' ? { 'Content-Security-Policy': CSP } : {}),
   });
+  if (req.method === 'HEAD') return res.end();
   fs.createReadStream(file).on('error', () => res.destroy()).pipe(res);
 }
 
@@ -119,7 +161,7 @@ async function handle(req, res) {
         res.writeHead(405);
         return res.end();
       }
-      return serveStatic(req, res, decodeURIComponent(url.pathname));
+      return serveStatic(req, res, decodeURIComponent(url.pathname), url);
     }
   } catch {
     // A malformed address (e.g. a broken %-escape).

@@ -133,6 +133,13 @@ route('PUT', '/api/settings', ADMIN, ({ body }) => {
     }
     if (body.shopTitle !== undefined) setSetting('shop_title', str(body.shopTitle, 120));
     if (body.shopSubtitle !== undefined) setSetting('shop_subtitle', str(body.shopSubtitle, 240));
+    if (body.googleSiteVerification !== undefined) {
+      let raw = String(body.googleSiteVerification || '').trim();
+      const m = raw.match(/content=["']([^"']+)["']/i);
+      if (m) raw = m[1].trim();
+      if (raw && !/^[A-Za-z0-9._-]{10,128}$/.test(raw)) fail(400, 'كود تحقق Google Search Console غير صحيح');
+      setSetting('google_site_verification', raw);
+    }
     if (body.jawwalpayNumber !== undefined) {
       const n = String(body.jawwalpayNumber).replace(/[^\d+]/g, '');
       if (n && !/^\+?\d{9,13}$/.test(n)) fail(400, 'رقم محفظة جوال باي غير صحيح');

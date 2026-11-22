@@ -715,4 +715,58 @@ test('Nearest-shekel rounding, SSR /package/:id SEO pages, /api/shop/package/:id
   assert.match(sm.headers['content-type'], /application\/xml/);
   assert.match(sm.body, new RegExp(`<loc>[^<]*/package/${qlPkg.id}</loc>`));
   assert.doesNotMatch(sm.body, /#/);
+
+  // 5) Google Search Console homepage (/): West Bank + Gaza, 4 JSON-LD schemas, verification meta, 301 canonicals, real 404 (no Soft 404), and noindex on /portal
+  const rawReq = (p, headers = {}) => new Promise((resolve, reject) => {
+    const req = http.request(`${base}${p}`, { method: 'GET', headers }, (res) => {
+      let data = '';
+      res.on('data', (c) => { data += c; });
+      res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, body: data }));
+    });
+    req.on('error', reject);
+    req.end();
+  });
+
+  await ok(call(admin, 'PUT', '/api/settings', { googleSiteVerification: '<meta name="google-site-verification" content="gsc_verify_token_12345" />' }));
+  try {
+    const home = await rawReq('/');
+    assert.equal(home.status, 200);
+    assert.match(home.body, /<link rel="canonical" href="https:\/\/www\.hotesim\.shop\/">/);
+    assert.match(home.body, /hreflang="ar-PS"/);
+    assert.match(home.body, /<meta name="google-site-verification" content="gsc_verify_token_12345">/);
+    assert.match(home.body, /الضفة الغربية/);
+    assert.match(home.body, /قطاع غزة/);
+    assert.match(home.body, new RegExp(`href="/package/${qlPkg.id}"`));
+    const homeLds = [...home.body.matchAll(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/g)].map((m) => JSON.parse(m[1]));
+    const types = homeLds.map((x) => x['@type']);
+    for (const t of ['WebSite', 'OnlineStore', 'ItemList', 'FAQPage']) assert.ok(types.includes(t), `missing ${t} JSON-LD on /`);
+    const storeLd = homeLds.find((x) => x['@type'] === 'OnlineStore');
+    assert.ok(storeLd.areaServed.some((a) => a.name === 'West Bank'), 'OnlineStore areaServed includes West Bank');
+    assert.ok(storeLd.areaServed.some((a) => a.name === 'Gaza Strip'), 'OnlineStore areaServed includes Gaza Strip');
+    const listLd = homeLds.find((x) => x['@type'] === 'ItemList');
+    const firstOffer = listLd.itemListElement[0]?.item?.offers;
+    assert.ok(firstOffer?.shippingDetails && firstOffer?.hasMerchantReturnPolicy && firstOffer?.priceValidUntil, 'Merchant Listings offer fields present');
+
+    const apex = await rawReq('/package/1', { Host: 'hotesim.shop' });
+    assert.equal(apex.status, 301);
+    assert.equal(apex.headers.location, 'https://www.hotesim.shop/package/1');
+
+    const dupShop = await rawReq('/shop');
+    assert.equal(dupShop.status, 301);
+    assert.equal(dupShop.headers.location, '/');
+
+    const dupHtml = await rawReq('/shop.html');
+    assert.equal(dupHtml.status, 301);
+    assert.equal(dupHtml.headers.location, '/');
+
+    const soft404 = await rawReq('/not-a-real-page-xyz');
+    assert.equal(soft404.status, 404);
+    assert.match(soft404.headers['x-robots-tag'] || '', /noindex/);
+
+    const portal = await rawReq('/portal');
+    assert.equal(portal.status, 200);
+    assert.match(portal.headers['x-robots-tag'] || '', /noindex/);
+  } finally {
+    await ok(call(admin, 'PUT', '/api/settings', { googleSiteVerification: '' }));
+  }
 });

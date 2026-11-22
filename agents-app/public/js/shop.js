@@ -88,20 +88,20 @@ function fmtShekel(n) {
 }
 
 const CARRIER_SEO = [
-  { re: /سلكوم|cellcom/i, en: 'Cellcom', about: 'تتميّز شبكة سلكوم (Cellcom) بتغطية قوية وسرعات إنترنت عالية تدعم الجيل الخامس 5G في قطاع غزة وفلسطين مع استقرار ممتاز للمكالمات والإنترنت.' },
-  { re: /هوت|hot/i, en: 'Hot Mobile', about: 'تُعدّ شبكة هوت موبايل (Hot Mobile) من أكثر الشبكات طلباً لشرائح eSIM في غزة وفلسطين بفضل عروضها المرنة لمدة 30 يوماً و90 يوماً وأسعارها الاقتصادية.' },
-  { re: /بيلفون|pelephone/i, en: 'Pelephone', about: 'توفّر شبكة بيلفون (Pelephone) أداءً قوياً على شبكات 4G و5G مع جودة اتصال عالية وتغطية واسعة ومناسبة للاستخدام اليومي المكثّف.' },
-  { re: /بارتنر|partner/i, en: 'Partner', about: 'تقدّم شبكة بارتنر (Partner) باقات إنترنت كبيرة بسرعات 5G فائقة ومناسبة للتصفح، البث، والعمل عن بُعد في قطاع غزة وفلسطين.' },
-  { re: /\bwe\b|وي|wecom/i, en: 'WE (Wecom)', about: 'تتميّز باقات وي (WE / Wecom) بأكبر سعات الإنترنت مقابل السعر مع خيارات توفير شهرية وعروض 90 يوماً.' },
-  { re: /019/i, en: '019 Mobile', about: 'توفّر 019 موبايل (019 Mobile) باقات eSIM سريعة وموثوقة مع تفعيل فوري وأسعار منافسة.' },
-  { re: /aloha|الوها|ألوها/i, en: 'ALOHA', about: 'تتيح شرائح ALOHA تفعيل eSIM فوري وسهل مع باقات إنترنت ومكالمات مناسبة للاستخدام اليومي.' },
-  { re: /جولان|golan/i, en: 'Golan Telecom', about: 'توفّر جولان تليكوم (Golan Telecom) باقات eSIM مرنة بتغطية جيدة وسرعات إنترنت عالية.' },
-  { re: /رامي|rami/i, en: 'Rami Levy', about: 'تقدّم رامي ليفي (Rami Levy) باقات اتصال وإنترنت اقتصادية بتفعيل eSIM فوري.' },
+  { re: /سلكوم|cellcom/i, en: 'Cellcom', about: 'تتميّز شبكة سلكوم (Cellcom) بتغطية قوية وسرعات إنترنت عالية تدعم الجيل الخامس 5G في الضفة الغربية وقطاع غزة والقدس وفلسطين مع استقرار ممتاز للمكالمات والإنترنت.' },
+  { re: /هوت|hot/i, en: 'Hot Mobile', about: 'تُعدّ شبكة هوت موبايل (Hot Mobile) من أكثر الشبكات طلباً لشرائح eSIM في الضفة الغربية وقطاع غزة وفلسطين بفضل عروضها المرنة لمدة 30 يوماً و90 يوماً وأسعارها الاقتصادية.' },
+  { re: /بيلفون|pelephone/i, en: 'Pelephone', about: 'توفّر شبكة بيلفون (Pelephone) أداءً قوياً على شبكات 4G و5G مع جودة اتصال عالية وتغطية واسعة في الضفة الغربية وقطاع غزة والقدس ومناسبة للاستخدام اليومي المكثّف.' },
+  { re: /بارتنر|partner/i, en: 'Partner', about: 'تقدّم شبكة بارتنر (Partner) باقات إنترنت كبيرة بسرعات 5G فائقة ومناسبة للتصفح، البث، والعمل عن بُعد في الضفة الغربية وقطاع غزة وفلسطين.' },
+  { re: /\bwe\b|وي|wecom/i, en: 'WE (Wecom)', about: 'تتميّز باقات وي (WE / Wecom) بأكبر سعات الإنترنت مقابل السعر في الضفة الغربية وغزة مع خيارات توفير شهرية وعروض 90 يوماً.' },
+  { re: /019/i, en: '019 Mobile', about: 'توفّر 019 موبايل (019 Mobile) باقات eSIM سريعة وموثوقة في الضفة الغربية وغزة مع تفعيل فوري وأسعار منافسة.' },
+  { re: /aloha|الوها|ألوها/i, en: 'ALOHA', about: 'تتيح شرائح ALOHA تفعيل eSIM فوري وسهل في الضفة الغربية وقطاع غزة مع باقات إنترنت ومكالمات مناسبة للاستخدام اليومي.' },
+  { re: /جولان|golan/i, en: 'Golan Telecom', about: 'توفّر جولان تليكوم (Golan Telecom) باقات eSIM مرنة بتغطية جيدة وسرعات إنترنت عالية في الضفة الغربية وقطاع غزة.' },
+  { re: /رامي|rami/i, en: 'Rami Levy', about: 'تقدّم رامي ليفي (Rami Levy) باقات اتصال وإنترنت اقتصادية بتفعيل eSIM فوري في الضفة الغربية وقطاع غزة وفلسطين.' },
 ];
 function carrierSeoInfo(name = '') {
   return CARRIER_SEO.find((c) => c.re.test(name)) || {
     en: name || 'Hot eSIM',
-    about: `توفّر شبكة ${name || 'Hot eSIM'} اتصال إنترنت سريعاً ومكالمات مستقرة عبر شريحة eSIM إلكترونية فورية في قطاع غزة وفلسطين.`,
+    about: `توفّر شبكة ${name || 'Hot eSIM'} اتصال إنترنت سريعاً ومكالمات مستقرة عبر شريحة eSIM إلكترونية فورية في الضفة الغربية وقطاع غزة والقدس وفلسطين.`,
   };
 }
 
@@ -1223,11 +1223,11 @@ async function viewPackage(id, seq) {
       a: `السعر الإجمالي لباقة ${headline} هو ${fmtShekel(total)} فقط، و${feeText}`,
     },
     {
-      q: `ماذا تشمل باقة ${sp.companyName}${sp.gb ? ` ${fmtNum(sp.gb)} جيجا` : ''} وكم مدة صلاحيتها؟`,
-      a: `تشمل الباقة ${sp.dataLabel} و${sp.callsLabel}، وتعمل على شريحة eSIM برقم جديد صالحة لمدة ${fmtNum(sp.days)} يوماً في قطاع غزة وفلسطين.`,
+      q: `ماذا تشمل باقة ${sp.companyName}${sp.gb ? ` ${fmtNum(sp.gb)} جيجا` : ''} وهل تعمل في الضفة الغربية وغزة؟`,
+      a: `نعم، تعمل الباقة في الضفة الغربية وقطاع غزة والقدس وفلسطين، وتشمل ${sp.dataLabel} و${sp.callsLabel} على شريحة eSIM برقم جديد صالحة لمدة ${fmtNum(sp.days)} يوماً.`,
     },
     {
-      q: `كيف أحصل على كود QR لتفعيل باقة ${sp.companyName} في غزة وفلسطين؟`,
+      q: `كيف أحصل على كود QR لتفعيل باقة ${sp.companyName} في الضفة وغزة؟`,
       a: `بعد إتمام الطلب والدفع الآمن عبر ${payBadges} في متجر ${shopName}، يظهر لك كود QR وكود التفعيل اليدوي (LPA) تلقائياً خلال ثوانٍ، ويمكنك مسحه من إعدادات هاتفك أثناء الاتصال بشبكة Wi-Fi.`,
     },
     {
@@ -1241,8 +1241,8 @@ async function viewPackage(id, seq) {
   ];
 
   setPageMeta({
-    title: `باقة ${headline} eSIM (${fmtNum(sp.days)} يوم) بسعر ${fmtShekel(total)} | ${shopName}`,
-    description: `اشترِ باقة ${headline} (${cm.en}) شريحة eSIM لقطاع غزة وفلسطين: ${sp.dataLabel}، ${sp.callsLabel}، صالحة ${fmtNum(sp.days)} يوماً بسعر ${fmtShekel(total)} شامل كود QR فوري.`,
+    title: `باقة ${headline} eSIM (${fmtNum(sp.days)} يوم) بسعر ${fmtShekel(total)} | ${shopName} الضفة وغزة`,
+    description: `اشترِ باقة ${headline} (${cm.en}) شريحة eSIM في الضفة الغربية وقطاع غزة والقدس وفلسطين: ${sp.dataLabel}، ${sp.callsLabel}، صالحة ${fmtNum(sp.days)} يوماً بسعر ${fmtShekel(total)} شامل كود QR فوري.`,
     canonicalPath: `/package/${pk.id}`,
   });
 
@@ -1290,7 +1290,7 @@ async function viewPackage(id, seq) {
               </div>
               <h1>باقة ${esc(headline)} — شريحة eSIM فورية</h1>
               <p class="pkg-hero-lead">
-                ${esc(sp.dataLabel)} · ${esc(sp.callsLabel)} · صالحة لمدة ${fmtNum(sp.days)} يوماً برقم جديد وتفعيل تلقائي بكود QR في قطاع غزة وفلسطين.
+                ${esc(sp.dataLabel)} · ${esc(sp.callsLabel)} · صالحة لمدة ${fmtNum(sp.days)} يوماً برقم جديد وتفعيل تلقائي بكود QR في الضفة الغربية وقطاع غزة والقدس وفلسطين.
               </p>
               <div class="pkg-hero-highlights">
                 <span>${icon('bolt')}تفعيل فوري بكود QR</span>
@@ -1367,9 +1367,9 @@ async function viewPackage(id, seq) {
           </div>
         </section>
 
-        <!-- 3. Carrier & Gaza/Palestine SEO Guide -->
+        <!-- 3. Carrier & West Bank / Gaza SEO Guide -->
         <section class="card pkg-section">
-          <h2 class="pkg-sec-title">${icon('info')}<span>عن باقة ${esc(sp.companyName)} (${esc(cm.en)}) في غزة وفلسطين</span></h2>
+          <h2 class="pkg-sec-title">${icon('info')}<span>عن باقة ${esc(sp.companyName)} (${esc(cm.en)}) في الضفة الغربية وغزة وفلسطين</span></h2>
           <p class="pkg-seo-text">${esc(cm.about)}</p>
           ${pk.description ? `<p class="pkg-seo-text">${esc(pk.description)}</p>` : ''}
           <div class="pkg-value-grid">
@@ -1610,7 +1610,7 @@ function viewCatalog() {
             <span class="pele-banner-tag">${icon('bolt')}<span>${fmtNum(packages.length)} باقة جاهزة الآن</span></span>
           </div>
           <h1>${esc(S.data.shopTitle || 'الطريقة الأسهل للاتصال في البلاد')}</h1>
-          <p class="pele-hero-sub">شريحة eSIM برقم جديد وتفعيل تلقائي خلال ثوانٍ — الدفع الآمن عبر <b>${esc(payBadges)}</b></p>
+          <p class="pele-hero-sub">شريحة eSIM برقم جديد وتفعيل تلقائي في <b>الضفة الغربية وقطاع غزة والقدس</b> — الدفع الآمن عبر <b>${esc(payBadges)}</b></p>
           <div class="pele-hero-steps" aria-label="خطوات الشراء">
             <span><i>1</i>اختر الباقة</span>
             <span><i>2</i>ادفع برمز SMS</span>
@@ -3042,7 +3042,7 @@ async function route() {
     return viewOrder(decoded, seq);
   }
   setPageMeta({
-    title: `${S.data?.shopTitle || 'Hot eSIM'} | شرائح eSIM وباقات الإنترنت في غزة وفلسطين`,
+    title: `${S.data?.shopTitle || 'Hot eSIM'} | شرائح eSIM وباقات الإنترنت في الضفة الغربية وقطاع غزة وفلسطين`,
     canonicalPath: '/',
   });
   viewCatalog();
