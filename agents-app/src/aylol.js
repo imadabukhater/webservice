@@ -70,12 +70,22 @@ const curlCommand = () => {
   return /\.[cm]?js$/i.test(bin) ? [process.execPath, [bin]] : [bin, []];
 };
 
-function curl(args, body = null) {
+let signingIn = null;
+let signingKey = '';
+async function waitLogin() {
+  while (signingIn) await signingIn.catch(() => {});
+}
+
+function curlRaw(args, body = null) {
   return serial(async () => {
     const [bin, pre] = curlCommand();
     const http2 = (await hasHttp2(bin === process.execPath ? 'curl' : bin)) ? ['--http2'] : [];
     return run(bin, pre, http2, args, body);
   });
+}
+async function curl(args, body = null) {
+  if (signingIn) await waitLogin();
+  return curlRaw(args, body);
 }
 function run(bin, pre, http2, args, body) {
   return new Promise((resolve, reject) => {
@@ -98,14 +108,18 @@ function run(bin, pre, http2, args, body) {
 }
 const formBody = (fields) => new URLSearchParams(Object.entries(fields).map(([k, v]) => [k, String(v ?? '')])).toString();
 
-function page(url, ref, extra = [], body = null) {
-  return curl([
+function pageRaw(url, ref, extra = [], body = null) {
+  return curlRaw([
     '-H', 'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
     '-H', 'Accept-Language: ar,en;q=0.9',
     ...(ref ? ['-H', `Referer: ${ref}`] : []),
     '-H', 'Sec-Fetch-Dest: document', '-H', 'Sec-Fetch-Mode: navigate', '-H', `Sec-Fetch-Site: ${ref ? 'same-origin' : 'none'}`,
     ...extra, url,
   ], body);
+}
+async function page(url, ref, extra = [], body = null) {
+  if (signingIn) await waitLogin();
+  return pageRaw(url, ref, extra, body);
 }
 
 const state = { seed: '', csrf: '', user: '', loggedAt: 0, chargeHtml: '', balance: null, balanceAt: 0 };
@@ -140,9 +154,10 @@ function signedHeaders(p) {
 }
 
 // signAs: the path the request is signed for, when its query goes in the body (-G), off curl's command line.
-function ajax(p, { ref = '/dashboard/charge-system', signed = true, csrf = state.csrf, extra = [], body = null, signAs = '' } = {}) {
+async function ajax(p, { ref = '/dashboard/charge-system', signed = true, csrf = '', extra = [], body = null, signAs = '' } = {}) {
+  if (signingIn) await waitLogin();
   const h = signed ? signedHeaders(signAs || p) : null;
-  return curl([
+  return curlRaw([
     '-H', 'Accept: application/json, text/javascript, */*; q=0.01',
     '-H', 'Accept-Language: ar,en;q=0.9',
     '-H', 'X-Requested-With: XMLHttpRequest',
@@ -223,12 +238,12 @@ function twoFactorFields(form, code) {
   return new URLSearchParams(pairs).toString();
 }
 const charged = async () => {
-  const h = await page(`${BASE()}/dashboard/charge-system`, `${BASE()}/admin/home`);
+  const h = await pageRaw(`${BASE()}/dashboard/charge-system`, `${BASE()}/admin/home`);
   return { h, seed: exSeed(h) };
 };
 async function passTwoFactor(c) {
   const pageUrl = `${BASE()}/two-factor`;
-  const html = await page(pageUrl, `${BASE()}/login`);
+  const html = await pageRaw(pageUrl, `${BASE()}/login`);
   const form = twoFactorForm(html, pageUrl);
   if (!form) return null;
   if (!c.secret) throw new AylolError('أيلول يطلب رمز Google Authenticator: أدخل المفتاح السري في الإعدادات ← أيلول', { refused: true });
@@ -237,7 +252,7 @@ async function passTwoFactor(c) {
   for (let attempt = 0; attempt < 2; attempt++) {
     // A code is used once: a second try waits for the next one (every 30 seconds).
     if (attempt) await new Promise((r) => setTimeout(r, 30_500 - (Date.now() % 30_000)));
-    await page(form.action, pageUrl, ['-H', `Origin: ${BASE()}`, '-H', 'Content-Type: application/x-www-form-urlencoded'], twoFactorFields(form, totp(c.secret)));
+    await pageRaw(form.action, pageUrl, ['-H', `Origin: ${BASE()}`, '-H', 'Content-Type: application/x-www-form-urlencoded'], twoFactorFields(form, totp(c.secret)));
     const after = await charged();
     if (after.seed) return after.h;
   }
@@ -247,34 +262,54 @@ async function passTwoFactor(c) {
 // ---------- session ----------
 async function login(creds) {
   const c = requireCreds(creds);
-  // A saved session may still be good: the charge page then carries the seed.
-  if (state.user === c.user && fs.existsSync(cookieJar())) {
-    const h = await page(`${BASE()}/dashboard/charge-system`, `${BASE()}/admin/home`);
-    const seed = exSeed(h);
-    const csrf = exCsrf(h);
-    if (seed && csrf) {
-      Object.assign(state, { seed, csrf, user: c.user, loggedAt: Date.now(), chargeHtml: h });
-      sawBalance(h);
-      return { ok: true, user: c.user, balance: state.balance };
+  const key = `${c.user}\n${c.pass}\n${c.secret}`;
+  while (signingIn) {
+    if (signingKey === key) return signingIn;
+    await signingIn.catch(() => {});
+  }
+  const p = (async () => {
+    // Wait for any already-queued curl call to finish before touching or unlinking the shared cookie jar.
+    await queue;
+    // A saved session may still be good: the charge page then carries the seed.
+    if (state.user === c.user && fs.existsSync(cookieJar())) {
+      const h = await pageRaw(`${BASE()}/dashboard/charge-system`, `${BASE()}/admin/home`);
+      const seed = exSeed(h);
+      const csrf = exCsrf(h);
+      if (seed && csrf) {
+        Object.assign(state, { seed, csrf, user: c.user, loggedAt: Date.now(), chargeHtml: h });
+        sawBalance(h);
+        return { ok: true, user: c.user, balance: state.balance };
+      }
+    }
+    try { fs.unlinkSync(cookieJar()); } catch {}
+    const loginHtml = await pageRaw(`${BASE()}/login`, '');
+    const csrf1 = exCsrf(loginHtml);
+    if (!csrf1) throw new AylolError('أيلول: تعذّر قراءة صفحة الدخول');
+    await pageRaw(`${BASE()}/login`, `${BASE()}/login`, ['-H', `Origin: ${BASE()}`, '-H', 'Content-Type: application/x-www-form-urlencoded'],
+      formBody({ email: c.user, password: c.pass, _token: csrf1 }));
+    let ch = (await charged()).h;
+    // Two-step sign-in: the charge page only opens once the authenticator's code is accepted.
+    if (!exSeed(ch)) ch = (await passTwoFactor(c)) || ch;
+    const seed = exSeed(ch);
+    if (!seed) throw new AylolError('أيلول رفض الدخول — راجع البريد وكلمة المرور', { refused: true });
+    Object.assign(state, { seed, csrf: exCsrf(ch) || csrf1, user: c.user, loggedAt: Date.now(), chargeHtml: ch });
+    sawBalance(ch);
+    return { ok: true, user: c.user, balance: state.balance };
+  })();
+  signingIn = p;
+  signingKey = key;
+  try {
+    return await p;
+  } finally {
+    if (signingIn === p) {
+      signingIn = null;
+      signingKey = '';
     }
   }
-  try { fs.unlinkSync(cookieJar()); } catch {}
-  const loginHtml = await page(`${BASE()}/login`, '');
-  const csrf1 = exCsrf(loginHtml);
-  if (!csrf1) throw new AylolError('أيلول: تعذّر قراءة صفحة الدخول');
-  await page(`${BASE()}/login`, `${BASE()}/login`, ['-H', `Origin: ${BASE()}`, '-H', 'Content-Type: application/x-www-form-urlencoded'],
-    formBody({ email: c.user, password: c.pass, _token: csrf1 }));
-  let ch = (await charged()).h;
-  // Two-step sign-in: the charge page only opens once the authenticator's code is accepted.
-  if (!exSeed(ch)) ch = (await passTwoFactor(c)) || ch;
-  const seed = exSeed(ch);
-  if (!seed) throw new AylolError('أيلول رفض الدخول — راجع البريد وكلمة المرور', { refused: true });
-  Object.assign(state, { seed, csrf: exCsrf(ch) || csrf1, user: c.user, loggedAt: Date.now(), chargeHtml: ch });
-  sawBalance(ch);
-  return { ok: true, user: c.user, balance: state.balance };
 }
 async function ensureSession(creds) {
   const c = requireCreds(creds);
+  if (signingIn) await waitLogin();
   if (state.user !== c.user || !state.seed || Date.now() - state.loggedAt > SESSION_MS) await login(c);
 }
 
@@ -672,9 +707,11 @@ async function subscribeBill({ packageId, phone = '', simNumber = '', customerNa
     // The QR the order came back with (or the one given with the eSIM); kept as an image. Without it, the manager is
     // told where it is (the task's note), and attaches it.
     const link = String(d.esim_qr || qrUrl || '');
+    const fromLink = link ? await qrFrom(link) : { qr: '', esimCode: '' };
+    const fromData = esimCodeAndQr(d, res);
     out.isEsim = true;
-    out.qr = await qrImage(link);
-    out.esimCode = esimCodeAndQr(d, res).esimCode;
+    out.esimCode = fromData.esimCode || fromLink.esimCode;
+    out.qr = fromLink.qr || fromData.qr;
     if (!out.qr && link) out.message = `${out.message} — رمز QR في أيلول: ${link}`;
   }
   return out;
@@ -772,7 +809,7 @@ async function executeOrder({ ref, phoneNumber = '', price = 0, simNumber = '', 
     if (n0) { phone = n0.phoneNumber || phone; sim = n0.simNumber || sim; allocQr = n0.qr || ''; allocCode = n0.esimCode || ''; stockId = String(n0.esimStockId || ''); }
   }
   if (!/^05\d{8}$/.test(phone)) throw new AylolError('لم يتوفر رقم متاح من أيلول لهذه العملية', { refused: true });
-  const endpoint = (type === 'bill' && (companyId === '6' || companyId === '25')) ? '/dashboard/charge-system/provider-subscribe' : '/dashboard/charge-system/subscribe';
+  const endpoint = '/dashboard/charge-system/subscribe';
   const payload = (type === 'credit' && !useEsim && !sim)
     ? { _token: state.csrf, package_id: packageId, company_id: companyId, phone, price: String(Number(price) || 0), note, action: 'recharge' }
     : { _token: state.csrf, package_id: packageId, company_id: companyId, category_id: companyId, phone, MobileNumber: phone, price: String(Number(price) || 0), customer_price: String(Number(price) || 0), duration: '1', note, ...(sim ? { sim_number: sim } : {}),

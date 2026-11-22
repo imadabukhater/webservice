@@ -183,14 +183,15 @@ test('customer shop: eSIMs only, JawwalPay proof, automatic match from Gmail, fu
   // ----- 1: reference number matches an authenticated email -----
   const o1 = await order('زبون أول');
   assert.equal(o1.status, 'awaiting_payment');
-  assert.equal(o1.amount, 95);
+  assert.equal(o1.amount, 102);
+  assert.equal(o1.esimFee, 7);
   assert.equal(o1.esim, true);
   assert.match(o1.number, /^0581/, 'a number of the supplier');
   assert.match(o1.code, /^[A-Z0-9]{8}$/);
   assert.equal((await call(null, 'POST', `/api/shop/orders/${o1.code}/proof`, {})).status, 400, 'something to verify is required');
   let v = await ok(call(null, 'POST', `/api/shop/orders/${o1.code}/proof`, { payReference: 'tx-1001' }));
   assert.equal(v.status, 'verifying', 'no email yet');
-  addMail('تم استلام حوالة بمبلغ 95.00 شيكل\nالرقم المرجعي: TX-1001\nمن: أحمد');
+  addMail('تم استلام حوالة بمبلغ 102.00 شيكل\nالرقم المرجعي: TX-1001\nمن: أحمد');
   const check = await ok(call(admin, 'POST', '/api/shop/admin/check-mail'));
   assert.equal(check.fetched, 1);
   assert.equal(check.matched, 1);
@@ -203,11 +204,11 @@ test('customer shop: eSIMs only, JawwalPay proof, automatic match from Gmail, fu
   const summary = await ok(call(admin, 'GET', '/api/shop/admin/summary'));
   assert.deepEqual(Object.keys(summary), ['open']);
   const sold = q('SELECT * FROM lines WHERE number = ?').get(o1.number);
-  assert.equal(sold.customer_price, 95);
+  assert.equal(sold.customer_price, 102);
   assert.equal(q("SELECT COUNT(*) AS n FROM users WHERE role = 'agent'").get().n, 0, 'no shop agent account');
 
   // ----- 2: a forged email (no Gmail authentication) is never trusted -----
-  addMail('استلمت حوالة بمبلغ 95 ₪ من الرقم 0597777777', { from: 'JawwalPay <notify@jawwal.ps>', auth: '' });
+  addMail('استلمت حوالة بمبلغ 102 ₪ من الرقم 0597777777', { from: 'JawwalPay <notify@jawwal.ps>', auth: '' });
   const o2 = await order('زبون ثانٍ');
   v = await ok(call(null, 'POST', `/api/shop/orders/${o2.code}/proof`, { payPhone: '0597777777', receipt: PNG }));
   assert.equal(v.status, 'verifying');
@@ -229,7 +230,7 @@ test('customer shop: eSIMs only, JawwalPay proof, automatic match from Gmail, fu
   await done(o2.code);
 
   // ----- 3: the email arrives before the proof; sender name matches -----
-  addMail('استلمت 95 ILS\nالمرسل: مُحمّد أحمد خليل\nرقم العملية 55667788');
+  addMail('استلمت 102 ILS\nالمرسل: مُحمّد أحمد خليل\nرقم العملية 55667788');
   const o3 = await order('محمد أحمد');
   v = await ok(call(null, 'POST', `/api/shop/orders/${o3.code}/proof`, { payName: 'محمد احمد' }));
   assert.equal(v.status, 'paid', 'proof triggers an immediate mailbox check');
@@ -248,7 +249,7 @@ test('customer shop: eSIMs only, JawwalPay proof, automatic match from Gmail, fu
   const t = Date.now();
   const takenId = Number(q(`INSERT INTO lines (number, package_id, package_label, agent_id, price, cost, status, activated_at, updated_at)
     VALUES (?, ?, 'سابق', 1, 0, 0, 'active', ?, ?)`).run(o5.number, p500.id, t, t).lastInsertRowid);
-  addMail('استلمت حوالة 95 شيكل Reference: RR-5');
+  addMail('استلمت حوالة 102 شيكل Reference: RR-5');
   v = await ok(call(null, 'POST', `/api/shop/orders/${o5.code}/proof`, { payReference: 'RR-5' }));
   assert.equal(v.status, 'paid');
   assert.equal(v.stage, 'paid_issue');

@@ -23,7 +23,8 @@ class QuickLineError extends Error {
   }
 }
 
-const session = { key: '', jwt: '' };
+const session = { key: '', jwt: '', signingIn: null, signingKey: '' };
+const credKey = ({ user, pass } = {}) => `${user}\n${pass}`;
 
 async function request(method, route, { body, jwt } = {}) {
   let res;
@@ -49,28 +50,49 @@ async function request(method, route, { body, jwt } = {}) {
   return { status: res.status, data, text: text.slice(0, 300) };
 }
 
-async function login({ user, pass }) {
+async function login(creds) {
+  const { user, pass } = creds || {};
   if (!user || !pass) throw new QuickLineError('أدخل بريد QuickLine وكلمة المرور في الإعدادات');
-  session.jwt = '';
-  session.key = '';
-  const r = await request('POST', 'Account/Login', { body: { email: user, password: pass } });
-  if (r.status === 401 || r.status === 400) throw new QuickLineError('QuickLine: البريد أو كلمة المرور خاطئة');
-  if (r.status >= 400) throw new QuickLineError(`QuickLine: تعذّر تسجيل الدخول (${r.status}) ${r.text}`);
-  // 202 means the portal wants a verification code sent to the phone: it cannot be answered by the server.
-  if (r.data?.statusCode === 202) throw new QuickLineError('QuickLine: الحساب يطلب رمز تحقق عند الدخول. أوقف التحقق بخطوتين لهذا الحساب لتعمل الأتمتة.');
-  const jwt = r.data?.data?.jwt;
-  if (!jwt) throw new QuickLineError('QuickLine: لم يرجع الخادم رمز دخول');
-  session.jwt = jwt;
-  session.key = `${user}\n${pass}`;
-  return r.data.data; // { jwt, userId, type, name, email, roleId, … }
+  const key = credKey(creds);
+  while (session.signingIn) {
+    if (session.signingKey === key) return session.signingIn;
+    await session.signingIn.catch(() => {});
+  }
+  const p = (async () => {
+    session.jwt = '';
+    session.key = '';
+    const r = await request('POST', 'Account/Login', { body: { email: user, password: pass } });
+    if (r.status === 401 || r.status === 400) throw new QuickLineError('QuickLine: البريد أو كلمة المرور خاطئة');
+    if (r.status >= 400) throw new QuickLineError(`QuickLine: تعذّر تسجيل الدخول (${r.status}) ${r.text}`);
+    // 202 means the portal wants a verification code sent to the phone: it cannot be answered by the server.
+    if (r.data?.statusCode === 202) throw new QuickLineError('QuickLine: الحساب يطلب رمز تحقق عند الدخول. أوقف التحقق بخطوتين لهذا الحساب لتعمل الأتمتة.');
+    const jwt = r.data?.data?.jwt;
+    if (!jwt) throw new QuickLineError('QuickLine: لم يرجع الخادم رمز دخول');
+    session.jwt = jwt;
+    session.key = key;
+    return r.data.data; // { jwt, userId, type, name, email, roleId, … }
+  })();
+  session.signingIn = p;
+  session.signingKey = key;
+  try {
+    return await p;
+  } finally {
+    if (session.signingIn === p) {
+      session.signingIn = null;
+      session.signingKey = '';
+    }
+  }
 }
 
 // Calls the API signed in, signing in first (or again when the token expired).
 async function api(creds, method, route, body) {
-  if (session.key !== `${creds.user}\n${creds.pass}`) await login(creds);
-  let r = await request(method, route, { body, jwt: session.jwt });
+  const key = credKey(creds);
+  if (session.signingIn && session.signingKey === key) await session.signingIn;
+  if (session.key !== key || !session.jwt) await login(creds);
+  const usedJwt = session.jwt;
+  let r = await request(method, route, { body, jwt: usedJwt });
   if (r.status === 401 || r.status === 403) {
-    await login(creds);
+    if (session.jwt === usedJwt || session.key !== key) await login(creds);
     r = await request(method, route, { body, jwt: session.jwt });
   }
   if (r.status >= 400) throw new QuickLineError(refusal(r.status, r.text), { refused: true });

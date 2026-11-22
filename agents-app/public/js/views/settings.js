@@ -40,7 +40,7 @@ function waLinkHtml(w) {
   return `<div class="msg ${w.status === 'connected' ? 'info' : ''}">${icon(w.status === 'connected' ? 'checkCircle' : w.status === 'qr' ? 'qr' : 'whatsapp')}
       <span><b>${WA_LABEL[w.status] || WA_LABEL.off}</b>${w.phone ? ` · <span class="ltr">${esc(w.phone)}</span>` : ''}</span></div>
     ${w.status === 'qr' && w.qr ? `<div style="text-align:center;margin:12px 0">
-      <img src="${w.qr}" alt="رمز QR لربط واتساب" style="width:260px;max-width:100%;background:#fff;padding:8px;border-radius:12px">
+      <img src="${esc(w.qr)}" alt="رمز QR لربط واتساب" style="width:260px;max-width:100%;background:#fff;padding:8px;border-radius:12px">
       <p class="muted small">في هاتف المتجر: واتساب ← الإعدادات ← الأجهزة المرتبطة ← ربط جهاز، ثم امسح الرمز. يتجدّد الرمز كل نحو 20 ثانية.</p></div>` : ''}
     ${w.status === 'code' && w.pairCode ? `<div style="text-align:center;margin:12px 0">
       <div class="ltr mono" style="font-size:34px;font-weight:800;letter-spacing:4px">${esc(w.pairCode)}</div>
@@ -114,7 +114,7 @@ export default {
         </section>
 `,
       suppliers: `
-        <form class="card card-pad form" id="aylol-form"                  <form class="card card-pad form" id="aylol-form" novalidate autocomplete="off">
+        <form class="card card-pad form" id="aylol-form" novalidate autocomplete="off">
             <h2 class="dot-title">eSIM عبر أيلول تيليكوم (Aylol)</h2>
             <p class="muted small">يفعّل السيرفر شرائح eSIM التي يشتريها الزبائن من حسابك في أيلول تيليكوم تلقائياً: الرقم يؤخذ من أرقام أيلول الجاهزة ولا يكتبه الزبون. قبل كل عملية يتأكد من سعر أيلول الحالي: إن ارتفع عن المعتمد لا يشتري، ويصلك تنبيه.</p>
             <div class="row2 stack-xs">
@@ -306,13 +306,17 @@ export default {
       ctx.rerender();
     },
     async 'wa-connect'(btn) {
+      const id = btn.dataset.id || 'main';
       const box = document.getElementById('wa-status');
       btn.disabled = true;
       box.insertAdjacentHTML('afterbegin', `<div class="msg info">${icon('clock')}<span>جارٍ تجهيز رمز QR…</span></div>`);
       try {
-        V.wa = await api.post('/api/whatsapp/connect', { id: btn.dataset.id || 'main', fresh: btn.dataset.fresh === '1' });
+        V.wa = await api.post('/api/whatsapp/connect', { id, fresh: btn.dataset.fresh === '1' });
       } catch (err) {
-        V.wa = { ...(V.wa || {}), status: 'off', error: err.message };
+        toast(err.message, { error: true });
+        V.wa = V.wa?.links?.length
+          ? { ...V.wa, links: V.wa.links.map((l) => (l.id === id ? { ...l, status: 'off', error: err.message } : l)) }
+          : { ...(V.wa || {}), id, status: 'off', error: err.message };
       }
       box.innerHTML = waStatusHtml(V.wa);
     },
@@ -329,15 +333,19 @@ export default {
       document.getElementById('wa-status').innerHTML = waStatusHtml(V.wa);
     },
     async 'wa-pair'(btn) {
-      const phone = (document.getElementById(`wa-pair-phone-${btn.dataset.id || 'main'}`)?.value || '').trim();
+      const id = btn.dataset.id || 'main';
+      const phone = (document.getElementById(`wa-pair-phone-${id}`)?.value || '').trim();
       if (!phone) { toast('اكتب رقم واتساب المتجر', { error: true }); return; }
       const box = document.getElementById('wa-status');
       btn.disabled = true;
       box.insertAdjacentHTML('afterbegin', `<div class="msg info">${icon('clock')}<span>جارٍ طلب كود الربط…</span></div>`);
       try {
-        V.wa = await api.post('/api/whatsapp/connect', { id: btn.dataset.id || 'main', phone });
+        V.wa = await api.post('/api/whatsapp/connect', { id, phone });
       } catch (err) {
-        V.wa = { ...(V.wa || {}), status: 'off', error: err.message };
+        toast(err.message, { error: true });
+        V.wa = V.wa?.links?.length
+          ? { ...V.wa, links: V.wa.links.map((l) => (l.id === id ? { ...l, status: 'off', error: err.message } : l)) }
+          : { ...(V.wa || {}), id, status: 'off', error: err.message };
       }
       box.innerHTML = waStatusHtml(V.wa);
     },
@@ -376,7 +384,7 @@ export default {
       btn.disabled = true;
       try {
         const r = await api.post('/api/quickline/check');
-        box.innerHTML = `<div class="msg info">${icon('checkCircle')}<span>تم الاتصال بـ QuickLine باسم ${esc(r.name || '')}. الرصيد: ${r.credit === null ? 'غير معروف' : `${r.credit} ₪`} · خطوط فعّالة: ${r.active ?? '—'} · مدفوعات مفتوحة: ${r.openPayments ?? '—'} ₪</span></div>`;
+        box.innerHTML = `<div class="msg info">${icon('checkCircle')}<span>تم الاتصال بـ QuickLine باسم ${esc(r.name || '')}. الرصيد: ${r.credit === null ? 'غير معروف' : `${esc(r.credit)} ₪`} · خطوط فعّالة: ${esc(r.active ?? '—')} · مدفوعات مفتوحة: ${esc(r.openPayments ?? '—')} ₪</span></div>`;
       } catch (err) {
         box.innerHTML = `<div class="msg">${icon('alert')}<span>${esc(err.message)}</span></div>`;
       } finally { btn.disabled = false; }
@@ -386,7 +394,7 @@ export default {
       btn.disabled = true;
       try {
         const r = await api.post('/api/layan/check');
-        box.innerHTML = `<div class="msg info">${icon('checkCircle')}<span>تم الدخول إلى ليان. الرصيد: ${r.balance === null ? 'غير معروف' : `${r.balance} ₪`} · أرقام الوكالة: ${r.numbers} (فعّالة ${r.active}، موقوفة ${r.suspended})</span></div>`;
+        box.innerHTML = `<div class="msg info">${icon('checkCircle')}<span>تم الدخول إلى ليان. الرصيد: ${r.balance === null ? 'غير معروف' : `${esc(r.balance)} ₪`} · أرقام الوكالة: ${esc(r.numbers)} (فعّالة ${esc(r.active)}، موقوفة ${esc(r.suspended)})</span></div>`;
       } catch (err) {
         box.innerHTML = `<div class="msg">${icon('alert')}<span>${esc(err.message)}</span></div>`;
       } finally { btn.disabled = false; }
@@ -397,7 +405,7 @@ export default {
       box.innerHTML = `<div class="msg info">${icon('clock')}<span>جارٍ الدخول وانتظار رمز التحقق في الجيميل…</span></div>`;
       try {
         const r = await api.post('/api/telecom/check');
-        box.innerHTML = `<div class="msg info">${icon('checkCircle')}<span>تم الدخول إلى telecom برمز التحقق من الجيميل. الرصيد: ${r.balance === null ? 'غير معروف' : `${r.balance} ₪`} · المشتركون: ${r.subscribers} (فعّالون ${r.active})</span></div>`;
+        box.innerHTML = `<div class="msg info">${icon('checkCircle')}<span>تم الدخول إلى telecom برمز التحقق من الجيميل. الرصيد: ${r.balance === null ? 'غير معروف' : `${esc(r.balance)} ₪`} · المشتركون: ${esc(r.subscribers)} (فعّالون ${esc(r.active)})</span></div>`;
       } catch (err) {
         box.innerHTML = `<div class="msg">${icon('alert')}<span>${esc(err.message)}</span></div>`;
       } finally { btn.disabled = false; }

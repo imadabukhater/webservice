@@ -64,6 +64,7 @@ function job(taskId) {
 
 // Finishes a task as carried out by a supplier.
 function finish(taskId, note, reply, actor = ACTOR, extra = {}) {
+  cancelTimer(taskId);
   tx(() => {
     // Another check may have finished it meanwhile.
     const fresh = q("SELECT * FROM tasks WHERE id = ? AND status = 'open' AND auto_status IN ('sending','sent')").get(taskId);
@@ -137,14 +138,21 @@ async function sendLyEsim(taskId, j) {
     return undefined;
   }
   if (r.esimLink) { try { qr = await ly.imageDataUrl(r.esimLink); } catch (e) { console.error('layan esim qr', e.message); } }
-  setAuto(taskId, 'sent', `ليان: ${r.text || 'تم'}`, { ref: JSON.stringify(before) });
+  setAuto(taskId, 'sending', `ليان: ${r.text || 'تم'}`, { ref: JSON.stringify(before) });
   return esimDone(taskId, number, qr, `ليان: تم تفعيل eSIM (${pkg.agentPrice} ₪)`);
 }
 
 function esimDone(taskId, number, qr, note) {
   if (qr) {
-    finish(taskId, note, 'تم التفعيل', LY_ACTOR, { attachment: qr });
-    return undefined;
+    try {
+      finish(taskId, note, 'تم التفعيل', LY_ACTOR, { attachment: qr });
+      return undefined;
+    } catch (e) {
+      console.error('layan esim finish', e.message);
+      setAuto(taskId, 'unknown', `${note}، لكن تعذّر حفظ رمز QR (${e.message}) — أرفق رمز QR من ليان عند تنفيذ الطلب.`);
+      tellManager('eSIM مفعّل بلا رمز QR', `${number}: ${e.message}`);
+      return undefined;
+    }
   }
   setAuto(taskId, 'unknown', `${note}، لكن رمز QR لم يصل من ليان — خذه من ليان وأرفقه عند تنفيذ الطلب.`);
   tellManager('eSIM مفعّل بلا رمز QR', `${number}: أرفق رمز QR من ليان`);
@@ -156,8 +164,10 @@ async function checkLyEsim(t, before) {
   const st = await ly.esimStatus(lyCredentials(), before.asyncActionId);
   if (/^(Pending|PendingEsimUrl)$/.test(st.status)) {
     if (now() - t.auto_at > GIVE_UP_MS) {
-      setAuto(t.id, 'unknown', 'ما زالت ليان تجهّز الـ eSIM بعد 30 دقيقة. افحص هناك قبل أي تنفيذ يدوي.');
-      tellManager('تفعيل eSIM تلقائي متأخر', `${before.number}: ما زال قيد التجهيز في ليان`);
+      if (q("UPDATE tasks SET auto_status = 'unknown', auto_note = ? WHERE id = ? AND status = 'open' AND auto_status = 'sent'")
+        .run('ما زالت ليان تجهّز الـ eSIM بعد 30 دقيقة. افحص هناك قبل أي تنفيذ يدوي.', t.id).changes) {
+        tellManager('تفعيل eSIM تلقائي متأخر', `${before.number}: ما زال قيد التجهيز في ليان`);
+      }
     } else later(t.id);
     return;
   }
@@ -218,9 +228,16 @@ async function sendTcEsim(taskId, j) {
   q('UPDATE lines SET sim = ? WHERE id = ?').run(esim.sim, j.t.line_id);
   let qr = '';
   try { qr = await tc.qrImage(esim.code); } catch (e) { console.error('telecom esim qr', e.message); }
-  setAuto(taskId, 'sent', `telecom: خط جديد #${r.leadId || ''}`, { ref: before });
+  setAuto(taskId, 'sending', `telecom: خط جديد #${r.leadId || ''}`, { ref: before });
   const note = `telecom: تم تفعيل eSIM — مشترك #${r.leadId || '؟'} (${pkg.cost} ₪)`;
-  if (qr) { finish(taskId, note, 'تم التفعيل', TC_ACTOR, { attachment: qr, esimCode: esim.code }); return undefined; }
+  if (qr) {
+    try {
+      finish(taskId, note, 'تم التفعيل', TC_ACTOR, { attachment: qr, esimCode: esim.code });
+      return undefined;
+    } catch (e) {
+      console.error('telecom esim finish', e.message);
+    }
+  }
   setAuto(taskId, 'unknown', `${note}، لكن تعذّر رسم رمز QR — رمز التفعيل: ${esim.code.slice(0, 200)}. أرفق رمز QR عند تنفيذ الطلب.`);
   tellManager('eSIM مفعّل بلا رمز QR', `${number}: أرفق رمز QR`);
   return undefined;
@@ -248,6 +265,7 @@ async function sendQlNew(taskId, j) {
   if (!pkg) return fail('الرزمة لم تعد موجودة في QuickLine — نفّذه يدوياً أو ارفضه', 'تعذّر التفعيل التلقائي');
   // An offer's duration is fixed by QuickLine; if it changed since the sale, the customer paid for something else.
   if (pkg.ref !== j.ref) return fail(`تغيّرت مدة هذه الرزمة في QuickLine (${pkg.days} يوماً) — زامن «خطوط QuickLine» ثم نفّذه يدوياً`, 'تعذّر التفعيل التلقائي');
+  if (pkg.agentPrice > Number(j.price) + 0.01) return fail(`سعر QuickLine الآن ${pkg.agentPrice} ₪ وهو أعلى من المعتمد ${j.price} ₪ — زامن QuickLine وراجع السعر، ثم نفّذه يدوياً أو ارفضه`, 'تعذّر التفعيل التلقائي');
   // Never activate a number twice: a live subscription for it means someone already did.
   const live = known.find((s) => s.statusValue !== 4);
   if (live) {
@@ -291,24 +309,46 @@ async function checkQlNew(t, before) {
     return;
   }
   if (now() - t.auto_at > GIVE_UP_MS) {
-    setAuto(t.id, 'unknown', 'لم يظهر الخط في QuickLine بعد 30 دقيقة. افحص هناك قبل أي تنفيذ يدوي.');
-    tellManager('تفعيل تلقائي غير مؤكد', `${line?.number}: لم يظهر الخط في QuickLine`);
+    if (q("UPDATE tasks SET auto_status = 'unknown', auto_note = ? WHERE id = ? AND status = 'open' AND auto_status = 'sent'")
+      .run('لم يظهر الخط في QuickLine بعد 30 دقيقة. افحص هناك قبل أي تنفيذ يدوي.', t.id).changes) {
+      tellManager('تفعيل تلقائي غير مؤكد', `${line?.number}: لم يظهر الخط في QuickLine`);
+    }
   } else {
     later(t.id);
   }
 }
 
-const later = (taskId) => setTimeout(() => check(taskId).catch((e) => console.error('auto check', e)), CHECK_MS).unref?.();
+const checkTimers = new Map();
+const checking = new Set();
+const cancelTimer = (taskId) => {
+  const timer = checkTimers.get(taskId);
+  if (timer) { clearTimeout(timer); checkTimers.delete(taskId); }
+};
+const later = (taskId) => {
+  if (checkTimers.has(taskId)) return;
+  const timer = setTimeout(() => {
+    checkTimers.delete(taskId);
+    check(taskId).catch((e) => console.error('auto check', e));
+  }, CHECK_MS);
+  timer.unref?.();
+  checkTimers.set(taskId, timer);
+};
 
 // Looks at what the supplier did with the request sent for this task, and finishes the task once it is through.
 async function check(taskId) {
+  if (checking.has(taskId)) return;
   const t = q("SELECT * FROM tasks WHERE id = ? AND status = 'open' AND auto_status = 'sent'").get(taskId);
-  if (!t) return;
-  // auto_ref holds JSON: what the supplier showed before sending.
-  let before;
-  try { before = JSON.parse(t.auto_ref || '{}'); } catch { before = {}; }
-  if (before.lye) return checkLyEsim(t, before);
-  if (before.new) return checkQlNew(t, before);
+  if (!t) { cancelTimer(taskId); return; }
+  checking.add(taskId);
+  try {
+    // auto_ref holds JSON: what the supplier showed before sending.
+    let before;
+    try { before = JSON.parse(t.auto_ref || '{}'); } catch { before = {}; }
+    if (before.lye) return await checkLyEsim(t, before);
+    if (before.new) return await checkQlNew(t, before);
+  } finally {
+    checking.delete(taskId);
+  }
 }
 
 // New sale requests are sent right after their transaction commits.
@@ -328,7 +368,9 @@ async function sweep() {
       setAuto(t.id, 'unknown', 'انقطع الإرسال قبل أن يُعرف إن وصل إلى المورّد. افحصه هناك قبل أي تنفيذ يدوي.');
       tellManager('تنفيذ تلقائي غير مؤكد', `${t.number || ''}: افحص المورّد قبل التنفيذ`);
     }
-    for (const { id } of q("SELECT id FROM tasks WHERE status = 'open' AND auto_status = 'sent' AND type = 'esim'").all()) await check(id).catch((e) => console.error('auto check', e));
+    for (const { id } of q("SELECT id FROM tasks WHERE status = 'open' AND auto_status = 'sent' AND type = 'esim'").all()) {
+      if (!checkTimers.has(id) && !checking.has(id)) await check(id).catch((e) => console.error('auto check', e));
+    }
     for (const { id } of q("SELECT id FROM tasks WHERE status = 'open' AND auto_status = '' AND type = 'esim' AND created_at > ?").all(now() - PICKUP_MS)) {
       await send(id).catch((e) => console.error('auto send', e));
     }
@@ -379,7 +421,10 @@ async function sendAy(taskId, j) {
   const realNumber = r.phoneNumber && /^05\d{8}$/.test(r.phoneNumber) ? r.phoneNumber : '';
   const moved = realNumber && realNumber !== number ? ` — الرقم المفعّل: ${realNumber}` : '';
   if (j.t.line_id) {
-    if (realNumber) q('UPDATE lines SET number = ? WHERE id = ?').run(realNumber, j.t.line_id);
+    if (realNumber) {
+      q('UPDATE lines SET number = ? WHERE id = ?').run(realNumber, j.t.line_id);
+      q('UPDATE shop_orders SET number = ? WHERE line_id = ?').run(realNumber, j.t.line_id);
+    }
     if (r.simNumber) q('UPDATE lines SET sim = ? WHERE id = ?').run(String(r.simNumber).replace(/\D/g, ''), j.t.line_id);
   }
   const parts = [`أيلول: ${r.message || 'تم التنفيذ'}`];

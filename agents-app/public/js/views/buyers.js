@@ -52,7 +52,7 @@ const row = (label, value) => (value ? `<div>${label}</div><div>${value}</div>` 
 async function openBuyer(id) {
   const b = await api.get(`/api/buyers/${id}`);
   sheet({
-    title: esc(b.customerName || 'بدون اسم'),
+    title: b.customerName || 'بدون اسم',
     subtitle: `طلب <span class="ltr">${esc(b.code)}</span>`,
     body: `${statusPill(b.lineStatus)}
       <div class="kv">

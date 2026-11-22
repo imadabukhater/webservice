@@ -114,10 +114,15 @@ function addLink() {
 async function removeLink(id) {
   if (id === MAIN) require('./util').fail(400, 'الرقم الأول لا يُحذف — ألغِ ربطه فقط');
   if (!linkIds().includes(id)) require('./util').fail(404, 'الرقم غير موجود');
-  await logout(id);
-  links.delete(id);
+  const L = link(id);
+  L.removed = true;
   setSetting('wa_links', JSON.stringify(linkIds().filter((x) => x !== MAIN && x !== id)));
+  links.delete(id);
   for (const [jid, l] of chatLink) if (l === id) chatLink.delete(jid);
+  const s = L.sock;
+  if (s) try { await s.logout(); } catch {}
+  closeSocket(L);
+  fs.rmSync(authDir(id), { recursive: true, force: true });
   return status();
 }
 
@@ -132,6 +137,7 @@ async function start({ fresh = false, pairPhone = '', id = MAIN } = {}) {
   L.starting = true;
   L.pairPhone = pairPhone;
   L.pairCode = '';
+  const gone = () => L.removed || links.get(id) !== L || !linkIds().includes(id);
   try {
     let B;
     try {
@@ -142,22 +148,26 @@ async function start({ fresh = false, pairPhone = '', id = MAIN } = {}) {
       L.error = 'مكتبة واتساب غير مثبتة على السيرفر بعد. شغّل أمر التحديث (agents-update) ثم أعد المحاولة.';
       return status();
     }
+    if (gone()) return status();
     if (fresh) {
       closeSocket(L);
       fs.rmSync(authDir(id), { recursive: true, force: true });
     }
     fs.mkdirSync(authDir(id), { recursive: true, mode: 0o700 });
     const { state: auth, saveCreds } = await B.useMultiFileAuthState(authDir(id));
+    if (gone()) { fs.rmSync(authDir(id), { recursive: true, force: true }); return status(); }
     let version;
     try {
       version = (await Promise.race([B.fetchLatestBaileysVersion(), new Promise((r) => setTimeout(r, 10_000, null))]))?.version;
     } catch {}
+    if (gone()) { fs.rmSync(authDir(id), { recursive: true, force: true }); return status(); }
     const make = B.makeWASocket || B.default;
     const sock = make({
       auth, logger: logger(), markOnlineOnConnect: false, syncFullHistory: false,
       browser: B.Browsers?.ubuntu ? B.Browsers.ubuntu('Chrome') : ['Ubuntu', 'Chrome', '22.04'],
       ...(version ? { version } : {}),
     });
+    if (gone()) { try { sock.end(undefined); } catch {} fs.rmSync(authDir(id), { recursive: true, force: true }); return status(); }
     L.sock = sock;
     L.status = 'connecting';
     L.error = '';
@@ -230,7 +240,7 @@ function onConnection(B, L, sock, auth, u) {
     } else {
       L.status = 'connecting';
       const wait = Math.min(60_000, 2_000 * 2 ** L.retries++);
-      setTimeout(() => { if (!L.sock && linkIds().includes(L.id)) start({ id: L.id }).catch(() => {}); }, wait).unref();
+      setTimeout(() => { if (!L.removed && !L.sock && links.get(L.id) === L && linkIds().includes(L.id)) start({ id: L.id }).catch(() => {}); }, wait).unref();
     }
   }
 }
@@ -253,8 +263,9 @@ async function send(jid, content) {
   return L.sock.sendMessage(jid, content);
 }
 const say = async (jid, text) => {
+  const res = await send(jid, { text: String(text).slice(0, 4000) });
   remember2(jid, 'model', text);
-  return send(jid, { text: String(text).slice(0, 4000) });
+  return res;
 };
 // Each chat's whole conversation, from its first message: the assistant forgets nothing said (a name, a number, the
 // package chosen). A conversation ends after 15 minutes without a message; the next one starts afresh.
@@ -771,11 +782,11 @@ function withinBudget(system, user) {
   const s = spendToday();
   const est = costOf(Math.ceil((system.length + user.length) / 2.5), 400, priceOf(c));
   if (s.usd + est <= c.aiDailyUsd) return true;
-  setAiError(c.aiDailyUsd > 0 ? `وصل حد الصرف اليومي (${c.aiDailyUsd}$). يرجع المساعد بكرة، والبوت يرد بالقوائم لحد ذلك.` : 'المساعد موقوف: حد الصرف اليومي 0$.');
+  setAiError(c.aiDailyUsd > 0 ? `وصل حد الصرف اليومي (${c.aiDailyUsd}$). يرجع المساعد بكرة.` : 'المساعد موقوف: حد الصرف اليومي 0$.');
   if (!s.stoppedAt && c.aiDailyUsd > 0) {
     s.stoppedAt = Date.now();
     setSetting('wa_ai_spend', JSON.stringify(s));
-    const text = `المساعد الذكي وصل حد الصرف اليومي: ${s.usd.toFixed(3)}$ من ${c.aiDailyUsd}$ (${s.calls} سؤال). يرجع بكرة، والبوت يكمل بالقوائم. تغيّر الحد من الإعدادات ← واتساب.`;
+    const text = `المساعد الذكي وصل حد الصرف اليومي: ${s.usd.toFixed(3)}$ من ${c.aiDailyUsd}$ (${s.calls} سؤال). يرجع بكرة.`;
     try { require('./domain').notify({ role: 'admin', kind: 'task', title: 'حد صرف المساعد الذكي', body: text, link: '#/settings' }); } catch {}
     tellAdmins(`⚠️ ${text}`).catch(() => {});
   }
@@ -1019,19 +1030,6 @@ async function agentTool(name, args, ctx) {
   const { jid, shop } = ctx;
   const chat = `wa:${jid}`.slice(0, 64);
   try {
-    if (name === 'list_packages') {
-      const services = (c) => [...new Set(shop.packages.filter((p) => p.companyId === c.id).map(serviceOf))];
-      if (!args.company) return { companies: shopCompanies(shop).map((c) => ({ name: c.name, services: services(c) })) };
-      const co = companyIn(shop, norm(args.company));
-      if (!co) return { error: 'ما في شركة بهالاسم بالمتجر', companies: shopCompanies(shop).map((c) => c.name) };
-      const list = shop.packages.filter((p) => p.companyId === co.id && (!SVC[args.service] || serviceOf(p) === args.service));
-      return { company: co.name, packages: list.slice(0, 20).map((p) => {
-        const svc = serviceOf(p);
-        const fee = svc === 'esim' ? round(p.esimFee || 0) : 0;
-        return { id: p.id, name: p.name, gb: p.dataGb || null, days: p.days || 30, service: svc, price: round(p.price), esim_fee: fee, total: round(p.price + fee),
-          new_number_from_shop: true };
-      }) };
-    }
     if (name === 'create_order') {
       // One open order per chat: the customer goes on with it, or cancels it first (cancel_order).
       const open = openOrder(jid);
@@ -1124,7 +1122,8 @@ async function agentTool(name, args, ctx) {
     if (name === 'order_status') {
       const code = orderCodeIn(String(args.order_code || ''));
       if (args.order_code && !code) return { orders: [], error: 'ما في طلب بهالرقم' };
-      const list = code ? [S.byCode(code)] : chatOrders(jid);
+      let list = code ? [S.byCode(code)] : chatOrders(jid);
+      if (code && list[0] && ownedByOther(list[0], jid)) return { orders: [], error: 'ما في طلب بهالرقم من هالمحادثة' };
       if (!list.length) return { orders: [], note: 'ما في طلبات من هالمحادثة؛ اطلب من الزبون رقم الطلب.' };
       // The customer asks what happened: an order waiting for its payment check is looked at again (Gemini too).
       if (list.some((o) => ['verifying', 'review'].includes(o.status))) {
@@ -1152,7 +1151,7 @@ async function agentTool(name, args, ctx) {
       const code = orderCodeIn(String(args.order_code || ''));
       const o = code ? S.byCode(code) : q(`SELECT o.* FROM shop_orders o WHERE (o.id IN (SELECT order_id FROM wa_shop WHERE jid = ?) OR o.ip = ?)
                                             AND o.status IN ('awaiting_payment','verifying','review') ORDER BY o.created_at DESC LIMIT 1`).get(jid, chat);
-      if (!o) return { ok: false, error: 'ما في طلب مفتوح لهالمحادثة؛ اطلب من الزبون رقم الطلب.' };
+      if (!o || (code && ownedByOther(o, jid))) return { ok: false, error: code ? 'ما في طلب بهالرقم من هالمحادثة' : 'ما في طلب مفتوح لهالمحادثة؛ اطلب من الزبون رقم الطلب.' };
       if (!OPEN.includes(o.status)) {
         const v = S.orderView(o);
         ctx.facts.push(stageFacts(o, v.stage));
@@ -1268,10 +1267,18 @@ const STAGE_TEXT = {
   rejected: '❌ الطلب انرفض.',
   cancelled: '⌛ خلصت مهلة الطلب وانلغى. فيك تطلب باقة جديدة وقت ما بدك.',
 };
+function ownedByOther(o, jid) {
+  const chat = `wa:${jid}`.slice(0, 64);
+  if (String(o.ip || '').startsWith('wa:') && o.ip !== chat) return true;
+  const w = q('SELECT jid FROM wa_shop WHERE order_id = ?').get(o.id);
+  return Boolean(w && w.jid !== jid);
+}
 function follow(jid, o, stage) {
+  if (ownedByOther(o, jid)) return;
   q(`INSERT INTO wa_shop (order_id, jid, stage, link, created_at) VALUES (?, ?, ?, ?, ?)
-     ON CONFLICT(order_id) DO UPDATE SET jid = excluded.jid, stage = excluded.stage, done_at = NULL,
-       link = CASE WHEN excluded.link != '' THEN excluded.link ELSE wa_shop.link END`).run(o.id, jid, stage, chatLink.get(jid) || '', now());
+     ON CONFLICT(order_id) DO UPDATE SET stage = excluded.stage, done_at = NULL,
+       link = CASE WHEN excluded.link != '' THEN excluded.link ELSE wa_shop.link END
+     WHERE wa_shop.jid = excluded.jid`).run(o.id, jid, stage, chatLink.get(jid) || '', now());
 }
 async function orderUpdate(jid, o, v) {
   if (v.stage === 'done' && o.esim) {
@@ -1298,6 +1305,7 @@ async function tellAdmins(text) {
 }
 // Every 20 seconds: the orders followed here whose state changed get a message (the last one: the eSIM's QR code).
 const FINAL = new Set(['done', 'failed', 'rejected', 'cancelled']);
+const adminNotified = new Set();
 let watching = false;
 async function watchShop() {
   if (watching || !connected()) return;
@@ -1311,8 +1319,11 @@ async function watchShop() {
       const v = S.orderView(o);
       if (v.stage === w.stage) continue;
       q('UPDATE wa_shop SET stage = ?, done_at = ? WHERE order_id = ?').run(v.stage, FINAL.has(v.stage) ? now() : null, o.id);
-      // The manager is told on WhatsApp when a payment, or an activation, needs them.
-      if (v.stage === 'review' || v.stage === 'paid_issue') {
+      // The manager is told on WhatsApp once per (order, stage) when a payment, or an activation, needs them.
+      const alertKey = `${o.id}:${v.stage}`;
+      if ((v.stage === 'review' || v.stage === 'paid_issue') && !adminNotified.has(alertKey)) {
+        adminNotified.add(alertKey);
+        if (adminNotified.size > 2000) adminNotified.delete(adminNotified.values().next().value);
         await tellAdmins(`🔔 طلب ${o.code} — ${o.package_label} — ${round(o.amount)} ₪\n${v.stage === 'review' ? 'الدفع يحتاج مراجعتك (لم يُطابَق تلقائياً).' : 'دُفع، والتفعيل يحتاج تدخلك.'}\nمن البوابة: متجر الزبائن.`);
       }
       try { await orderUpdate(w.jid, o, v); } catch (e) {

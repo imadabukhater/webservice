@@ -3,7 +3,7 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { q, db, getSettings, setSetting } = require('../db');
+const { q, tx, db, getSettings, setSetting } = require('../db');
 const { fail, now, str, num } = require('../util');
 const { hashPassword, verifyPassword, sha } = require('../passwords');
 const { publicUser } = require('../domain');
@@ -73,110 +73,111 @@ route('POST', '/api/me/password', ADMIN, ({ user, body, token }) => {
 route('GET', '/api/settings', ADMIN, () => getSettings());
 
 route('PUT', '/api/settings', ADMIN, ({ body }) => {
-  if (body.appName !== undefined) {
-    const name = str(body.appName, 60);
-    if (!name) fail(400, 'اكتب اسم التطبيق');
-    setSetting('app_name', name);
-  }
-  if (body.esimFee !== undefined) {
-    const fee = num(body.esimFee, 'رسوم eSIM');
-    if (fee < 0) fail(400, 'رسوم eSIM لا تكون سالبة');
-    setSetting('esim_fee', fee);
-  }
-  // Write-only: an empty password keeps the saved one.
-  if (body.qlUser !== undefined) setSetting('ql_user', str(body.qlUser, 120));
-  if (body.qlPass) setSetting('ql_pass', String(body.qlPass).slice(0, 200));
-  if (body.aylolUser !== undefined) setSetting('aylol_user', str(body.aylolUser, 120));
-  if (body.aylolPass) setSetting('aylol_pass', String(body.aylolPass).slice(0, 200));
-  // Aylol's two-step sign-in (Google Authenticator): the key or the app's export link, stored as a base32 key.
-  if (body.aylolSecret) {
-    try { setSetting('aylol_secret', require('../layan').normalizeSecret(body.aylolSecret)); } catch (e) { fail(400, e.message); }
-  }
-  if (body.aylolSecretClear) setSetting('aylol_secret', '');
-  if (body.lyUser !== undefined) setSetting('ly_user', str(body.lyUser, 120));
-  if (body.lyPass) setSetting('ly_pass', String(body.lyPass).slice(0, 200));
-  // The authenticator secret, as a key or the app's export link: stored as a base32 key, never sent back.
-  if (body.lySecret) {
-    try { setSetting('ly_secret', require('../layan').normalizeSecret(body.lySecret)); } catch (e) { fail(400, e.message); }
-  }
-  if (body.tcUser !== undefined) setSetting('tc_user', str(body.tcUser, 120));
-  if (body.tcPass) setSetting('tc_pass', String(body.tcPass).slice(0, 200));
-  if (body.tcMailUser !== undefined) {
-    const mail = str(body.tcMailUser, 120);
-    if (mail && !/^[^\s@"]+@[^\s@"]+\.[^\s@"]+$/.test(mail)) fail(400, 'اكتب بريد الجيميل كاملاً، مثل name@gmail.com');
-    setSetting('tc_mail_user', mail);
-  }
-  // Google shows an App password in groups of four: kept without the spaces.
-  for (const [field, key] of [['tcRegAddress', 'tc_reg_address'], ['tcRegCity', 'tc_reg_city'], ['tcRegZip', 'tc_reg_zip']]) {
-    if (body[field] !== undefined) setSetting(key, str(body[field], 80));
-  }
-  if (body.tcMailPass) setSetting('tc_mail_pass', String(body.tcMailPass).replace(/\s+/g, '').slice(0, 200));
-  if (body.shopEnabled !== undefined) setSetting('shop_enabled', body.shopEnabled ? '1' : '0');
-  if (body.shopInstant !== undefined) setSetting('shop_instant', body.shopInstant ? '1' : '0');
-  for (const [field, key, max, label] of [['shopAutoMax', 'shop_auto_max', 100000, 'حد التنفيذ التلقائي'],
-    ['shopHourLimit', 'shop_hour_limit', 100, 'عدد الطلبات في الساعة'], ['aylolLowBalance', 'aylol_low_balance', 100000, 'حد تنبيه رصيد أيلول']]) {
-    if (body[field] === undefined || body[field] === '') continue;
-    const n = Number(body[field]);
-    if (!Number.isFinite(n) || n < 0 || n > max) fail(400, `${label}: رقم من 0 إلى ${max}`);
-    setSetting(key, String(Math.round(n * 100) / 100));
-  }
-  // The shop's percentage on the supplier's price: every package's shop price follows at once.
-  if (body.shopMarkup !== undefined) {
-    const m = Number(body.shopMarkup);
-    if (body.shopMarkup === '' || body.shopMarkup === null || typeof body.shopMarkup === 'boolean' || !Number.isFinite(m) || m < 0 || m > 500) {
-      fail(400, 'نسبة الربح رقم من 0 إلى 500');
+  // Atomic: any validation failure (e.g. turning off both payment methods) rolls back every change in this request.
+  const out = tx(() => {
+    if (body.appName !== undefined) {
+      const name = str(body.appName, 60);
+      if (!name) fail(400, 'اكتب اسم التطبيق');
+      setSetting('app_name', name);
     }
-    setSetting('shop_markup', String(Math.round(m * 100) / 100));
-    require('../domain').refreshShopPrices();
-  }
-  if (body.shopTitle !== undefined) setSetting('shop_title', str(body.shopTitle, 120));
-  if (body.shopSubtitle !== undefined) setSetting('shop_subtitle', str(body.shopSubtitle, 240));
-  if (body.jawwalpayNumber !== undefined) {
-    const n = String(body.jawwalpayNumber).replace(/[^\d+]/g, '');
-    if (n && !/^\+?\d{9,13}$/.test(n)) fail(400, 'رقم محفظة جوال باي غير صحيح');
-    setSetting('jawwalpay_number', n);
-  }
-  if (body.jawwalpayName !== undefined) setSetting('jawwalpay_name', str(body.jawwalpayName, 80));
-  if (body.palpayNumber !== undefined) {
-    const n = String(body.palpayNumber).replace(/[^\d+]/g, '');
-    if (n && !/^\+?\d{6,15}$/.test(n)) fail(400, 'رقم محفظة بال باي غير صحيح');
-    setSetting('palpay_number', n);
-  }
-  if (body.palpayName !== undefined) setSetting('palpay_name', str(body.palpayName, 80));
-  if (body.gmailUser !== undefined) setSetting('gmail_user', str(body.gmailUser, 120));
-  if (body.gmailPass) setSetting('gmail_pass', String(body.gmailPass).replace(/\s+/g, '').slice(0, 64));
-  if (body.mailFrom !== undefined) setSetting('mail_from', str(body.mailFrom, 80));
-  // Direct Jawwal Pay (MaalCards corporate API). The password is kept as typed (it may contain spaces or symbols).
-  if (body.jcEnabled !== undefined) setSetting('jc_enabled', body.jcEnabled ? '1' : '0');
-  if (body.jcManagerId !== undefined) {
-    const id = String(body.jcManagerId).trim();
-    if (id && !/^\d{1,9}$/.test(id)) fail(400, 'رقم المشترك (manager_id) يجب أن يكون رقماً');
-    setSetting('jc_manager_id', id);
-  }
-  if (body.jcUser !== undefined) setSetting('jc_user', str(body.jcUser, 120));
-  if (body.jcPass) setSetting('jc_pass', String(body.jcPass).slice(0, 200));
-  if (body.mailPay !== undefined) setSetting('mail_pay', body.mailPay ? '1' : '0');
-  if (body.jcPals !== undefined) setSetting('jc_pals', body.jcPals ? '1' : '0');
-  if (body.mailPay !== undefined || body.jcEnabled !== undefined) {
-    const after = getSettings();
-    if (!after.mailPay && !after.jcReady) {
-      // Undo what this request turned off (the other way stays as it was).
-      if (body.mailPay !== undefined && !body.mailPay) setSetting('mail_pay', '1');
-      if (body.jcEnabled !== undefined && !body.jcEnabled) setSetting('jc_enabled', '1');
-      fail(400, 'لا يمكن إيقاف الدفع بالتحويل (الإيميل) والدفع المباشر معاً — فعّل الدفع المباشر عبر جوال باي أولاً');
+    if (body.esimFee !== undefined) {
+      const fee = num(body.esimFee, 'رسوم eSIM');
+      if (fee < 0) fail(400, 'رسوم eSIM لا تكون سالبة');
+      setSetting('esim_fee', fee);
     }
-  }
-  if (body.supportWhatsapp !== undefined) {
-    // International format without + or leading zeros, as wa.me expects: 972567725080.
-    const wa = String(body.supportWhatsapp).replace(/\D/g, '').replace(/^00/, '');
-    if (wa && !/^[1-9]\d{7,14}$/.test(wa)) fail(400, 'اكتب رقم واتساب بالصيغة الدولية، مثل 972567725080');
-    setSetting('support_whatsapp', wa);
-  }
+    // Write-only: an empty password keeps the saved one.
+    if (body.qlUser !== undefined) setSetting('ql_user', str(body.qlUser, 120));
+    if (body.qlPass) setSetting('ql_pass', String(body.qlPass).slice(0, 200));
+    if (body.aylolUser !== undefined) setSetting('aylol_user', str(body.aylolUser, 120));
+    if (body.aylolPass) setSetting('aylol_pass', String(body.aylolPass).slice(0, 200));
+    // Aylol's two-step sign-in (Google Authenticator): the key or the app's export link, stored as a base32 key.
+    if (body.aylolSecret) {
+      try { setSetting('aylol_secret', require('../layan').normalizeSecret(body.aylolSecret)); } catch (e) { fail(400, e.message); }
+    }
+    if (body.aylolSecretClear) setSetting('aylol_secret', '');
+    if (body.lyUser !== undefined) setSetting('ly_user', str(body.lyUser, 120));
+    if (body.lyPass) setSetting('ly_pass', String(body.lyPass).slice(0, 200));
+    // The authenticator secret, as a key or the app's export link: stored as a base32 key, never sent back.
+    if (body.lySecret) {
+      try { setSetting('ly_secret', require('../layan').normalizeSecret(body.lySecret)); } catch (e) { fail(400, e.message); }
+    }
+    if (body.tcUser !== undefined) setSetting('tc_user', str(body.tcUser, 120));
+    if (body.tcPass) setSetting('tc_pass', String(body.tcPass).slice(0, 200));
+    if (body.tcMailUser !== undefined) {
+      const mail = str(body.tcMailUser, 120);
+      if (mail && !/^[^\s@"]+@[^\s@"]+\.[^\s@"]+$/.test(mail)) fail(400, 'اكتب بريد الجيميل كاملاً، مثل name@gmail.com');
+      setSetting('tc_mail_user', mail);
+    }
+    // Google shows an App password in groups of four: kept without the spaces.
+    for (const [field, key] of [['tcRegAddress', 'tc_reg_address'], ['tcRegCity', 'tc_reg_city'], ['tcRegZip', 'tc_reg_zip']]) {
+      if (body[field] !== undefined) setSetting(key, str(body[field], 80));
+    }
+    if (body.tcMailPass) setSetting('tc_mail_pass', String(body.tcMailPass).replace(/\s+/g, '').slice(0, 200));
+    if (body.shopEnabled !== undefined) setSetting('shop_enabled', body.shopEnabled ? '1' : '0');
+    if (body.shopInstant !== undefined) setSetting('shop_instant', body.shopInstant ? '1' : '0');
+    for (const [field, key, max, label] of [['shopAutoMax', 'shop_auto_max', 100000, 'حد التنفيذ التلقائي'],
+      ['shopHourLimit', 'shop_hour_limit', 100, 'عدد الطلبات في الساعة'], ['aylolLowBalance', 'aylol_low_balance', 100000, 'حد تنبيه رصيد أيلول']]) {
+      if (body[field] === undefined || body[field] === '') continue;
+      const n = Number(body[field]);
+      if (!Number.isFinite(n) || n < 0 || n > max) fail(400, `${label}: رقم من 0 إلى ${max}`);
+      setSetting(key, String(Math.round(n * 100) / 100));
+    }
+    // The shop's percentage on the supplier's price: every package's shop price follows at once.
+    if (body.shopMarkup !== undefined) {
+      const m = Number(body.shopMarkup);
+      if (body.shopMarkup === '' || body.shopMarkup === null || typeof body.shopMarkup === 'boolean' || !Number.isFinite(m) || m < 0 || m > 500) {
+        fail(400, 'نسبة الربح رقم من 0 إلى 500');
+      }
+      setSetting('shop_markup', String(Math.round(m * 100) / 100));
+      require('../domain').refreshShopPrices();
+    }
+    if (body.shopTitle !== undefined) setSetting('shop_title', str(body.shopTitle, 120));
+    if (body.shopSubtitle !== undefined) setSetting('shop_subtitle', str(body.shopSubtitle, 240));
+    if (body.jawwalpayNumber !== undefined) {
+      const n = String(body.jawwalpayNumber).replace(/[^\d+]/g, '');
+      if (n && !/^\+?\d{9,13}$/.test(n)) fail(400, 'رقم محفظة جوال باي غير صحيح');
+      setSetting('jawwalpay_number', n);
+    }
+    if (body.jawwalpayName !== undefined) setSetting('jawwalpay_name', str(body.jawwalpayName, 80));
+    if (body.palpayNumber !== undefined) {
+      const n = String(body.palpayNumber).replace(/[^\d+]/g, '');
+      if (n && !/^\+?\d{6,15}$/.test(n)) fail(400, 'رقم محفظة بال باي غير صحيح');
+      setSetting('palpay_number', n);
+    }
+    if (body.palpayName !== undefined) setSetting('palpay_name', str(body.palpayName, 80));
+    if (body.gmailUser !== undefined) setSetting('gmail_user', str(body.gmailUser, 120));
+    if (body.gmailPass) setSetting('gmail_pass', String(body.gmailPass).replace(/\s+/g, '').slice(0, 64));
+    if (body.mailFrom !== undefined) setSetting('mail_from', str(body.mailFrom, 80));
+    // Direct Jawwal Pay (MaalCards corporate API). The password is kept as typed (it may contain spaces or symbols).
+    if (body.jcEnabled !== undefined) setSetting('jc_enabled', body.jcEnabled ? '1' : '0');
+    if (body.jcManagerId !== undefined) {
+      const id = String(body.jcManagerId).trim();
+      if (id && !/^\d{1,9}$/.test(id)) fail(400, 'رقم المشترك (manager_id) يجب أن يكون رقماً');
+      setSetting('jc_manager_id', id);
+    }
+    if (body.jcUser !== undefined) setSetting('jc_user', str(body.jcUser, 120));
+    if (body.jcPass) setSetting('jc_pass', String(body.jcPass).slice(0, 200));
+    if (body.mailPay !== undefined) setSetting('mail_pay', body.mailPay ? '1' : '0');
+    if (body.jcPals !== undefined) setSetting('jc_pals', body.jcPals ? '1' : '0');
+    if (body.mailPay !== undefined || body.jcEnabled !== undefined) {
+      const after = getSettings();
+      if (!after.mailPay && !after.jcReady) {
+        fail(400, 'لا يمكن إيقاف الدفع بالتحويل (الإيميل) والدفع المباشر معاً — فعّل الدفع المباشر عبر جوال باي أولاً');
+      }
+    }
+    if (body.supportWhatsapp !== undefined) {
+      // International format without + or leading zeros, as wa.me expects: 972567725080.
+      const wa = String(body.supportWhatsapp).replace(/\D/g, '').replace(/^00/, '');
+      if (wa && !/^[1-9]\d{7,14}$/.test(wa)) fail(400, 'اكتب رقم واتساب بالصيغة الدولية، مثل 972567725080');
+      setSetting('support_whatsapp', wa);
+    }
+    return getSettings();
+  });
   // A supplier's account just saved: its packages are synced now, not at the next daily sync.
   const SYNC_ON = { ql: ['qlUser', 'qlPass'], ay: ['aylolUser', 'aylolPass', 'aylolSecret'], ly: ['lyUser', 'lyPass', 'lySecret'],
     tc: ['tcUser', 'tcPass', 'tcMailUser', 'tcMailPass'] };
   for (const [key, fields] of Object.entries(SYNC_ON)) if (fields.some((f) => body[f])) require('../autosync').syncSoon(key);
-  return getSettings();
+  return out;
 });
 
 // A consistent copy of the whole database, made with VACUUM INTO.

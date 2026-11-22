@@ -26,26 +26,32 @@ function route(method, pattern, roles, handler, { maxBody = 64 * 1024 } = {}) {
 function readBody(req, limit) {
   return new Promise((resolve, reject) => {
     let size = 0;
+    let done = false;
     const chunks = [];
+    const finish = (fn, val) => { if (!done) { done = true; fn(val); } };
     req.on('data', (c) => {
+      if (done) return;
       size += c.length;
       if (size > limit) {
-        reject(new ApiError(413, 'الطلب كبير جداً'));
-        req.destroy();
+        chunks.length = 0;
+        finish(reject, new ApiError(413, 'الطلب كبير جداً'));
+        // Drain remaining body without tearing down the socket so the 413 response can be sent cleanly.
+        req.resume();
         return;
       }
       chunks.push(c);
     });
     req.on('end', () => {
-      if (!chunks.length) return resolve({});
+      if (done) return;
+      if (!chunks.length) return finish(resolve, {});
       try {
         const body = JSON.parse(Buffer.concat(chunks).toString('utf8'), (k, v) => (k === '__proto__' || k === 'constructor' || k === 'prototype' ? undefined : v));
-        resolve(body && typeof body === 'object' ? body : {});
+        finish(resolve, body && typeof body === 'object' ? body : {});
       } catch {
-        reject(new ApiError(400, 'بيانات غير صالحة'));
+        finish(reject, new ApiError(400, 'بيانات غير صالحة'));
       }
     });
-    req.on('error', reject);
+    req.on('error', (e) => finish(reject, e));
   });
 }
 
@@ -62,7 +68,12 @@ async function dispatch(req, res, url) {
   const r = routes.find((x) => x.method === req.method && x.re.test(url.pathname));
   if (!r) fail(404, 'غير موجود');
   const m = url.pathname.match(r.re);
-  const params = Object.fromEntries(r.keys.map((k, i) => [k, decodeURIComponent(m[i + 1])]));
+  let params;
+  try {
+    params = Object.fromEntries(r.keys.map((k, i) => [k, decodeURIComponent(m[i + 1])]));
+  } catch {
+    fail(400, 'عنوان الطلب غير صالح');
+  }
   let user = null;
   let token = null;
   if (r.roles) {

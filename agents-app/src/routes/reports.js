@@ -33,12 +33,19 @@ const REPORTS = [
   {
     key: 'by_package', group: 'المبيعات', title: 'المبيعات حسب الرزمة', dated: true,
     build(p) {
-      const rows = q(`SELECT o.package_label AS package, COUNT(*) AS sales, SUM(o.amount) AS revenue, SUM(l.cost) AS cost ${PAID}
+      const rows = q(`SELECT o.package_label AS package, COUNT(*) AS sales, SUM(o.amount) AS revenue,
+                             COUNT(l.id) AS fulfilled,
+                             SUM(CASE WHEN l.cost IS NOT NULL THEN o.amount ELSE 0 END) AS fulfilled_revenue,
+                             SUM(l.cost) AS cost ${PAID}
                       GROUP BY o.package_label ORDER BY revenue DESC`).all(p.from, p.to);
       return {
         columns: [col('package', 'اسم الرزمة'), col('sales', 'المبيعات', 'num'), col('revenue', 'المبلغ', 'money'), col('cost', 'التكلفة', 'money'),
           col('profit', 'الربح', 'money')],
-        rows: rows.map((r) => ({ package: r.package, sales: r.sales || 0, revenue: round(r.revenue), cost: round(r.cost), profit: round(r.revenue - r.cost) })),
+        rows: rows.map((r) => ({
+          package: r.package, sales: r.sales || 0, revenue: round(r.revenue),
+          cost: r.fulfilled ? round(r.cost) : null,
+          profit: r.fulfilled ? round(r.fulfilled_revenue - r.cost) : null,
+        })),
       };
     },
   },

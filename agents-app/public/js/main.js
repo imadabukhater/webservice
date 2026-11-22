@@ -174,6 +174,8 @@ async function route() {
 }
 
 async function refresh({ quiet = false } = {}) {
+  // If initial boot failed before the shell mounted, retrying should re-run boot().
+  if (!document.getElementById('view')) return boot();
   const btn = document.getElementById('sync-btn');
   btn?.classList.add('spinning');
   try {
@@ -336,7 +338,7 @@ async function boot() {
       S.user = r.user;
       S.settings = r.settings;
     } catch (e) {
-      if (e.status && e.status !== 401) {
+      if (e.status !== 401) {
         document.getElementById('app').innerHTML = `<div class="login-form" style="min-height:100dvh">${errorState(e)}</div>`;
         return;
       }

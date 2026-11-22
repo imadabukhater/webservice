@@ -46,7 +46,8 @@ route('POST', '/api/quickline/check', ADMIN, () => wrap(async (creds) => {
 // price is recorded, and a difference goes to the approval list. Packages gone from QuickLine are switched off.
 route('POST', '/api/quickline/sync', ADMIN, ({ body }) => { const kind = kindOf(body.kind); return wrap((creds) => syncKind(creds, kind)); });
 
-async function syncKind(creds, kind) {
+async function syncKind(creds, kind = 'invoice') {
+  kind = kindOf(kind);
   const items = await ql.catalog(creds, kind);
   if (!items.length) fail(502, 'QuickLine: لم أجد رزماً');
   return tx(() => {

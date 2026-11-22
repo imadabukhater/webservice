@@ -1,5 +1,5 @@
 // App shell cache: pages and code load instantly and work offline; API calls always go to the network.
-const CACHE = 'esim-admin-shell-v36';
+const CACHE = 'esim-admin-shell-v37';
 const SHELL = [
   '/portal',
   '/css/app.css',
@@ -35,6 +35,12 @@ self.addEventListener('fetch', (e) => {
   e.respondWith(
     fetch(e.request)
       .then((res) => { if (res.ok) { const copy = res.clone(); caches.open(CACHE).then((c) => c.put(e.request, copy)); } return res; })
-      .catch(() => caches.match(e.request).then((r) => r || caches.match('/portal') || caches.match('/index.html'))),
+      .catch(() => caches.match(e.request)
+        .then((r) => r || caches.match(e.request, { ignoreSearch: true }))
+        .then((r) => {
+          if (r) return r;
+          if (e.request.mode === 'navigate') return caches.match('/portal').then((p) => p || caches.match('/index.html'));
+          return new Response('', { status: 503, statusText: 'Offline' });
+        })),
   );
 });

@@ -73,6 +73,13 @@ test('a paid order is not cancelled, and a new one may be made beside it', async
 test('another chat\'s order neither blocks nor is cancelled here; an order past its 10 minutes no longer counts', async () => {
   const other = order('awaiting_payment', '972500000222@s.whatsapp.net');
   assert.equal((await wa._test.agentTool('create_order', { package_id: 1, customer_name: 'عماد' }, ctx())).open_order, undefined);
+  // Another chat's order cannot be hijacked via order_status or submit_payment to gain cancel_order ownership.
+  const otherStatus = await wa._test.agentTool('order_status', { order_code: other.code }, ctx());
+  assert.deepEqual(otherStatus.orders, []);
+  assert.match(otherStatus.error, /ما في طلب/);
+  const otherProof = await wa._test.agentTool('submit_payment', { order_code: other.code, payer: 'محتال' }, ctx());
+  assert.equal(otherProof.ok, false);
+  assert.equal(q('SELECT jid FROM wa_shop WHERE order_id = ?').get(other.id), undefined, 'wa_shop not bound to attacker jid');
   assert.equal((await wa._test.agentTool('cancel_order', { order_code: other.code }, ctx())).ok, false);
   assert.equal(q('SELECT status FROM shop_orders WHERE id = ?').get(other.id).status, 'awaiting_payment');
   const old = order('awaiting_payment', JID, 11 * 60_000);
@@ -81,6 +88,17 @@ test('another chat\'s order neither blocks nor is cancelled here; an order past 
   q("UPDATE shop_orders SET status = 'cancelled' WHERE id = ?").run(recent.id);
   assert.equal((await wa._test.agentTool('create_order', { package_id: 1, customer_name: 'عماد' }, ctx())).open_order, undefined);
   assert.equal(q('SELECT status FROM shop_orders WHERE id = ?').get(old.id).status, 'cancelled', 'its hold ran out');
+});
+
+test('a reply that fails to send is not recorded as sent in history', async () => {
+  const jid = '972500000777@s.whatsapp.net';
+  wa._test.history.delete(jid);
+  wa._test.setTransport(async () => { throw new Error('disconnected'); });
+  try {
+    await wa._test.onRaw({ key: { remoteJid: jid, id: 'FAIL-1', fromMe: false }, messageTimestamp: Math.floor(Date.now() / 1000), message: { conversation: 'مرحبا' } });
+  } catch {}
+  const models = (wa._test.history.get(jid) || []).filter((m) => m.role === 'model');
+  assert.equal(models.length, 0);
 });
 
 test('a conversation ends after 15 minutes without a message', () => {

@@ -314,14 +314,18 @@ function settleVerified(order, inv) {
 function settleDirect(orderId) {
   const o = q('SELECT * FROM shop_orders WHERE id = ?').get(orderId);
   if (!o || !o.jc_invoice_id) return false;
-  const done = tx(() => {
-    const cur = q("SELECT * FROM shop_orders WHERE id = ? AND status IN ('awaiting_payment','cancelled')").get(orderId);
-    if (!cur) return false;
+  const hadProof = tx(() => {
+    const cur = q("SELECT * FROM shop_orders WHERE id = ? AND status IN ('awaiting_payment','cancelled','verifying','review')").get(orderId);
+    if (!cur) return null;
     q("UPDATE shop_orders SET status = 'paid', paid_at = ?, verified_by = ?, jc_unsure = 0, response = '', updated_at = ? WHERE id = ?")
       .run(now(), `جوال باي مباشر: ${cur.jc_invoice_id}`, now(), orderId);
-    return true;
+    return Boolean(cur.proof_at);
   });
-  if (!done) return false;
+  if (hadProof === null) return false;
+  if (hadProof) {
+    D.notify({ role: 'admin', kind: 'task', title: `دفع مباشر مع بيانات تحويل للطلب ${o.code}`,
+      body: `تأكدت فاتورة جوال باي المباشر ${o.jc_invoice_id} (${o.amount} ₪) رغم وجود بيانات تحويل يدوي مسجلة — تحقق إن وصل تحويل إضافي لإرجاعه.`, link: '#/shop' });
+  }
   const cap = getSettings().shopAutoMax;
   if (cap > 0 && Number(o.amount) > cap) {
     q('UPDATE shop_orders SET error = ?, updated_at = ? WHERE id = ?').run(`مدفوع مباشرة، فوق حد التنفيذ التلقائي (${cap} ₪): راجع ثم «إعادة التنفيذ»`, now(), orderId);
@@ -369,7 +373,7 @@ function reconcileDirect({ force = false } = {}) {
   if (reconciling) return reconciling;
   if (!force && now() - reconciledAt < LOOP_MS - 1000) return Promise.resolve(0);
   const rows = q(`SELECT * FROM shop_orders WHERE jc_unsure = 1 AND jc_invoice_id != ''
-                  AND status IN ('awaiting_payment','cancelled') AND created_at > ?`).all(now() - 2 * 864e5);
+                  AND status IN ('awaiting_payment','cancelled','verifying','review') AND created_at > ?`).all(now() - 2 * 864e5);
   const late = lateInvoices();
   if ((!rows.length && !late.length) || !getSettings().jcConfigured) return Promise.resolve(0);
   reconciledAt = now();
@@ -577,7 +581,7 @@ async function deliverQr() {
 function saveMail(uidValidity, uid, raw, settings) {
   const p = mail.parseMessage(raw);
   if (p.messageId && q('SELECT 1 FROM payment_mails WHERE message_id = ?').get(p.messageId)) return null;
-  const f = mail.parseJawwalPay(p, { ownNumber: settings.jawwalpayNumber || settings.palpayNumber });
+  const f = mail.parseJawwalPay(p, { ownNumber: [settings.jawwalpayNumber, settings.palpayNumber] });
   const term = String(settings.mailFrom || '').toLowerCase().trim();
   const senderEmail = mail.extractEmail(p.from);
   const ownGmail = String(settings.gmailUser || '').toLowerCase().trim();
@@ -633,9 +637,9 @@ const CHECK_COOLDOWN_MS = Number.isFinite(Number(process.env.SHOP_CHECK_COOLDOWN
 // asked: the customer asks about their order, so Gemini looks at it even without a new e-mail.
 // Automatically rate-limits remote IMAP mailbox queries to at most once per minute (CHECK_COOLDOWN_MS)
 // to prevent mailbox connection floods, server overload, and Gmail account rate-limiting.
-function checkMail({ force = false, asked = false } = {}) {
+function checkMail({ force = false, asked = false, slack = 0 } = {}) {
   const elapsed = now() - lastImapCheckAt;
-  if (!force && elapsed < CHECK_COOLDOWN_MS) {
+  if (!force && elapsed < Math.max(0, CHECK_COOLDOWN_MS - slack)) {
     let matched = 0;
     for (const { id } of q("SELECT id FROM shop_orders WHERE status IN ('verifying','review') ORDER BY proof_at").all()) if (tryMatch(id)) matched++;
     if (asked) aiReview({ asked: true }).catch((e) => console.error('ai pay', e.message));
@@ -657,14 +661,16 @@ async function run(force) {
   const proofsWaiting = q("SELECT COUNT(*) AS n FROM shop_orders WHERE status IN ('verifying','review')").get().n;
   if (s.gmailConfigured && (s.mailPay || !s.jcReady ? (force || open.n) : proofsWaiting)) {
     const creds = gmailCredentials();
-    const last = q('SELECT uid_validity FROM payment_mails ORDER BY id DESC LIMIT 1').get()?.uid_validity;
+    const last = q('SELECT uid_validity FROM payment_mails ORDER BY id DESC LIMIT 1').get()?.uid_validity || 0;
     const known = new Set(last ? q('SELECT uid FROM payment_mails WHERE uid_validity = ?').all(last).map((r) => r.uid) : []);
     const since = Math.max(now() - 3 * 864e5, (open.t || now()) - 864e5);
-    const searchFrom = s.mailFrom ? [s.mailFrom, 'palpay.ps', creds.user].filter(Boolean) : '';
-    const { uidValidity, messages } = await mail.fetchMail({ ...IMAP, user: creds.user, pass: creds.pass, since, from: searchFrom, known });
-    // Messages that were skipped (other senders) are remembered too, so they are not downloaded again.
+    const searchFrom = s.mailFrom ? [s.mailFrom, 'palpay.ps', 'bop.ps', creds.user].filter(Boolean) : '';
+    const { uidValidity, messages } = await mail.fetchMail({ ...IMAP, user: creds.user, pass: creds.pass, since, from: searchFrom, known, knownUidValidity: last });
+    // Messages that were skipped (other senders) or unparseable are remembered too, so they are not downloaded again.
     for (const m of messages) {
-      if (saveMail(uidValidity, m.uid, m.raw, s)) fetched++;
+      let saved = null;
+      try { saved = saveMail(uidValidity, m.uid, m.raw, s); } catch (e) { console.error('shop mail parse', m.uid, e.message); }
+      if (saved) fetched++;
       else q("INSERT OR IGNORE INTO payment_mails (uid_validity, uid, received_at, created_at, order_id) VALUES (?, ?, ?, ?, 0)").run(uidValidity, m.uid, now(), now());
     }
   }
@@ -679,7 +685,7 @@ async function run(force) {
   return { fetched, matched, escalated, mailed };
 }
 
-const timer = setInterval(() => { checkMail().catch((e) => console.error('shop mail', e.message)); }, LOOP_MS);
+const timer = setInterval(() => { checkMail({ slack: 1000 }).catch((e) => console.error('shop mail', e.message)); }, LOOP_MS);
 timer.unref();
 
 module.exports = {

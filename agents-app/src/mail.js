@@ -70,21 +70,42 @@ const quote = (s) => `"${String(s).replace(/[\\"]/g, (c) => '\\' + c)}"`;
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const imapDate = (ts) => { const d = new Date(ts); return `${d.getUTCDate()}-${MONTHS[d.getUTCMonth()]}-${d.getUTCFullYear()}`; };
 
-function open({ host, port, secure }) {
+function open({ host, port, secure, timeout = 30_000 }) {
   return new Promise((resolve, reject) => {
-    const s = secure ? tls.connect({ host, port, servername: host }) : net.connect({ host, port });
-    s.once(secure ? 'secureConnect' : 'connect', () => { s.removeListener('error', reject); resolve(s); });
-    s.once('error', reject);
+    let settled = false;
+    const s = secure ? tls.connect({ host, port, ...(net.isIP(host) ? {} : { servername: host }) }) : net.connect({ host, port });
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      const err = new MailError('انتهت مهلة الاتصال بخادم البريد');
+      s.destroy(err);
+      reject(err);
+    }, timeout);
+    timer.unref?.();
+    const onErr = (e) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      reject(e);
+    };
+    s.once(secure ? 'secureConnect' : 'connect', () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      s.removeListener('error', onErr);
+      resolve(s);
+    });
+    s.once('error', onErr);
   });
 }
 
 // Messages received since `since` (ms) whose sender contains `from`, skipping UIDs in `known` and UIDs up to `after`.
 // Returns { uidValidity, uidNext, messages: [{ uid, raw }] }, newest last, at most `limit`. uidNext is the UID the next
 // message to arrive will get at least (0 when the server does not say).
-async function fetchMail({ host = 'imap.gmail.com', port = 993, secure = true, user, pass, since, from = '', known = new Set(), after = 0, limit = 40, timeout = 30000 }) {
+async function fetchMail({ host = 'imap.gmail.com', port = 993, secure = true, user, pass, since, from = '', known = new Set(), knownUidValidity = 0, after = 0, limit = 40, timeout = 30000 }) {
   let socket;
   try {
-    socket = await open({ host, port, secure });
+    socket = await open({ host, port, secure, timeout });
   } catch (e) {
     throw new MailError(`تعذّر الاتصال بخادم البريد: ${e.message}`);
   }
@@ -104,16 +125,19 @@ async function fetchMail({ host = 'imap.gmail.com', port = 993, secure = true, u
     const uidNext = Number(sel.map((r) => r.text.match(/UIDNEXT (\d+)/i)?.[1]).find(Boolean) || 0);
     // Non-ASCII sender filters are applied after parsing (SEARCH would need CHARSET).
     const terms = [...new Set(
-      (Array.isArray(from) ? from : String(from || '').split(/[,;\s]+/))
-        .map((s) => String(s || '').trim())
+      (Array.isArray(from) ? from : [from])
+        .flatMap((s) => String(s || '').split(/[,;\s]+/))
+        .map((s) => s.trim())
         .filter((s) => s && /^[\x20-\x7e]+$/.test(s))
     )];
     const fromClause = terms.length === 0 ? ''
       : terms.length === 1 ? ` FROM ${quote(terms[0])}`
       : ' ' + terms.slice(0, -1).map((t) => `OR FROM ${quote(t)}`).join(' ') + ` FROM ${quote(terms[terms.length - 1])}`;
     const found = await c.cmd(`UID SEARCH SINCE ${imapDate(since)}${fromClause}`);
+    // If the mailbox's UIDVALIDITY changed, old UIDs belong to a previous sequence and must not skip new messages.
+    const skipKnown = !knownUidValidity || !uidValidity || knownUidValidity === uidValidity ? known : new Set();
     const uids = found.flatMap((r) => (/^\* SEARCH/i.test(r.text) ? r.text.replace(/^\* SEARCH/i, '').trim().split(/\s+/).filter(Boolean).map(Number) : []))
-      .filter((u) => u > after && !known.has(u)).sort((a, b) => a - b).slice(-limit);
+      .filter((u) => u > after && !skipKnown.has(u)).sort((a, b) => a - b).slice(-limit);
     const messages = [];
     for (const uid of uids) {
       const res = await c.cmd(`UID FETCH ${uid} BODY.PEEK[]`);
@@ -173,7 +197,13 @@ function htmlToText(h) {
   return h.replace(/<(style|script|head)[\s\S]*?<\/\1>/gi, ' ')
     .replace(/<br\s*\/?>|<\/(p|div|tr|li|h\d|table)>/gi, '\n').replace(/<\/t[dh]>/gi, ' ')
     .replace(/<[^>]+>/g, '')
-    .replace(/&(#x[0-9a-f]+|#\d+|\w+);/gi, (m, e) => (e[0] === '#' ? String.fromCodePoint(e[1].toLowerCase() === 'x' ? parseInt(e.slice(2), 16) : Number(e.slice(1))) : ENTITIES[e.toLowerCase()] ?? m))
+    .replace(/&(#x[0-9a-f]+|#\d+|\w+);/gi, (m, e) => {
+      if (e[0] === '#') {
+        const cp = e[1].toLowerCase() === 'x' ? parseInt(e.slice(2), 16) : Number(e.slice(1));
+        return Number.isInteger(cp) && cp >= 0 && cp <= 0x10ffff ? String.fromCodePoint(cp) : m;
+      }
+      return ENTITIES[e.toLowerCase()] ?? m;
+    })
     .replace(/[ \t\u00a0]+/g, ' ').replace(/\s*\n\s*/g, '\n').trim();
 }
 
@@ -241,8 +271,8 @@ function parseJawwalPay({ subject = '', text = '' }, { ownNumber = '' } = {}) {
 
   // The reference may stand in brackets: "المرجع :(2922922722823)".
   const ref = t.match(/(?:الرقم المرجعي|رقم مرجعي|رقم المرجع|المرجع|رقم العملية|رقم الحركة|رقم التحويل|reference(?:\s*(?:no\.?|number|#))?|ref\.?(?:\s*no\.?)?|transaction\s*(?:id|no\.?|number))\s*[:：#-]?\s*[(\[]?\s*([A-Za-z0-9][A-Za-z0-9-]{3,40})/i);
-  const own = localPhone(ownNumber);
-  const phones = [...new Set([...t.matchAll(/(?:\+?97[02][\s-]?|0)5\d(?:[\s-]?\d){7}/g)].map((m) => localPhone(m[0])))].filter((p) => p !== own);
+  const ownSet = new Set((Array.isArray(ownNumber) ? ownNumber : [ownNumber]).map((n) => localPhone(String(n || ''))).filter(Boolean));
+  const phones = [...new Set([...t.matchAll(/(?:\+?97[02][\s-]?|0)5\d(?:[\s-]?\d){7}/g)].map((m) => localPhone(m[0])))].filter((p) => !ownSet.has(p));
   const name = t.match(/(?:تحويل\s+دفع\s+لصديق|دفع\s+لصديق)\s*[:：-]\s*([^\n\r\d:|,،]{2,60}?)(?:\s*[,،]|\s+(?:بمبلغ|مبلغ|بقيمة|قيمة|amount)|$)/im)
     || t.match(/^\s*([^\n\r\d:|.,]{2,60}?)\s+قام\s+بتحويل/m)
     || t.match(/(?:اسم المرسل|المرسل|المحوِّل|المحول|من|sender(?:\s*name)?|from)\s*[:：]\s*([^\n\r\d:|,،]{2,50})/i)

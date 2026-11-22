@@ -25,7 +25,7 @@ function taskCard(t) {
     <div class="item-top"><span class="tile sm cyan">${icon('qr')}</span>
       <div class="grow"><b class="item-title">تفعيل eSIM${t.amount !== null && t.amount !== undefined ? ` · <span class="ltr">${fmtMoney(t.amount)}</span>` : ''}</b>
         <div class="item-sub"><span>${relTime(t.createdAt)}</span>${t.lineNumber ? `<span>${phone(t.lineNumber)}</span>` : ''}${t.source ? `<span>المورّد: ${esc(t.source)}</span>` : ''}</div></div>
-      <span class="pill s-${t.status}">${TASK_STATUS[t.status] || t.status}</span></div>
+      <span class="pill s-${esc(t.status)}">${esc(TASK_STATUS[t.status] || t.status)}</span></div>
     ${t.note ? `<p class="small" style="color:var(--ink-2)">${esc(t.note)}</p>` : ''}
     ${t.autoStatus ? autoBox(t) : ''}
     ${t.response ? `<p class="small muted">الرد: ${esc(t.response)}${t.resolvedBy ? ` — ${esc(t.resolvedBy)}` : ''}</p>` : ''}

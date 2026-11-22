@@ -12,6 +12,7 @@
 //   extension (ref tc:<package>:<days>)   — extends a subscriber on its own package, carried out automatically
 //   new line  (ref tcn:<package>:<days>)  — a request for the manager for now (number, SIM and customer differ by company)
 const mailcode = require('./mailcode');
+const { addMonths } = require('./util');
 
 const BASE = process.env.TC_BASE || 'https://www.telecom.co.il';
 const TIMEOUT_MS = 30_000;
@@ -207,8 +208,7 @@ async function takeEsim(creds) {
 // dd/mm/yyyy, as the site's form sends dates.
 const siteDate = (d) => `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()}`;
 async function newEsimLine(creds, { packageId, number, esim, months = 1, customer }) {
-  const end = new Date();
-  end.setMonth(end.getMonth() + Math.max(1, months));
+  const end = new Date(addMonths(Date.now(), Math.max(1, months)));
   const [first, ...rest] = String(customer.name || '').trim().split(/\s+/);
   const r = await page(creds, 'POST', '/app/leads/leadActionNew', {
     niyud_phone: '', sim_niyud: '', oldProvider: '0', phone: number, sim: SIM_PREFIX[ESIM_COMPANY], sim_h: esim.sim, sim_new: '',

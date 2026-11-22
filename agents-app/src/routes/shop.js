@@ -1,7 +1,7 @@
 'use strict';
 // Customer shop: public catalog and orders (/api/shop/...), and the manager's side (/api/shop/admin/...).
 const crypto = require('node:crypto');
-const { q, getSettings, qlCredentials } = require('../db');
+const { q, tx, getSettings, qlCredentials } = require('../db');
 const { fail, now, round, str, normalizePhone, validPhone, imageOrEmpty } = require('../util');
 const D = require('../domain');
 const shop = require('../shop');
@@ -116,7 +116,7 @@ function orderView(o, { admin = false } = {}) {
   const waitUntil = waitingReview && o.proof_at ? o.proof_at + shop.WAIT_REVIEW_MS : null;
   const needsSupport = Boolean(waitingReview && waitUntil !== null && now() >= waitUntil);
   return {
-    // An eSIM's number (given at random) shows to the customer once the order is paid.
+    // The reserved eSIM number shows with the order; the QR and activation code show only once paid.
     code: o.code, packageLabel: o.package_label, kind: o.kind, number: o.number, customerName: o.customer_name,
     amount: round(o.amount), esimFee: round(o.esim_fee || 0), packagePrice: round(o.amount - (o.esim_fee || 0)),
     status: o.status, stage: stage(o, line), response: o.response,
@@ -366,10 +366,12 @@ function orderGuards(body, { ip, clientId = '' }) {
   shop.expireUnconfirmed();
 
   // Safety rule: A customer can hold at most 1 active reservation (awaiting_payment) at a time.
+  const tNow = now();
+  const cutoff = tNow - RESERVE_MS;
   if (clientId) {
     const activeClientOrder = q(`SELECT id, code, package_label FROM shop_orders
-                                 WHERE client_id = ? AND status = 'awaiting_payment' AND created_at > ? LIMIT 1`)
-                              .get(clientId, now() - RESERVE_MS);
+                                 WHERE client_id = ? AND status = 'awaiting_payment' AND (created_at > ? OR COALESCE(jc_expires_at, 0) > ? OR jc_unsure = 1) LIMIT 1`)
+                              .get(clientId, cutoff, tNow);
     if (activeClientOrder) {
       fail(409, `لديك حجز نشط بالفعل (طلب رقم ${activeClientOrder.code}). يرجى إتمام الدفع أو إلغاء الحجز الحالي لحجز بطاقة جديدة.`, { code: activeClientOrder.code });
     }
@@ -381,8 +383,8 @@ function orderGuards(body, { ip, clientId = '' }) {
     const cleanNum = normalizePhone(rawNum);
     if (cleanNum && validPhone(cleanNum)) {
       const activePhoneOrder = q(`SELECT id, code FROM shop_orders
-                                  WHERE (number = ? OR contact_phone = ?) AND status = 'awaiting_payment' AND created_at > ? LIMIT 1`)
-                               .get(cleanNum, cleanNum, now() - RESERVE_MS);
+                                  WHERE (number = ? OR contact_phone = ?) AND status = 'awaiting_payment' AND (created_at > ? OR COALESCE(jc_expires_at, 0) > ? OR jc_unsure = 1) LIMIT 1`)
+                               .get(cleanNum, cleanNum, cutoff, tNow);
       if (activePhoneOrder) {
         fail(409, `يوجد حجز نشط بالفعل مسجل بنفس الرقم (طلب رقم ${activePhoneOrder.code}). يرجى إتمام الدفع أو إلغاء الحجز السابق أولاً.`, { code: activePhoneOrder.code });
       }
@@ -392,7 +394,7 @@ function orderGuards(body, { ip, clientId = '' }) {
   // Network anti-hoarding limit: Max concurrent active reservations from the same IP
   const MAX_ACTIVE_PER_IP = Number(process.env.SHOP_MAX_ACTIVE_PER_IP) || 15;
   const activeIpCount = q(`SELECT COUNT(*) AS c FROM shop_orders
-                           WHERE ip = ? AND status = 'awaiting_payment' AND created_at > ?`).get(ip, now() - RESERVE_MS)?.c || 0;
+                           WHERE ip = ? AND status = 'awaiting_payment' AND (created_at > ? OR COALESCE(jc_expires_at, 0) > ? OR jc_unsure = 1)`).get(ip, cutoff, tNow)?.c || 0;
   if (activeIpCount >= MAX_ACTIVE_PER_IP) {
     fail(429, 'تم الوصول للحد الأقصى لعدد الحجوزات المعلقة المتزامنة من هذه الشبكة. يرجى إتمام الدفع أو الانتظار حتى انتهاء مهلة الحجز.');
   }
@@ -424,25 +426,28 @@ async function aylolLineOrder(body, ip, clientId, p) {
   if (!AY.shopLineModes(p).includes('esim')) fail(404, 'الباقة غير متوفرة — المتجر يبيع شرائح eSIM فقط');
   const contact = body.contactPhone ? validPhone(normalizePhone(body.contactPhone)) : '';
   const list = await AY.billFreeNumbers(p.art_card_id, '', true);
-  const held = new Set(heldNumbers().map((h) => h.number));
-  const free = list.filter((n) => !held.has(n.phone) && !q("SELECT 1 FROM lines WHERE number = ? AND status != 'disconnected'").get(n.phone));
-  setStock(p.id, free.map((n) => n.phone));
-  if (!free.length) fail(409, 'نفدت أرقام eSIM لهذه الباقة الآن. جرّب باقة أخرى أو عد لاحقاً.');
-  const picked = free[crypto.randomInt(free.length)];
-  const s = getSettings();
-  const esimFee = round(p.company_esim_fee === null || p.company_esim_fee === undefined ? s.esimFee : p.company_esim_fee);
-  const t = now();
-  const code = newCode();
-  q(`INSERT INTO shop_orders (code, package_id, package_label, kind, number, sim, customer_name, contact_phone, amount, esim_fee, ip, client_id, created_at, updated_at, esim, number_id, email)
-     VALUES (?, ?, ?, 'new', ?, '', ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`)
-    .run(code, p.id, D.packageLabel(p), picked.phone, customerName, contact, round(p.shop_price + esimFee), esimFee, ip, clientId, t, t, `ayl:${picked.phone}`, email);
-  return orderView(byCode(code));
+  // Re-check reservation guards and insert atomically after external awaits to prevent concurrent hoarding races.
+  return tx(() => {
+    const s = orderGuards(body, { ip, clientId });
+    const held = new Set(heldNumbers().map((h) => h.number));
+    const free = list.filter((n) => !held.has(n.phone) && !q("SELECT 1 FROM lines WHERE number = ? AND status != 'disconnected'").get(n.phone));
+    setStock(p.id, free.map((n) => n.phone));
+    if (!free.length) fail(409, 'نفدت أرقام eSIM لهذه الباقة الآن. جرّب باقة أخرى أو عد لاحقاً.');
+    const picked = free[crypto.randomInt(free.length)];
+    const esimFee = round(p.company_esim_fee === null || p.company_esim_fee === undefined ? s.esimFee : p.company_esim_fee);
+    const t = now();
+    const code = newCode();
+    q(`INSERT INTO shop_orders (code, package_id, package_label, kind, number, sim, customer_name, contact_phone, amount, esim_fee, ip, client_id, created_at, updated_at, esim, number_id, email)
+       VALUES (?, ?, ?, 'new', ?, '', ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`)
+      .run(code, p.id, D.packageLabel(p), picked.phone, customerName, contact, round(p.shop_price + esimFee), esimFee, ip, clientId, t, t, `ayl:${picked.phone}`, email);
+    return orderView(byCode(code));
+  });
 }
 
 // An eSIM on a free number picked at random. It is held for this order (no other customer gets it) and checked again
 // when it is sold; QuickLine's eSIM and QR code are kept with the order. The customer sees the number once paid.
 async function esimOrder(body, ip, clientId = '') {
-  const s = getSettings();
+  const s0 = getSettings();
   const pk = esimPackage(body.packageId);
   require('./aylol').ensureBalanceFor(pk.p);
   const customerName = str(body.customerName, 80);
@@ -450,27 +455,30 @@ async function esimOrder(body, ip, clientId = '') {
   const email = str(body.email, 120).toLowerCase();
   if (email && !validAddress(email)) fail(400, 'البريد الإلكتروني غير صحيح');
   const contact = body.contactPhone ? validPhone(normalizePhone(body.contactPhone)) : '';
-  const list = await freeEsimNumbers(s, pk);
-  const held = new Set(heldNumbers().map((h) => h.number));
-  const free = list.filter((n) => !held.has(n.phone) && !q("SELECT 1 FROM lines WHERE number = ? AND status != 'disconnected'").get(n.phone));
-  setStock(pk.p.id, free.map((n) => n.phone));
-  if (!free.length) fail(409, 'نفدت أرقام eSIM لهذه الباقة الآن. جرّب باقة أخرى أو عد لاحقاً.');
-  const picked = free[crypto.randomInt(free.length)];
-  const t = now();
-  const code = newCode();
-  const hasCompanyFee = pk.p.company_esim_fee !== null && pk.p.company_esim_fee !== undefined;
-  const compFee = hasCompanyFee ? round(pk.p.company_esim_fee) : s.esimFee;
-  const esimFee = (hasCompanyFee || body.includeEsimFee) ? round(compFee) : 0;
-  const totalAmount = round(pk.p.shop_price + esimFee);
-  // The eSIM's code and QR come only from the supplier (QuickLine gives them with the number; Layan and telecom when
-  // the line is activated after payment) or from the manager who carries the order out. Nothing is made up here.
-  const esimCode = '';
-  const qrData = shop.realQr(picked.qr || '');
-  const row = q(`INSERT INTO shop_orders (code, package_id, package_label, kind, number, sim, customer_name, contact_phone, amount, esim_fee, esim_code, ip, client_id, created_at, updated_at,
-       esim, number_id, esim_qr, email) VALUES (?, ?, ?, 'new', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)`)
-    .run(code, pk.p.id, D.packageLabel(pk.p), picked.phone, String(picked.sim || '').replace(/\D/g, ''), customerName, contact, totalAmount, esimFee, esimCode, ip, clientId, t, t,
-      picked.id, qrData, email);
-  return orderView(byCode(code));
+  const list = await freeEsimNumbers(s0, pk);
+  // Re-check reservation guards and insert atomically after external awaits to prevent concurrent hoarding races.
+  return tx(() => {
+    const s = orderGuards(body, { ip, clientId });
+    const held = new Set(heldNumbers().map((h) => h.number));
+    const free = list.filter((n) => !held.has(n.phone) && !q("SELECT 1 FROM lines WHERE number = ? AND status != 'disconnected'").get(n.phone));
+    setStock(pk.p.id, free.map((n) => n.phone));
+    if (!free.length) fail(409, 'نفدت أرقام eSIM لهذه الباقة الآن. جرّب باقة أخرى أو عد لاحقاً.');
+    const picked = free[crypto.randomInt(free.length)];
+    const t = now();
+    const code = newCode();
+    const hasCompanyFee = pk.p.company_esim_fee !== null && pk.p.company_esim_fee !== undefined;
+    const esimFee = round(hasCompanyFee ? pk.p.company_esim_fee : s.esimFee);
+    const totalAmount = round(pk.p.shop_price + esimFee);
+    // The eSIM's code and QR come only from the supplier (QuickLine gives them with the number; Layan and telecom when
+    // the line is activated after payment) or from the manager who carries the order out. Nothing is made up here.
+    const esimCode = '';
+    const qrData = shop.realQr(picked.qr || '');
+    q(`INSERT INTO shop_orders (code, package_id, package_label, kind, number, sim, customer_name, contact_phone, amount, esim_fee, esim_code, ip, client_id, created_at, updated_at,
+         esim, number_id, esim_qr, email) VALUES (?, ?, ?, 'new', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)`)
+      .run(code, pk.p.id, D.packageLabel(pk.p), picked.phone, String(picked.sim || '').replace(/\D/g, ''), customerName, contact, totalAmount, esimFee, esimCode, ip, clientId, t, t,
+        picked.id, qrData, email);
+    return orderView(byCode(code));
+  });
 }
 
 // There is no unpaid ("instant") activation: an order is carried out only once its payment is verified.
@@ -495,7 +503,7 @@ route('GET', '/api/shop/orders/:code', null, async ({ params, query, ip }) => {
     o = byCode(params.code);
   }
   // A direct Jawwal Pay confirmation without a clear answer: its invoice is looked up (at most once a minute).
-  if (o.jc_unsure && ['awaiting_payment', 'cancelled'].includes(o.status)) {
+  if (o.jc_unsure && ['awaiting_payment', 'cancelled', 'verifying', 'review'].includes(o.status)) {
     try { await shop.reconcileDirect(); } catch (e) { console.error('jawwal reconcile', e.message); }
     o = byCode(params.code);
   }
@@ -517,6 +525,7 @@ async function submitProof(order, body) {
   const o = q('SELECT * FROM shop_orders WHERE id = ?').get(order.id);
   if (o.status === 'cancelled') fail(400, 'انتهت مهلة حجز الرقم (10 دقائق) دون تأكيد الإرسال وتم إلغاء الطلبية تلقائياً');
   if (!['awaiting_payment', 'verifying', 'review'].includes(o.status)) fail(400, 'تم التعامل مع هذا الطلب');
+  if (jcBusy.has(o.id) || o.jc_unsure) fail(409, 'جارٍ تأكيد الدفع من جوال باي — انتظر لحظة.');
   const prevTries = Number(o.proof_tries) || 0;
   // Manual transfers stopped: a new one is not taken (one already sent may still be corrected).
   const st = getSettings();
@@ -545,15 +554,16 @@ async function submitProof(order, body) {
   if (!payPhone && !payName && !payReference && !receipt && !o.receipt) fail(400, 'أدخل الرقم المرجعي أو رقم/اسم المحوِّل أو صورة الإشعار');
   const t = now();
   const nextTry = prevTries + 1;
-  q(`UPDATE shop_orders
+  const updated = q(`UPDATE shop_orders
         SET pay_phone = ?, pay_name = ?, pay_reference = ?,
             receipt = CASE WHEN ? != '' THEN ? ELSE receipt END,
             status = CASE WHEN status = 'review' THEN 'review' ELSE 'verifying' END,
             proof_tries = ?,
             first_proof_at = COALESCE(first_proof_at, ?),
             proof_at = ?, updated_at = ?
-      WHERE id = ?`)
-    .run(payPhone, payName, payReference, receipt, receipt, nextTry, t, t, t, o.id);
+      WHERE id = ? AND status IN ('awaiting_payment','verifying','review') AND jc_unsure = 0`)
+    .run(payPhone, payName, payReference, receipt, receipt, nextTry, t, t, t, o.id).changes;
+  if (!updated) fail(409, 'تم التعامل مع هذا الطلب أو جارٍ تأكيد الدفع من جوال باي.');
   if (!shop.tryMatch(o.id)) {
     // Read the mailbox now: the email often arrives a few seconds after the transfer.
     try { await shop.checkMail({ force: true, asked: true }); } catch (e) { console.error('shop mail', e.message); }
@@ -834,10 +844,13 @@ route('POST', '/api/shop/admin/orders/:id/retry', ADMIN, ({ params, body }) => {
 route('POST', '/api/shop/admin/orders/:id/reject', ADMIN, ({ user, params, body }) => {
   const o = adminOrder(params.id);
   if (!['awaiting_payment', 'verifying', 'review'].includes(o.status) && !(o.status === 'paid' && !o.line_id)) fail(400, 'لا يمكن رفض هذا الطلب');
-  q("UPDATE shop_orders SET status = 'rejected', response = ?, verified_by = ?, updated_at = ? WHERE id = ?")
-    .run(str(body.response, 300), user.name, now(), o.id);
-  // A rejected paid order frees its email for another order.
-  if (o.mail_id) q('UPDATE payment_mails SET order_id = NULL WHERE id = ?').run(o.mail_id);
+  if (jcBusy.has(o.id) || o.jc_unsure) fail(409, 'جارٍ تأكيد الدفع من جوال باي — انتظر لحظة.');
+  tx(() => {
+    q("UPDATE shop_orders SET status = 'rejected', mail_id = NULL, response = ?, verified_by = ?, updated_at = ? WHERE id = ?")
+      .run(str(body.response, 300), user.name, now(), o.id);
+    // A rejected paid order frees its email for another order.
+    if (o.mail_id) q('UPDATE payment_mails SET order_id = NULL WHERE id = ?').run(o.mail_id);
+  });
   return orderView(adminOrder(o.id), { admin: true });
 });
 

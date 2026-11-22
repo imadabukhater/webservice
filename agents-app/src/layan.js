@@ -82,7 +82,8 @@ function totp(secretB32, at = Date.now()) {
 }
 
 // ---------- requests ----------
-const session = { key: '', jwt: '' };
+const session = { key: '', jwt: '', signingIn: null, signingKey: '' };
+const credKey = ({ user, pass, secret } = {}) => `${user}\n${pass}\n${secret || ''}`;
 
 async function request(method, route, { body, jwt } = {}) {
   let res;
@@ -103,31 +104,52 @@ async function request(method, route, { body, jwt } = {}) {
   return { status: res.status, data, text: text.slice(0, 300) };
 }
 
-async function login({ user, pass, secret }) {
+async function login(creds) {
+  const { user, pass, secret } = creds || {};
   if (!user || !pass) throw new LayanError('أدخل اسم مستخدم ليان وكلمة المرور في الإعدادات');
-  session.jwt = '';
-  session.key = '';
-  const r = await request('POST', 'Auth/Login', { body: { username: user, password: pass } });
-  if (r.status >= 400) throw new LayanError(`ليان: ${r.text.replace(/^"|"$/g, '') || 'تعذّر تسجيل الدخول'}`);
-  let jwt = r.data?.data?.jwt;
-  if (r.data?.statusCode === 202) {
-    // An authenticator code (method 2) is made here; a code sent by SMS or e-mail (1, 3) cannot be answered.
-    if (r.data.data?.verificationMethod !== 2) throw new LayanError('ليان: الحساب يطلب رمزاً يصل برسالة. فعّل تطبيق المصادقة للحساب ليعمل الربط.');
-    if (!secret) throw new LayanError('ليان: الحساب يطلب رمز المصادقة — أدخل المفتاح السري في الإعدادات');
-    const v = await request('POST', 'Auth/VerifyCode', { body: { code: totp(secret), requestId: r.data.data.requestId, jwt: null } });
-    if (v.status >= 400) throw new LayanError(`ليان: لم يُقبل رمز المصادقة — تأكد من المفتاح السري وساعة السيرفر (${v.text})`);
-    jwt = v.data?.jwt || v.data?.data?.jwt;
+  const key = credKey(creds);
+  while (session.signingIn) {
+    if (session.signingKey === key) return session.signingIn;
+    await session.signingIn.catch(() => {});
   }
-  if (!jwt) throw new LayanError('ليان: لم يرجع الخادم رمز دخول');
-  session.jwt = jwt;
-  session.key = `${user}\n${pass}\n${secret || ''}`;
+  const p = (async () => {
+    session.jwt = '';
+    session.key = '';
+    const r = await request('POST', 'Auth/Login', { body: { username: user, password: pass } });
+    if (r.status >= 400) throw new LayanError(`ليان: ${r.text.replace(/^"|"$/g, '') || 'تعذّر تسجيل الدخول'}`);
+    let jwt = r.data?.data?.jwt;
+    if (r.data?.statusCode === 202) {
+      // An authenticator code (method 2) is made here; a code sent by SMS or e-mail (1, 3) cannot be answered.
+      if (r.data.data?.verificationMethod !== 2) throw new LayanError('ليان: الحساب يطلب رمزاً يصل برسالة. فعّل تطبيق المصادقة للحساب ليعمل الربط.');
+      if (!secret) throw new LayanError('ليان: الحساب يطلب رمز المصادقة — أدخل المفتاح السري في الإعدادات');
+      const v = await request('POST', 'Auth/VerifyCode', { body: { code: totp(secret), requestId: r.data.data.requestId, jwt: null } });
+      if (v.status >= 400) throw new LayanError(`ليان: لم يُقبل رمز المصادقة — تأكد من المفتاح السري وساعة السيرفر (${v.text})`);
+      jwt = v.data?.jwt || v.data?.data?.jwt;
+    }
+    if (!jwt) throw new LayanError('ليان: لم يرجع الخادم رمز دخول');
+    session.jwt = jwt;
+    session.key = key;
+  })();
+  session.signingIn = p;
+  session.signingKey = key;
+  try {
+    return await p;
+  } finally {
+    if (session.signingIn === p) {
+      session.signingIn = null;
+      session.signingKey = '';
+    }
+  }
 }
 
 async function api(creds, method, route, body) {
-  if (session.key !== `${creds.user}\n${creds.pass}\n${creds.secret || ''}`) await login(creds);
-  let r = await request(method, route, { body, jwt: session.jwt });
+  const key = credKey(creds);
+  if (session.signingIn && session.signingKey === key) await session.signingIn;
+  if (session.key !== key || !session.jwt) await login(creds);
+  const usedJwt = session.jwt;
+  let r = await request(method, route, { body, jwt: usedJwt });
   if (r.status === 401 || r.status === 403) {
-    await login(creds);
+    if (session.jwt === usedJwt || session.key !== key) await login(creds);
     r = await request(method, route, { body, jwt: session.jwt });
   }
   if (r.status >= 400) throw new LayanError(`ليان رفض الطلب${r.text ? ` (ليان: ${r.text.replace(/^"|"$/g, '').slice(0, 160)})` : ''}`, { refused: true });
@@ -221,8 +243,9 @@ async function imageDataUrl(url) {
   if (!url) return '';
   if (/^data:image\//.test(url)) return url;
   const res = await fetch(new URL(url, BASE), { signal: AbortSignal.timeout(TIMEOUT_MS) });
-  const type = (res.headers.get('content-type') || '').split(';')[0].trim();
-  if (!res.ok || !/^image\//.test(type)) throw new LayanError(`ليان: رمز QR غير متاح (${res.status})`);
+  const rawType = (res.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
+  const type = rawType === 'image/jpg' ? 'image/jpeg' : rawType;
+  if (!res.ok || !/^image\/(png|jpeg|webp|gif)$/.test(type)) throw new LayanError(`ليان: رمز QR غير متاح (${res.status})`);
   const buf = Buffer.from(await res.arrayBuffer());
   if (buf.length > 500 * 1024) throw new LayanError('ليان: صورة رمز QR كبيرة جداً');
   return `data:${type};base64,${buf.toString('base64')}`;

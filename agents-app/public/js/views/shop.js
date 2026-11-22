@@ -19,7 +19,7 @@ function orderCard(o) {
     <div class="item-top"><span class="tile sm ${o.stage === 'done' ? 'green' : o.stage === 'review' || o.stage === 'paid_issue' ? 'red' : 'amber'}">${icon('card')}</span>
       <div class="grow"><b class="item-title">${esc(o.packageLabel)} · <span class="ltr">${fmtMoney(o.amount)}</span></b>
         <div class="item-sub"><span class="ltr">${esc(o.code)}</span>${phone(o.number)}<span>eSIM</span><span>${relTime(o.createdAt)}</span></div></div>
-      <span class="pill s-${cls}">${label}</span></div>
+      <span class="pill s-${esc(cls)}">${esc(label)}</span></div>
     ${o.customerName ? `<p class="small">الزبون: ${esc(o.customerName)}${o.contactPhone && o.contactPhone !== o.number ? ` · تواصل ${phone(o.contactPhone)}` : ''}</p>` : ''}
     ${proof ? `<p class="small" style="color:var(--ink-2)">${proof}</p>` : ''}
     ${o.verifiedBy ? `<p class="small muted">التحقق: ${esc(o.verifiedBy)}</p>` : ''}
@@ -56,7 +56,6 @@ function openSettings() {
     subtitle: `رابط المتجر: ${location.origin}/`,
     body: `
       <label class="switch-row"><span class="grow"><b>المتجر مفتوح للزبائن</b><small>الرزم المختارة «عرض في المتجر» في صفحة «الرزم» تظهر فيه</small></span><input class="switch" type="checkbox" name="shopEnabled" ${s.shopEnabled ? 'checked' : ''}></label>
-      <label class="switch-row"><span class="grow"><b>وضع التفعيل التجريبي بدون انتظار الدفع</b><small>إتاحة تفعيل الطلبات وإظهار كود QR مباشرة عبر واجهة البرمجة دون انتظار التحقق من الدفع (أبقِه مغلقاً في الوضع الفعلي)</small></span><input class="switch" type="checkbox" name="shopInstant" ${s.shopInstant ? 'checked' : ''}></label>
       <div class="row2"><div class="field"><label for="st-max">حد التنفيذ التلقائي (₪)</label><input class="input ltr" id="st-max" name="shopAutoMax" type="number" min="0" step="1" inputmode="numeric" value="${s.shopAutoMax ?? 200}">
           <span class="hint">طلب أغلى من هذا يُفحص دفعه تلقائياً، لكنه ينتظر موافقتك قبل التفعيل. 0 = بلا حد.</span></div>
         <div class="field"><label for="st-hour">أقصى عدد طلبات للزبون في الساعة</label><input class="input ltr" id="st-hour" name="shopHourLimit" type="number" min="0" max="100" step="1" inputmode="numeric" value="${s.shopHourLimit ?? 3}">
@@ -96,12 +95,13 @@ function openSettings() {
     submit: 'حفظ',
     onMount(form) {
       form.querySelector('#st-check').addEventListener('click', async (e) => {
-        e.target.disabled = true;
+        const btn = e.currentTarget;
+        btn.disabled = true;
         try {
           const r = await api.post('/api/shop/admin/check-mail');
           toast(`تمت القراءة: ${r.fetched} إشعار جديد، ${r.matched} طلب مطابق`);
           changed();
-        } catch (ex) { toast(ex.message, { error: true }); } finally { e.target.disabled = false; }
+        } catch (ex) { toast(ex.message, { error: true }); } finally { btn.disabled = false; }
       });
       form.querySelector('#st-aitest').addEventListener('click', async (e) => {
         const btn = e.currentTarget;
@@ -131,7 +131,6 @@ function openSettings() {
       V.settings = await api.put('/api/settings', {
         jcEnabled: form.elements.jcEnabled.checked, jcPals: form.elements.jcPals.checked, jcManagerId: field(form, 'jcManagerId'), jcUser: field(form, 'jcUser'), jcPass: field(form, 'jcPass'),
         shopEnabled: form.elements.shopEnabled.checked,
-        shopInstant: form.elements.shopInstant.checked,
         shopAutoMax: field(form, 'shopAutoMax'), shopHourLimit: field(form, 'shopHourLimit'),
         shopTitle: field(form, 'shopTitle'),
         shopSubtitle: field(form, 'shopSubtitle'),

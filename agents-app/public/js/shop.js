@@ -2,7 +2,7 @@
 // Uses ES module imports from ./core.js — zero emojis, crisp vector SVGs, full pages & sheets.
 import {
   esc, icon, fmtMoney, fmtNum, fmtDateTime, fmtDate, fmtTime, specs, companyLogo,
-  fileToDataUrl, copyText, toast, fmtPhone, sheet, closeSheet,
+  fileToDataUrl, copyText, toast, fmtPhone, sheet, closeSheet, go,
 } from './core.js';
 
 const MY_ORDERS_KEY = 'agents.shop.orders';
@@ -82,17 +82,24 @@ const S = {
   wantEsim: false,
   esimAvailable: null,
   instantBusy: false,
+  seq: 0,
 };
 
 const root = document.getElementById('shop');
 
 function getTheme() {
-  return localStorage.getItem('agents.theme') || localStorage.getItem('theme') || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+  try {
+    const saved = localStorage.getItem('agents.theme') || localStorage.getItem('theme');
+    if (saved) return saved;
+  } catch {}
+  return matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
 }
 function applyTheme(t) {
   document.documentElement.dataset.theme = t;
-  localStorage.setItem('agents.theme', t);
-  localStorage.setItem('theme', t);
+  try {
+    localStorage.setItem('agents.theme', t);
+    localStorage.setItem('theme', t);
+  } catch {}
   const meta = document.querySelector('meta[name="theme-color"]');
   if (meta) meta.content = t === 'dark' ? '#120D18' : '#17111F';
 }
@@ -338,8 +345,15 @@ function switchCatalogTab(_kind, { scroll = false } = {}) {
 function bindGlobalTriggers(scope) {
   scope.querySelectorAll('[data-act="theme"]').forEach((b) => {
     b.onclick = () => {
-      applyTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark');
-      route();
+      const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
+      applyTheme(next);
+      const dark = next === 'dark';
+      const label = dark ? 'الوضع الفاتح' : 'الوضع الداكن';
+      document.querySelectorAll('[data-act="theme"]').forEach((btn) => {
+        btn.setAttribute('aria-label', label);
+        btn.setAttribute('title', label);
+        btn.innerHTML = icon(dark ? 'sun' : 'moon');
+      });
     };
   });
   scope.querySelectorAll('[data-jump]').forEach((b) => {
@@ -845,20 +859,22 @@ function openTrackSheet() {
     onSubmit: (form) => {
       const code = (new FormData(form).get('code') || '').trim().toUpperCase();
       if (!code) throw new Error('أدخل رمز الطلب');
-      location.hash = `#/order/${encodeURIComponent(code)}`;
+      return { go: `#/order/${encodeURIComponent(code)}` };
     },
   });
 }
 
-async function viewTrackPage() {
+async function viewTrackPage(seq) {
   clearInterval(S.pollTimer);
   const codes = S.myCodes;
   if (codes.length) {
     const results = await Promise.all(codes.map((c, i) => jfetch(`/api/shop/orders/${encodeURIComponent(c)}${i === 0 ? '?check=1' : ''}`).catch(() => null)));
+    if (seq !== S.seq) return;
     S.myOrders = results.filter(Boolean);
   } else {
     S.myOrders = [];
   }
+  if (seq !== S.seq) return;
   const ordersList = S.myOrders || [];
   const wa = waHref(S.data?.supportWhatsapp, 'مرحباً، أحتاج مساعدة بخصوص طلبي');
 
@@ -1131,10 +1147,16 @@ function openPackDetailsSheet(pk, co) {
         </div>
       </div>
       <div class="row" style="gap:10px;margin-top:16px;flex-wrap:wrap">
-        <a class="btn primary grow" href="#/buy/${pk.id}?esim=1" data-close>${icon('qr')}<span>شراء شريحة eSIM</span></a>
+        <a class="btn primary grow" href="#/buy/${pk.id}?esim=1" data-buy-go>${icon('qr')}<span>شراء شريحة eSIM</span></a>
       </div>
     `,
     footer: `<button type="button" class="btn ghost" data-close>إغلاق</button>`,
+    onMount: (_form, el) => {
+      el.querySelector('[data-buy-go]')?.addEventListener('click', (e) => {
+        e.preventDefault();
+        go(`#/buy/${pk.id}?esim=1`);
+      });
+    },
   });
 }
 
@@ -1678,15 +1700,15 @@ function renderCheckoutPackageSummary(pk, co) {
 }
 
 // Every package in the shop is an eSIM on a new number from its supplier: straight to the eSIM checkout.
-function viewBuy(id) {
+function viewBuy(id, seq) {
   const pk = (S.data?.packages || []).find((p) => String(p.id) === String(id));
   if (!pk) { location.hash = '#/'; return; }
   const co = (S.data?.companies || []).find((c) => c.id === pk.companyId) || { name: pk.companyName };
-  return esimForm(pk, co);
+  return esimForm(pk, co, seq);
 }
 
 // eSIM checkout: checks /api/shop/available, shows price + QR fee breakdown, and creates eSIM order
-async function esimForm(pk, co) {
+async function esimForm(pk, co, seq) {
   const sp = extractPackageSpecs(pk, co);
   const qrFee = Number(pk.esimFee ?? co?.esimFee ?? S.data?.esimFee ?? 0);
   const total = Number(pk.price || 0) + qrFee;
@@ -1700,6 +1722,7 @@ async function esimForm(pk, co) {
       S.esimAvailable = { pkgId: pk.id, available: false, error: err.message };
     }
   }
+  if (seq !== S.seq) return;
   const available = S.esimAvailable.available;
 
   shell(`
@@ -1828,7 +1851,7 @@ async function esimForm(pk, co) {
           <div style="font-size:13px;font-weight:700;color:var(--text, #111)">⚠️ لديك حجز بطاقة نشط حالياً (طلب ${esc(err.code)})</div>
           <div style="font-size:12px;color:var(--text-muted, #666)">لا يمكن حجز أكثر من بطاقة في نفس الوقت منعاً لنفاد الأرقام. يمكنك إتمام دفع الحجز السابق أو إلغاؤه لحجز هذه الباقة.</div>
           <div style="display:flex;gap:8px;flex-wrap:wrap">
-            <a href="#/order/${encodeURIComponent(err.code)}" class="btn primary sm" onclick="closeSheet()">متابعة دفع الطلب المحجوز</a>
+            <a href="#/order/${encodeURIComponent(err.code)}" class="btn primary sm">متابعة دفع الطلب المحجوز</a>
             <button type="button" class="btn sm" id="cancel-active-res-btn">إلغاء الحجز السابق وحجز هذه الباقة</button>
           </div>
         `;
@@ -1866,14 +1889,17 @@ const STAGES_AR = {
 const PAYABLE_STATUSES = ['awaiting_payment', 'verifying', 'review'];
 const FINAL_STAGES = ['done', 'cancelled', 'rejected', 'failed'];
 
-async function viewOrder(code) {
+async function viewOrder(code, seq) {
   clearInterval(S.pollTimer);
   clearInterval(S.countdownTimer);
   try {
-    S.order = await jfetch(`/api/shop/orders/${encodeURIComponent(code)}?check=1`);
+    const fetched = await jfetch(`/api/shop/orders/${encodeURIComponent(code)}?check=1`);
+    if (seq !== S.seq) return;
+    S.order = fetched;
     rememberOrderCode(S.order.code);
     S.myCodes = savedOrderCodes();
   } catch (err) {
+    if (seq !== S.seq) return;
     shell(`
       <div class="card empty">
         ${icon('alert')}
@@ -1887,10 +1913,14 @@ async function viewOrder(code) {
   }
   renderOrder();
   if (!FINAL_STAGES.includes(S.order.stage)) {
+    let polling = false;
     S.pollTimer = setInterval(async () => {
-      if (document.querySelector('#proof-f :focus, #jc-f :focus, #jc-send-f :focus')) return;
+      if (seq !== S.seq) { clearInterval(S.pollTimer); return; }
+      if (polling || document.querySelector('#proof-f :focus, #jc-f :focus, #jc-send-f :focus')) return;
+      polling = true;
       try {
         const next = await jfetch(`/api/shop/orders/${encodeURIComponent(code)}`);
+        if (seq !== S.seq) { clearInterval(S.pollTimer); return; }
         if (
           next.status !== S.order.status ||
           next.stage !== S.order.stage ||
@@ -1905,7 +1935,9 @@ async function viewOrder(code) {
           renderOrder();
           if (FINAL_STAGES.includes(next.stage)) clearInterval(S.pollTimer);
         }
-      } catch {}
+      } catch {} finally {
+        polling = false;
+      }
     }, 5000);
   }
 }
@@ -2500,14 +2532,17 @@ function renderOrder() {
 }
 
 async function route() {
+  const seq = ++S.seq;
   clearInterval(S.pollTimer);
   clearInterval(S.countdownTimer);
   try {
     await ensureCatalog();
   } catch (err) {
+    if (seq !== S.seq) return;
     root.innerHTML = `<main class="shop-main"><div class="card empty">${icon('alert')}<p>${esc(err.message)}</p></div></main>`;
     return;
   }
+  if (seq !== S.seq) return;
   const rawHash = location.hash.replace(/^#\/?/, '');
   const [pathPart, queryPart] = rawHash.split('?');
   const params = new URLSearchParams(queryPart || '');
@@ -2521,14 +2556,18 @@ async function route() {
   if (head === 'guarantee') return viewLegalPage('guarantee');
   if (head === 'track' || head === 'orders') {
     S.myOrders = null;
-    return viewTrackPage();
+    return viewTrackPage(seq);
   }
   if (head === 'buy' && arg) {
     if (params.get('esim') === '1') S.wantEsim = true;
     else if (!queryPart) S.wantEsim = false;
-    return viewBuy(arg);
+    return viewBuy(arg, seq);
   }
-  if (head === 'order' && arg) return viewOrder(decodeURIComponent(arg));
+  if (head === 'order' && arg) {
+    let decoded = arg;
+    try { decoded = decodeURIComponent(arg); } catch {}
+    return viewOrder(decoded, seq);
+  }
   viewCatalog();
 }
 

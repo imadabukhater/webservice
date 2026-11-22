@@ -6,12 +6,12 @@ const { setSetting, qlCredentials } = require('../src/db');
 const { syncKind } = require('../src/routes/quickline');
 
 (async () => {
-  const kind = process.argv[2];
-  if (!['card', 'invoice'].includes(kind)) throw new Error('usage: node scripts/ql-sync.js');
+  const kind = process.argv[2] || 'invoice';
+  if (kind !== 'invoice') throw new Error('usage: node scripts/ql-sync.js [invoice]');
   if (process.env.QL_USER) setSetting('ql_user', process.env.QL_USER);
   if (process.env.QL_PASS) setSetting('ql_pass', process.env.QL_PASS);
   const creds = qlCredentials();
   if (!creds.user || !creds.pass) throw new Error('QuickLine sign-in is not set (QL_USER / QL_PASS)');
   const r = await syncKind(creds, kind);
-  console.log(`${kind}: ${r.total} from QuickLine, added ${r.added}, seen ${r.updated}, switched off ${r.switchedOff}, awaiting approval ${r.pending}, markup ${r.markup}%`);
+  console.log(`${kind}: ${r.total} from QuickLine, added ${r.added}, seen ${r.updated}, restored ${r.restored}, switched off ${r.switchedOff}, removed ${r.removed}`);
 })().catch((e) => { console.error(e.message); process.exit(1); });

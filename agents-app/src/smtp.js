@@ -15,11 +15,32 @@ const word = (s) => `=?UTF-8?B?${b64(String(s))}?=`;
 const oneLine = (s) => String(s || '').replace(/[\r\n]+/g, ' ').trim();
 const validAddress = (s) => /^[^\s@<>"(),;:]+@[^\s@<>"(),;:]+\.[^\s@<>"(),;:]+$/.test(String(s || ''));
 
-function open({ host, port, secure }) {
+function open({ host, port, secure, timeout = 30_000 }) {
   return new Promise((resolve, reject) => {
-    const s = secure ? tls.connect({ host, port, servername: host }) : net.connect({ host, port });
-    s.once(secure ? 'secureConnect' : 'connect', () => { s.removeListener('error', reject); resolve(s); });
-    s.once('error', reject);
+    let settled = false;
+    const s = secure ? tls.connect({ host, port, ...(net.isIP(host) ? {} : { servername: host }) }) : net.connect({ host, port });
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      const err = new SmtpError('انتهت مهلة الاتصال بخادم البريد');
+      s.destroy(err);
+      reject(err);
+    }, timeout);
+    timer.unref?.();
+    const onErr = (e) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      reject(e);
+    };
+    s.once(secure ? 'secureConnect' : 'connect', () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      s.removeListener('error', onErr);
+      resolve(s);
+    });
+    s.once('error', onErr);
   });
 }
 
@@ -70,7 +91,7 @@ async function sendMail({ host = 'smtp.gmail.com', port = 465, secure = true, us
   if (!validAddress(to)) throw new SmtpError('عنوان البريد غير صحيح');
   let socket;
   try {
-    socket = await open({ host, port, secure });
+    socket = await open({ host, port, secure, timeout });
   } catch (e) {
     throw new SmtpError(`تعذّر الاتصال بخادم البريد: ${e.message}`);
   }

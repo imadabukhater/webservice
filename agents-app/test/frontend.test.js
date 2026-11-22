@@ -86,3 +86,34 @@ test('no other admin page edits the shop markup', () => {
   const hits = others.filter((f) => /markup/i.test(fs.readFileSync(f, 'utf8'))).map((f) => path.relative(ROOT, f));
   assert.deepEqual(hits, []);
 });
+
+test('service worker ignores query strings for cached assets and only falls back to HTML on navigate', () => {
+  const sw = fs.readFileSync(path.join(ROOT, '..', 'sw.js'), 'utf8');
+  assert.match(sw, /ignoreSearch:\s*true/);
+  assert.match(sw, /e\.request\.mode\s*===\s*'navigate'/);
+});
+
+test('storefront sheets navigate via go/return { go }, use no inline onclick, and guard async routes', () => {
+  const shop = fs.readFileSync(path.join(ROOT, 'shop.js'), 'utf8');
+  assert.doesNotMatch(shop, /\bonclick=/i);
+  assert.match(shop, /return\s*\{\s*go:\s*`#\/order\//);
+  assert.match(shop, /go\(`#\/buy\/\$\{pk\.id\}\?esim=1`\)/);
+  assert.match(shop, /const seq = \+\+S\.seq;/);
+  assert.match(shop, /function getTheme\(\)\s*\{\s*try\s*\{/);
+});
+
+test('admin portal views have valid form markup, visible WA errors, no dead shopInstant, and offline boot recovery', () => {
+  const settings = fs.readFileSync(path.join(ROOT, 'views', 'settings.js'), 'utf8');
+  assert.doesNotMatch(settings, /<form[^>]*<form/);
+  assert.match(settings, /V\.wa\.links\.map\(\(l\) => \(l\.id === id \? \{ \.\.\.l, status: 'off', error: err\.message \} : l\)\)/);
+  const shopView = fs.readFileSync(path.join(ROOT, 'views', 'shop.js'), 'utf8');
+  assert.doesNotMatch(shopView, /shopInstant/);
+  const main = fs.readFileSync(path.join(ROOT, 'main.js'), 'utf8');
+  assert.match(main, /if \(!document\.getElementById\('view'\)\) return boot\(\);/);
+  assert.match(main, /if \(e\.status !== 401\)/);
+  const buyers = fs.readFileSync(path.join(ROOT, 'views', 'buyers.js'), 'utf8');
+  assert.doesNotMatch(buyers, /title:\s*esc\(/);
+  assert.match(shopView, /const btn = e\.currentTarget;/);
+  const shopHtml = fs.readFileSync(path.join(ROOT, '..', 'shop.html'), 'utf8');
+  assert.doesNotMatch(shopHtml, /USDT|Visa|MasterCard|تجديد رصيد/);
+});

@@ -376,6 +376,26 @@ test('Aylol lines in the shop: as an eSIM only, with its QR; not on sale while e
   assert.ok(inShop.find((p) => p.id === billPkg.id));
   assert.ok(inShop.find((p) => p.id === hotPkg.id));
 
+  // A 1-word customer name on an Aylol bill eSIM succeeds end-to-end (sent as both first and last name).
+  const oneWord = await ok(call(null, 'POST', '/api/shop/orders', { packageId: billPkg.id, kind: 'esim', customerName: 'سارة' }));
+  dbq(`INSERT INTO payment_mails (uid_validity, uid, message_id, trusted, from_addr, subject, received_at, amount, reference, sender_phone, sender_name, body, created_at)
+       VALUES (1, 8005, '<oneword@jp>', 1, 'noreply@jawwalpay.ps', 'Jawwal Pay', ?, ?, 'REF7003', '', '', 'incoming', ?)`).run(Date.now(), oneWord.amount, Date.now());
+  await ok(call(null, 'POST', `/api/shop/orders/${oneWord.code}/proof`, { payReference: 'REF7003' }));
+  const oneSub = await until(() => site.subscribes.find((x) => x.first_name === 'سارة'));
+  assert.deepEqual([oneSub.first_name, oneSub.last_name], ['سارة', 'سارة']);
+  const oneDone = await until(async () => { const v = await ok(call(null, 'GET', `/api/shop/orders/${oneWord.code}`)); return v.stage === 'done' && v; });
+  assert.equal(oneDone.esimQr, `data:image/png;base64,${PNG.toString('base64')}`);
+
+  // Concurrent login() calls deduplicate cleanly without clobbering cookies.txt.
+  const aylol = require('../src/aylol');
+  const creds = require('../src/db').aylolCredentials();
+  const loginsBefore = site.logins;
+  try { fs.unlinkSync(path.join(dataDir, 'cookies.txt')); } catch {}
+  const [l1, l2] = await Promise.all([aylol.login(creds), aylol.login(creds)]);
+  assert.equal(l1.ok, true);
+  assert.equal(l2.ok, true);
+  assert.equal(site.logins, loginsBefore + 1, 'concurrent login() calls perform only one login');
+
   // The customer's new number never on curl's command line (the eSIM is asked with it in the request's body).
   const argv = fs.readFileSync(path.join(dataDir, 'argv.log'), 'utf8');
   for (const secret of ['0513000001', '0513000002', '0555000780', 'Haddad', 'Nasser', 'Rana']) assert.equal(argv.includes(secret), false, `${secret} on the command line`);

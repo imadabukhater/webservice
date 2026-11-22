@@ -60,7 +60,7 @@ function recordEsimSale(order) {
     const AY = require('./aylol');
     if (!AY.lineModes(pkg.supplier_sim_type, pkg.supplier_company).includes('esim')) fail(400, 'هذه الرزمة لا تُباع كـ eSIM');
     if (AY.billAuto(ref, pkg.supplier_company)) {
-      if (customerName.split(/\s+/).filter(Boolean).length < 2) fail(400, 'اكتب اسم الزبون كاملاً (الاسم والعائلة) — مطلوب لتفعيل الخط');
+      if (customerName.length < 2 || /\d/.test(customerName)) fail(400, 'اكتب اسم الزبون — مطلوب لتفعيل الخط');
       if (!require('./routes/aylol').servedEsim(ref, number)) served();
     }
   } else if (!pkg.esim_enabled) {

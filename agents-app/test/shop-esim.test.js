@@ -264,7 +264,7 @@ test('eSIM shop: a random number held per order, pay by JawwalPay, confirmed fro
   assert.equal((await order({})).status, 400, 'a name is needed to register the line');
   assert.equal((await order({ customerName: 'زبون', email: 'not-an-email' })).status, 400);
   const a = await ok(order({ customerName: 'المعتز بالله ابو خاطر', email: 'Buyer@Example.com' }));
-  assert.deepEqual([a.status, a.esim, a.amount, a.email, a.esimQr], ['awaiting_payment', true, 90, 'buyer@example.com', null]);
+  assert.deepEqual([a.status, a.esim, a.amount, a.esimFee, a.email, a.esimQr], ['awaiting_payment', true, 97, 7, 'buyer@example.com', null]);
   assert.match(a.number, /^058111222\d$/, 'the new number, from the supplier, shows with the order');
   assert.equal(a.number, await numberOf(a.code));
   assert.ok(a.reservedUntil > Date.now() + 9 * 60_000 && a.reservedUntil <= Date.now() + 10 * 60_000 + 5000, 'held for 10 minutes');
@@ -277,13 +277,13 @@ test('eSIM shop: a random number held per order, pay by JawwalPay, confirmed fro
   assert.deepEqual(await ok(call(null, 'GET', `/api/shop/available?packageId=${pkg.id}`)), { available: false });
 
   // ----- a transfer sent from the wallet is never a payment, even with its transaction number -----
-  jawwalPay('تمت حركة تحويل الأموال لمبلغ: ILS 90.00 للمشترك: 00970592578034 بنجاح! رصيدك الحالي: ILS 415.00. رقم الحركة: 2922925325476.');
+  jawwalPay('تمت حركة تحويل الأموال لمبلغ: ILS 97.00 للمشترك: 00970592578034 بنجاح! رصيدك الحالي: ILS 415.00. رقم الحركة: 2922925325476.');
   const vb = await ok(call(null, 'POST', `/api/shop/orders/${b.code}/proof`, { payReference: '2922925325476' }));
   assert.equal(vb.status, 'verifying', 'not paid by an outgoing transfer');
   assert.equal(vb.esimQr, null, 'and no eSIM before payment');
 
   // ----- paid: JawwalPay's e-mail with the transaction number in brackets -----
-  jawwalPay('لقد استلمت حركه تحويل اموال بقيمة: ILS 90.00 من المعتز بالله عاطف ابو خاطر . الرصيد الحالي: ILS 505.00 .المرجع :(2922922722823)');
+  jawwalPay('لقد استلمت حركه تحويل اموال بقيمة: ILS 97.00 من المعتز بالله عاطف ابو خاطر . الرصيد الحالي: ILS 505.00 .المرجع :(2922922722823)');
   const va = await ok(call(null, 'POST', `/api/shop/orders/${a.code}/proof`, { payReference: '2922922722823' }));
   assert.deepEqual([va.status, va.number], ['paid', numbers[0]]);
   const done = await until(async () => { const o = await ok(call(null, 'GET', `/api/shop/orders/${a.code}`)); return o.stage === 'done' && o; });
@@ -306,7 +306,7 @@ test('eSIM shop: a random number held per order, pay by JawwalPay, confirmed fro
   assert.equal((await ok(call(admin, 'POST', '/api/shop/admin/check-mail'))).mailed, 0, 'not sent twice');
 
   // ----- no transaction number: the full name as JawwalPay shows it, with the exact amount -----
-  jawwalPay('لقد استلمت حركه تحويل اموال بقيمة: ILS 90.00 من مُحمّد أحمد خليل . الرصيد الحالي: ILS 595.00 .المرجع :(2922931111111)');
+  jawwalPay('لقد استلمت حركه تحويل اموال بقيمة: ILS 97.00 من مُحمّد أحمد خليل . الرصيد الحالي: ILS 595.00 .المرجع :(2922931111111)');
   const vc = await ok(call(null, 'POST', `/api/shop/orders/${c.code}/proof`, { payName: 'محمد احمد خليل' }));
   assert.equal(vc.status, 'paid');
   await until(async () => (await ok(call(null, 'GET', `/api/shop/orders/${c.code}`))).stage === 'done');
@@ -314,7 +314,7 @@ test('eSIM shop: a random number held per order, pay by JawwalPay, confirmed fro
   // Each paid order is kept as a record of the sale (its line, at what the customer paid); no agent account, no balance.
   const { q } = require('../src/db');
   const sold = q("SELECT customer_price FROM lines WHERE number IN (SELECT number FROM shop_orders WHERE code IN (?, ?))").all(a.code, c.code);
-  assert.deepEqual(sold.map((l) => l.customer_price), [90, 90]);
+  assert.deepEqual(sold.map((l) => l.customer_price), [97, 97]);
   assert.equal(q("SELECT COUNT(*) AS n FROM users WHERE role = 'agent'").get().n, 0);
   // The order B is still waiting (its "payment" was our own transfer), and holds its number.
   assert.equal((await ok(call(null, 'GET', `/api/shop/orders/${b.code}`))).status, 'verifying');
@@ -331,12 +331,12 @@ test('eSIM shop with Layan: its free eSIM numbers, activated after payment with 
   assert.deepEqual(await ok(call(null, 'GET', `/api/shop/available?packageId=${pkg.id}`)), { available: true });
   assert.equal(lyFake.emptySims.length, 0, 'no eSIM is taken from Layan before payment');
   const o = await ok(call(null, 'POST', '/api/shop/orders', { kind: 'esim', packageId: pkg.id, customerName: 'زبون ليان', email: 'ly@example.com' }));
-  assert.deepEqual([o.esim, o.amount], [true, 60]);
+  assert.deepEqual([o.esim, o.amount, o.esimFee], [true, 67, 7]);
   const num = (await ok(call(admin, 'GET', '/api/shop/admin/orders'))).find((x) => x.code === o.code).number;
   assert.equal(o.number, num, 'the reserved number shows with the order');
   assert.ok(['0515102941', '0515102942'].includes(num), num);
 
-  jawwalPay('لقد استلمت حركه تحويل اموال بقيمة: ILS 60.00 من زبون ليان . الرصيد الحالي: ILS 700.00 .المرجع :(2922950000001)');
+  jawwalPay('لقد استلمت حركه تحويل اموال بقيمة: ILS 67.00 من زبون ليان . الرصيد الحالي: ILS 700.00 .المرجع :(2922950000001)');
   assert.equal((await ok(call(null, 'POST', `/api/shop/orders/${o.code}/proof`, { payReference: '2922950000001' }))).status, 'paid');
   const done = await until(async () => { const v = await ok(call(null, 'GET', `/api/shop/orders/${o.code}`)); return v.stage === 'done' && v; });
   assert.equal(done.number, num);
@@ -344,7 +344,7 @@ test('eSIM shop with Layan: its free eSIM numbers, activated after payment with 
   assert.deepEqual(lyFake.emptySims, [num]);
   const sent = lyFake.newLines[0];
   assert.deepEqual([sent.Number, sent.packageId, sent.SimNumber, sent.isEsim, sent.Customer.Fullname, sent.Duration, sent.Price, sent.isPaid],
-    [num, LY_PKG, '8997209000000000071', true, 'زبون ليان', 30, 60, true]);
+    [num, LY_PKG, '8997209000000000071', true, 'زبون ليان', 30, 67, true]);
   const task = (await ok(call(admin, 'GET', '/api/tasks'))).find((t) => t.lineNumber === num);
   assert.deepEqual([task.type, task.status, task.source], ['esim', 'done', 'ليان']);
   assert.equal((await ok(call(admin, 'POST', '/api/shop/admin/check-mail'))).mailed, 1, 'its QR code e-mailed too');
@@ -371,7 +371,7 @@ test('eSIM shop with telecom (ALOHA): a free number, an eSIM taken and registere
   assert.ok(tcFake.numbers.includes(num), num);
   assert.equal(tcFake.chosen.length, 0, 'no eSIM is taken before payment');
 
-  jawwalPay('Mona Mohammed Omar Hasaballah قام بتحويل مبلغ ILS 55.00 لحسابك بتاريخ 19-10-2026 11:17:00 AM. الرصيد المتوفر ILS 852.00.');
+  jawwalPay('Mona Mohammed Omar Hasaballah قام بتحويل مبلغ ILS 62.00 لحسابك بتاريخ 19-10-2026 11:17:00 AM. الرصيد المتوفر ILS 852.00.');
   assert.equal((await ok(call(null, 'POST', `/api/shop/orders/${o.code}/proof`, { payName: 'Mona Hasaballah' }))).status, 'paid');
   const done = await until(async () => { const v = await ok(call(null, 'GET', `/api/shop/orders/${o.code}`)); return v.stage === 'done' && v; });
   assert.equal(done.number, num);

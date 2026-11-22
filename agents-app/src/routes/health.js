@@ -2,12 +2,13 @@
 // How the automatic parts are doing, at a glance, for the manager's home page: the eSIM suppliers (balance, last sync),
 // the cloud backup, and what waits for the manager or for a supplier. Supplier balances are read at most every
 // 10 minutes, so the home page stays fast.
-const { q, getSettings, qlCredentials, lyCredentials, tcCredentials } = require('../db');
+const { q, getSettings, qlCredentials, lyCredentials, tcCredentials, aylolCredentials } = require('../db');
 const { now, round } = require('../util');
 const { route, ADMIN } = require('../router');
 const ql = require('../quickline');
 const ly = require('../layan');
 const tc = require('../telecom');
+const ay = require('../aylol');
 
 const TTL_MS = 10 * 60_000;
 const cache = new Map();
@@ -26,10 +27,11 @@ async function cached(key, fn) {
 
 route('GET', '/api/health', ADMIN, async () => {
   const s = getSettings();
-  const [qlBal, lyBal, tcBal] = await Promise.all([
+  const [qlBal, lyBal, tcBal, ayBal] = await Promise.all([
     s.qlConfigured ? cached('ql', () => ql.balance(qlCredentials())) : null,
     s.lyConfigured ? cached('ly', () => ly.balance(lyCredentials())) : null,
     s.tcReady ? cached('tc', () => tc.balance(tcCredentials())) : null,
+    s.aylolConfigured ? cached('ay', () => ay.balance(aylolCredentials())) : null,
   ]);
   const count = (sql) => q(sql).get().n;
   return {
@@ -44,6 +46,10 @@ route('GET', '/api/health', ADMIN, async () => {
     telecom: s.tcReady ? {
       balance: tcBal.value === null ? null : round(tcBal.value), error: tcBal.error,
       synced: s.tcSyncedInvoice,
+    } : null,
+    aylol: s.aylolConfigured ? {
+      balance: ayBal.value === null ? null : round(ayBal.value), error: ayBal.error,
+      synced: s.aylolSyncedInvoice,
     } : null,
     backup: { bucket: s.backupBucket, lastAt: s.backupLastAt, error: s.backupError },
     tasks: {

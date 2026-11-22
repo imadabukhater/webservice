@@ -154,7 +154,8 @@ test('direct Jawwal Pay: code, confirmation, token reused, one sign-in on revoke
   assert.equal(v.jawwal.mobile, '059••••456', 'the mobile is partly hidden');
   assert.equal(v.jawwal.invoiceId, undefined, 'the invoice id stays on the server');
   const inv1 = [...api.invoices.values()].at(-1);
-  assert.equal(inv1.amount, 95, 'the order amount is charged');
+  assert.equal(inv1.amount, 102, 'the order amount (package + eSIM fee) is charged');
+  assert.equal(o1.esimFee, 7);
   assert.equal(inv1.mobile, '0599123456');
   assert.equal((await call(null, 'POST', `/api/shop/orders/${o1.code}/jawwal/otp`, { mobile: '0599123456' })).status, 429, 'a new code waits 45 seconds');
 
