@@ -190,35 +190,32 @@ function sellEsim(pkg, n, { name = 'زبون eSIM', phone = n.phone } = {}) {
   });
 }
 
-test('QuickLine: new lines sync with their markup; extensions are not synced', async () => {
+test('QuickLine: new lines sync at the supplier’s price; the shop price follows it, and the toggle puts it in the shop or not', async () => {
   const admin = await login('admin', 'admin-pass');
+  const { q } = require('../src/db');
   assert.equal((await call(admin, 'POST', '/api/quickline/check')).status, 400, 'not configured yet');
-  const s = await ok(call(admin, 'PUT', '/api/settings', { qlUser: 'dealer@example.com', qlPass: 'ql-pass-123', qlMarkupInvoice: 10 }));
+  const s = await ok(call(admin, 'PUT', '/api/settings', { qlUser: 'dealer@example.com', qlPass: 'ql-pass-123' }));
   assert.equal(s.qlConfigured, true);
-  assert.equal(s.qlMarkupInvoice, 10);
-  assert.equal(s.qlMarkupCard, undefined);
-  assert.equal((await call(admin, 'PUT', '/api/settings', { qlMarkupInvoice: 250 })).status, 400);
+  assert.equal(s.qlMarkupInvoice, undefined, 'no percentage per supplier');
+  assert.equal(s.shopMarkup, 20);
   assert.ok(!JSON.stringify(await ok(call(admin, 'GET', '/api/settings'))).includes('ql-pass-123'), 'the password is never sent back');
   const chk = await ok(call(admin, 'POST', '/api/quickline/check'));
   assert.deepEqual([chk.ok, chk.name, chk.credit, chk.active], [true, 'أحمد', -116.67, 20]);
 
   assert.equal((await call(admin, 'POST', '/api/quickline/sync', { kind: 'card' })).status, 400, 'no extensions');
   const si = await ok(call(admin, 'POST', '/api/quickline/sync', {}));
-  assert.deepEqual([si.kind, si.total, si.added, si.markup], ['invoice', 3, 3, 10]);
+  assert.deepEqual([si.kind, si.total, si.added, si.pending, si.markup], ['invoice', 3, 3, undefined, undefined]);
   assert.ok((await ok(call(admin, 'GET', '/api/settings'))).qlSyncedInvoice > 0);
 
   const cat = await ok(call(admin, 'GET', '/api/catalog'));
-  assert.ok(cat.packages.every((p) => p.kind === 'invoice'));
-  const newLine = cat.packages.find((p) => p.supplier === 'ql' && p.artCode === '2564');
-  assert.deepEqual([newLine.cost, newLine.price, newLine.dataGb, newLine.days, newLine.pool], [62, 68.2, 400, 30, true]);
-  assert.equal(cat.companies.find((c) => c.id === newLine.companyId).name, 'سلكوم', 'matched to the existing company');
-  assert.equal(cat.companies.find((c) => c.id === newLine.companyId).activation, 'auto');
-  assert.ok(cat.companies.some((c) => c.name === 'جولان'), 'a missing company is created');
-  const offerNew = cat.packages.find((p) => p.supplier === 'ql' && p.artCode === '2587');
-  assert.deepEqual([offerNew.cost, offerNew.price, offerNew.days], [80, 88, 90]);
+  const newLine = cat.packages.find((p) => p.supplier === 'ql' && p.name === 'سلكوم 400 جيجا');
+  assert.deepEqual([newLine.supplierPrice, newLine.shopPrice, newLine.inShop, newLine.available], [62, null, false, true], 'off until the manager turns it on');
+  const row = (id) => q('SELECT * FROM packages WHERE id = ?').get(id);
+  assert.equal(q('SELECT name FROM companies WHERE id = ?').get(row(newLine.id).company_id).name, 'سلكوم', 'matched to the existing company');
+  assert.ok(cat.packages.some((p) => p.companyName === 'جولان'), 'a missing company is created');
+  assert.equal(q("SELECT COUNT(*) AS n FROM packages WHERE art_card_id LIKE 'ql:%'").get().n, 0);
   const again = await ok(call(admin, 'POST', '/api/quickline/sync', { kind: 'invoice' }));
   assert.deepEqual([again.added, again.updated], [0, 3]);
-  assert.equal(require('../src/db').q("SELECT COUNT(*) AS n FROM packages WHERE art_card_id LIKE 'ql:%'").get().n, 0);
 
   // ----- an expired token is renewed without the manager noticing -----
   const logins = fake.logins;
@@ -226,29 +223,43 @@ test('QuickLine: new lines sync with their markup; extensions are not synced', a
   assert.equal((await ok(call(admin, 'POST', '/api/quickline/check'))).ok, true);
   assert.ok(fake.logins > logins, 'signed in again');
 
-  // ----- QuickLine's price changed: the cost and price wait for the manager -----
-  fake.cost = 70;
-  const sync = await ok(call(admin, 'POST', '/api/quickline/sync', { kind: 'invoice' }));
-  assert.equal(sync.pending, 2, 'both regular packages changed price');
-  const mid = (await ok(call(admin, 'GET', '/api/catalog'))).packages.find((p) => p.id === newLine.id);
-  assert.deepEqual([mid.cost, mid.price, mid.artPrice, mid.artPending], [62, 68.2, 70, true], 'nothing changed on its own');
-  const pending = await ok(call(admin, 'GET', '/api/quickline/pending'));
-  const row = pending.find((p) => p.id === newLine.id);
-  assert.deepEqual([row.cost, row.artPrice, row.suggested], [62, 70, 77]);
-  await ok(call(admin, 'POST', '/api/quickline/approve', { ids: [newLine.id], mode: 'all' }));
-  const after = (await ok(call(admin, 'GET', '/api/catalog'))).packages.find((p) => p.id === newLine.id);
-  assert.deepEqual([after.cost, after.price, after.artPending], [70, 77, false]);
-  const other = pending.find((p) => p.id !== newLine.id);
-  await ok(call(admin, 'POST', '/api/quickline/approve', { ids: [other.id], mode: 'ignore' }));
-  assert.equal((await ok(call(admin, 'GET', '/api/quickline/pending'))).length, 0);
+  // ----- in the shop: supplier price × 1.2 -----
+  await ok(call(admin, 'PUT', '/api/settings', { shopEnabled: true, jawwalpayNumber: '0599000000' }));
+  const shopIds = async () => (await ok(call(null, 'GET', '/api/shop'))).packages.map((p) => p.id);
+  assert.ok(!(await shopIds()).includes(newLine.id));
+  assert.equal((await ok(call(admin, 'PUT', `/api/packages/${newLine.id}`, { inShop: true }))).shopPrice, 74.4);
+  await require('../src/routes/shop').refreshStock();
+  assert.ok((await shopIds()).includes(newLine.id), 'on sale');
 
-  // Removed agent paths.
-  for (const url of ['/api/numbers/free', '/api/numbers/port-companies', '/api/quickline/lines']) assert.equal((await call(admin, 'GET', url)).status, 404, url);
+  // ----- QuickLine's price changed: no approval, the cost and the shop price follow at the next sync -----
+  fake.cost = 70;
+  await ok(call(admin, 'POST', '/api/quickline/sync', { kind: 'invoice' }));
+  assert.deepEqual([row(newLine.id).cost, row(newLine.id).art_price, row(newLine.id).shop_price], [70, 70, 84]);
+  assert.equal((await ok(call(admin, 'GET', '/api/catalog'))).packages.find((p) => p.id === newLine.id).shopPrice, 84);
+  const other = (await ok(call(admin, 'GET', '/api/catalog'))).packages.find((p) => p.supplier === 'ql' && p.id !== newLine.id);
+  assert.equal(row(other.id).shop_price, null, 'a package off the shop has no shop price');
+
+  // ----- off: out of the shop; on: back -----
+  await ok(call(admin, 'PUT', `/api/packages/${newLine.id}`, { inShop: false }));
+  assert.equal(row(newLine.id).shop_price, null);
+  assert.ok(!(await shopIds()).includes(newLine.id), 'off the shop');
+  await ok(call(admin, 'PUT', `/api/packages/${newLine.id}`, { inShop: true }));
+  assert.equal(row(newLine.id).shop_price, 84);
+  await require('../src/routes/shop').refreshStock();
+  assert.ok((await shopIds()).includes(newLine.id), 'back on sale');
+  fake.cost = 62;
+  await ok(call(admin, 'POST', '/api/quickline/sync', { kind: 'invoice' }));
+  assert.equal(row(newLine.id).shop_price, 74.4);
+
+  // Removed paths.
+  for (const url of ['/api/numbers/free', '/api/numbers/port-companies', '/api/quickline/lines', '/api/quickline/pending', '/api/quickline/reprice']) {
+    assert.equal((await call(admin, 'GET', url)).status, 404, url);
+  }
 });
 
 test('QuickLine: an eSIM sold in the shop is activated there automatically, with its QR code', async () => {
   const admin = await login('admin', 'admin-pass');
-  const pk = (await ok(call(admin, 'GET', '/api/catalog'))).packages.find((p) => p.supplier === 'ql' && p.artCode === '2564');
+  const pk = (await ok(call(admin, 'GET', '/api/catalog'))).packages.find((p) => p.supplier === 'ql' && p.name === 'سلكوم 400 جيجا');
   const n = FREE.e[0];
   const { q } = require('../src/db');
 
@@ -283,7 +294,7 @@ test('QuickLine: an eSIM sold in the shop is activated there automatically, with
   fake.newAnswer = null;
 
   // ----- the manager can stop automation for a company: the eSIM waits for them -----
-  await ok(call(admin, 'PUT', `/api/companies/${pk.companyId}`, { activation: 'manual' }));
+  q("UPDATE companies SET activation = 'manual' WHERE id = ?").run(pk.companyId);
   const rm = sellEsim(pk, n, { name: 'زبون ثالث' });
   await new Promise((r) => setTimeout(r, 200));
   const waiting = (await ok(call(admin, 'GET', '/api/tasks?status=open'))).find((x) => x.lineId === rm.lineId);

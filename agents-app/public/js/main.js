@@ -1,7 +1,6 @@
 import {
   S, api, esc, icon, toast, setToken, onUnauthorized, initials,
   sheet, closeAllSheets, navigate, go, relTime, field, skeleton, pushOverlayState, overlayBack, registerDrawer, setDrawerOpen,
-  loadCatalog,
 } from './core.js';
 import { renderLogin } from './views/login.js';
 import home from './views/home.js';
@@ -17,7 +16,7 @@ const VIEWS = { home, shop, buyers, tasks, catalog, reports, settings };
 
 const NAV = [
   ['home', 'الرئيسية', 'grid'], ['shop', 'متجر الزبائن', 'card'], ['buyers', 'المشترون', 'users'], ['tasks', 'التفعيلات', 'qr', 'tasks'],
-  ['catalog', 'الشركات والرزم', 'box'], ['reports', 'التقارير', 'chart'], ['settings', 'الإعدادات', 'sliders'],
+  ['catalog', 'الرزم', 'box'], ['reports', 'التقارير', 'chart'], ['settings', 'الإعدادات', 'sliders'],
 ];
 const TABS = [['home', 'الرئيسية', 'home'], ['shop', 'المتجر', 'card'], ['buyers', 'المشترون', 'users'], ['tasks', 'التفعيلات', 'qr'], ['menu', 'القائمة', 'menu']];
 
@@ -268,7 +267,6 @@ async function logout() {
   await closeAllSheets();
   setToken(null);
   S.user = null;
-  S.catalog = null;
   history.replaceState(null, '', '#/home');
   renderLogin(onLoggedIn);
 }
@@ -326,7 +324,6 @@ onUnauthorized(() => {
 // ---------- boot ----------
 async function onLoggedIn() {
   renderShell();
-  loadCatalog(true).catch(() => {});
   if (!location.hash) history.replaceState(null, '', '#/home');
   await route();
   refreshBadges();

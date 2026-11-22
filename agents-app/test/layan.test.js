@@ -96,7 +96,7 @@ test('Layan: signs in with its own authenticator code and syncs its new lines (n
   const admin = await login('admin', 'admin-pass');
   // ----- the secret as the authenticator app exports it, stored as a key and never sent back -----
   assert.equal((await call(admin, 'PUT', '/api/settings', { lySecret: 'not a key!' })).status, 400);
-  const s = await ok(call(admin, 'PUT', '/api/settings', { lyUser: 'ahmad.2025', lyPass: 'pw-1', lySecret: `otpauth://totp/Layan:ahmad?secret=${SECRET}&issuer=Layan`, lyMarkupInvoice: 10 }));
+  const s = await ok(call(admin, 'PUT', '/api/settings', { lyUser: 'ahmad.2025', lyPass: 'pw-1', lySecret: `otpauth://totp/Layan:ahmad?secret=${SECRET}&issuer=Layan` }));
   assert.deepEqual([s.lyConfigured, s.lyHasSecret], [true, true]);
   assert.ok(!JSON.stringify(s).includes(SECRET) && !JSON.stringify(s).includes('pw-1'), 'secret and password never sent back');
   const chk = await ok(call(admin, 'POST', '/api/layan/check'));
@@ -108,9 +108,10 @@ test('Layan: signs in with its own authenticator code and syncs its new lines (n
   assert.equal(si.total, 3);
   const cat = (await ok(call(admin, 'GET', '/api/catalog'))).packages.filter((p) => p.supplier === 'ly');
   assert.equal(cat.length, 3);
-  const newCel = cat.find((p) => p.days === 30 && /سلكوم 300 جيجا/.test(p.name));
-  const offer = cat.find((p) => p.days === 90);
-  assert.deepEqual([newCel.cost, newCel.price, offer.cost, offer.price], [39, 42.9, 99, 108.9]);
+  const days = (p) => require('../src/db').q('SELECT days FROM packages WHERE id = ?').get(p.id).days;
+  const newCel = cat.find((p) => days(p) === 30 && /سلكوم 300 جيجا/.test(p.name));
+  const offer = cat.find((p) => days(p) === 90);
+  assert.deepEqual([newCel.supplierPrice, newCel.shopPrice, offer.supplierPrice, newCel.inShop, newCel.available], [39, null, 99, false, true]);
   assert.match(offer.name, /عرض 90 يوماً/);
   assert.equal(require('../src/db').q("SELECT COUNT(*) AS n FROM packages WHERE art_card_id LIKE 'ly:%'").get().n, 0);
 });

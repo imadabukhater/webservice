@@ -65,13 +65,17 @@ function fakeQuickLine({ count = 40, prefix = '0581000' } = {}) {
     state, server, QR,
     listen: () => new Promise((r) => server.listen(0, '127.0.0.1', () => r(`http://127.0.0.1:${server.address().port}`))),
     close: () => server.close(),
-    // Signs the shop in to QuickLine, syncs its new lines and sells the eSIM package at this customer price.
+    // Signs the shop in to QuickLine, syncs its new lines and puts the eSIM package in the shop at this customer price
+    // (the shop price is the supplier's + the shop's percentage, so the supplier's price is set to give it).
     async esimPackage(call, ok, admin, shopPrice) {
-      await ok(call(admin, 'PUT', '/api/settings', { qlUser: USER.email, qlPass: USER.password }));
+      const s = await ok(call(admin, 'PUT', '/api/settings', { qlUser: USER.email, qlPass: USER.password }));
       await ok(call(admin, 'POST', '/api/quickline/sync', { kind: 'invoice' }));
-      const pkg = (await ok(call(admin, 'GET', '/api/catalog'))).packages.find((p) => p.supplier === 'ql' && p.kind === 'invoice');
-      await ok(call(admin, 'PUT', `/api/packages/${pkg.id}`, { shopPrice }));
-      return { ...pkg, shopPrice };
+      const pkg = (await ok(call(admin, 'GET', '/api/catalog'))).packages.find((p) => p.supplier === 'ql');
+      const supplier = shopPrice / (1 + s.shopMarkup / 100);
+      require('../src/db').q('UPDATE packages SET art_price = ?, cost = ? WHERE id = ?').run(supplier, supplier, pkg.id);
+      const on = await ok(call(admin, 'PUT', `/api/packages/${pkg.id}`, { inShop: true }));
+      if (on.shopPrice !== shopPrice) throw new Error(`shop price ${on.shopPrice}, wanted ${shopPrice}`);
+      return { ...on, shopPrice };
     },
   };
 }

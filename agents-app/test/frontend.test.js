@@ -59,8 +59,30 @@ test('the admin panel has only the eSIM shop pages and calls no removed endpoint
   const main = fs.readFileSync(path.join(ROOT, 'main.js'), 'utf8');
   const pages = [...main.matchAll(/from '\.\/views\/([\w-]+)\.js'/g)].map((m) => m[1]).sort();
   assert.deepEqual(pages, ['buyers', 'catalog', 'home', 'login', 'reports', 'settings', 'shop', 'tasks']);
-  const gone = /\/api\/(agents|lines|sims|offers|messages|invoices|art|sync-keys|supplier-subs|search|ops|transfer|numbers)\b|\/api\/shop\/renew|#\/(new|renew|subscribers|agents|payments|messages|offers|invoices)\b/;
+  const gone = new RegExp([
+    String.raw`\/api\/(agents|lines|sims|offers|messages|invoices|art|sync-keys|supplier-subs|search|ops|transfer|numbers|companies)\b`,
+    String.raw`\/api\/shop\/renew`, String.raw`\/api\/packages\/bulk`, String.raw`\/api\/catalog\/similar`,
+    String.raw`\/api\/(quickline|layan|telecom|aylol)\/(pending|approve|reprice|sync)\b`,
+    String.raw`api\.(post|del)\(\s*['\x60]\/api\/packages`,
+    String.raw`#\/(new|renew|subscribers|agents|payments|messages|offers|invoices)\b`,
+  ].join('|'));
   const admin = [path.join(ROOT, 'main.js'), path.join(ROOT, 'core.js'), ...files(path.join(ROOT, 'views'))];
   const hits = admin.filter((f) => gone.test(fs.readFileSync(f, 'utf8'))).map((f) => path.relative(ROOT, f));
+  assert.deepEqual(hits, []);
+});
+
+// The shop price is automatic: the packages page reads the catalog and only switches «عرض في المتجر».
+test('the packages page calls only GET /api/catalog, PUT /api/packages/:id { inShop } and PUT /api/settings { shopMarkup }', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'views', 'catalog.js'), 'utf8');
+  const calls = [...src.matchAll(/api\.(get|post|put|del|blob)\(\s*(['`])([^'`]*)\2/g)].map((m) => `${m[1]} ${m[3]}`).sort();
+  assert.deepEqual(calls, ['get /api/catalog', 'put /api/packages/${id}', 'put /api/settings']);
+  assert.match(src, /api\.put\(`\/api\/packages\/\$\{id\}`,\s*\{\s*inShop:/);
+  assert.match(src, /api\.put\('\/api\/settings',\s*\{\s*shopMarkup:/);
+});
+
+// The profit percentage lives on the packages page only.
+test('no other admin page edits the shop markup', () => {
+  const others = files(path.join(ROOT, 'views')).filter((f) => !f.endsWith('catalog.js'));
+  const hits = others.filter((f) => /markup/i.test(fs.readFileSync(f, 'utf8'))).map((f) => path.relative(ROOT, f));
   assert.deepEqual(hits, []);
 });

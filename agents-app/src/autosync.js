@@ -53,21 +53,10 @@ async function syncOne(sup) {
   if (running.has(sup.key)) return;
   running.add(sup.key);
   try {
-    let pending = 0;
-    let restored = 0;
-    for (const kind of ['invoice']) {
-      const r = await sup.sync(kind);
-      pending += r.pending || 0;
-      restored += r.restored || 0;
-    }
+    const r = await sup.sync('invoice');
+    const restored = r.restored || 0;
     const errKey = `autosync_error_${sup.key}`;
     if (q('SELECT value FROM settings WHERE key = ?').get(errKey)?.value) setSetting(errKey, '');
-    // Told about price changes when their number changes, not every day they are still waiting.
-    const lastKey = `autosync_pending_${sup.key}`;
-    if (pending && String(pending) !== q('SELECT value FROM settings WHERE key = ?').get(lastKey)?.value) {
-      tell(`${sup.name}: ${pending} رزمة تغيّر سعرها`, 'بانتظار موافقتك في «الشركات والرزم». لن تتغيّر أسعارك قبلها.');
-    }
-    setSetting(lastKey, pending);
     if (restored) tell(`${sup.name}: عادت ${restored} رزمة`, 'كانت مخفية لأن المورّد لم يعرضها، وعرضها الآن.');
   } catch (e) {
     const errKey = `autosync_error_${sup.key}`;

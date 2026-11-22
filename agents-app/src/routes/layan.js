@@ -1,6 +1,6 @@
 'use strict';
-// Layan's new lines ('invoice'), sold in the shop as eSIMs on its free numbers: their sync, profit percentage and
-// price changes awaiting the manager.
+// Layan's new lines ('invoice'), sold in the shop as eSIMs on its free numbers: their sync (the cost follows the
+// supplier's price, no approval).
 const { q, tx, getSettings, setSetting, lyCredentials } = require('../db');
 const { fail, round, now } = require('../util');
 const ly = require('../layan');
@@ -11,11 +11,7 @@ const { companyFor } = require('./quickline');
 const KINDS = ['invoice'];
 const GONE_DAYS = 7;
 const kindOf = (v) => (v === undefined || v === '' || KINDS.includes(v) ? 'invoice' : fail(400, 'المتجر يبيع شرائح eSIM فقط: لا رزم تمديد أو كروت'));
-const markupFor = () => getSettings().lyMarkupInvoice;
-const withMarkup = (cost, kind) => round(cost * (1 + markupFor(kind) / 100));
 const REF = { invoice: "art_card_id LIKE 'lyn:%'" };
-const PENDING = 'art_price IS NOT NULL AND ROUND(art_price, 2) != ROUND(cost, 2) AND (art_ack IS NULL OR ROUND(art_ack, 2) != ROUND(art_price, 2))';
-const pendingCount = (kind) => q(`SELECT COUNT(*) AS n FROM packages WHERE ${REF[kind]} AND ${PENDING}`).get().n;
 
 const wrap = async (fn) => {
   if (!getSettings().lyConfigured) fail(400, 'أدخل اسم مستخدم ليان وكلمة المرور أولاً');
@@ -62,7 +58,7 @@ async function syncKind(creds, kind) {
         const sort = q('SELECT COALESCE(MAX(sort), 0) + 1 AS s FROM packages WHERE company_id = ?').get(companyId).s;
         q(`INSERT INTO packages (company_id, name, cost, price, active, sort, data_gb, minutes, sms, description, art_card_id, kind, days, art_price)
            VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-          .run(companyId, arabicName(c, companyName), c.agentPrice, withMarkup(c.agentPrice, kind), sort, c.dataGb, c.minutes, c.sms,
+          .run(companyId, arabicName(c, companyName), c.agentPrice, c.agentPrice, sort, c.dataGb, c.minutes, c.sms,
             c.saleId ? `عرض لمدة ${c.days} يوماً` : '', c.ref, kind, c.days, c.agentPrice);
         added++;
       }
@@ -81,47 +77,12 @@ async function syncKind(creds, kind) {
     }
     for (const id of companyIds) if (!known.has(id)) q("UPDATE companies SET activation = 'auto' WHERE id = ? AND activation = 'manual'").run(id);
     setSetting(`ly_synced_${kind}`, now());
-    return { kind, total: items.length, added, updated, restored, switchedOff: off, removed, pending: pendingCount(kind), markup: markupFor(kind) };
+    // No approval: the cost is the supplier's current price, and the shop prices follow it.
+    q(`UPDATE packages SET cost = art_price, art_ack = NULL WHERE ${REF.invoice} AND art_price IS NOT NULL AND cost != art_price`).run();
+    require('../domain').refreshShopPrices();
+    return { kind, total: items.length, added, updated, restored, switchedOff: off, removed };
   });
 }
-
-route('GET', '/api/layan/pending', ADMIN, ({ query }) => {
-  const kind = kindOf(query.kind);
-  return q(`SELECT p.id, p.name, p.cost, p.price, p.art_price, p.edited, p.active, c.name AS company_name
-            FROM packages p JOIN companies c ON c.id = p.company_id WHERE ${REF[kind]} AND ${PENDING} ORDER BY c.sort, p.sort, p.id`).all()
-    .map((p) => ({ id: p.id, name: p.name, companyName: p.company_name, cost: round(p.cost), artPrice: round(p.art_price), price: round(p.price),
-      suggested: withMarkup(p.art_price, kind), edited: !!p.edited, active: !!p.active }));
-});
-
-route('POST', '/api/layan/approve', ADMIN, ({ body }) => tx(() => {
-  const mode = ['all', 'cost', 'ignore'].includes(body.mode) ? body.mode : fail(400, 'اختر طريقة الاعتماد');
-  const ids = [].concat(body.ids || []).map(Number).filter(Boolean);
-  if (!ids.length) fail(400, 'اختر الرزم');
-  let done = 0;
-  for (const id of ids) {
-    const p = q(`SELECT * FROM packages WHERE id = ? AND (${REF.invoice}) AND ${PENDING}`).get(id);
-    if (!p) continue;
-    if (mode === 'ignore') q('UPDATE packages SET art_ack = art_price WHERE id = ?').run(id);
-    else if (mode === 'cost') q('UPDATE packages SET cost = art_price, art_ack = NULL WHERE id = ?').run(id);
-    else q('UPDATE packages SET cost = art_price, price = ?, art_ack = NULL WHERE id = ?').run(withMarkup(p.art_price, p.kind), id);
-    done++;
-  }
-  return { done };
-}));
-
-route('POST', '/api/layan/reprice', ADMIN, ({ body }) => tx(() => {
-  const kind = kindOf(body.kind);
-  const all = body.scope === 'all';
-  const rows = q(`SELECT id, cost FROM packages WHERE ${REF[kind]} AND cost > 0 ${all ? '' : 'AND edited = 0'}`).all();
-  for (const r of rows) q(`UPDATE packages SET price = ?${all ? ', edited = 0' : ''} WHERE id = ?`).run(withMarkup(r.cost, kind), r.id);
-  return { changed: rows.length, markup: markupFor(kind) };
-}));
-
-route('GET', '/api/layan/reprice', ADMIN, ({ query }) => {
-  const kind = kindOf(query.kind);
-  const r = q(`SELECT COUNT(*) AS total, SUM(edited) AS edited FROM packages WHERE ${REF[kind]} AND cost > 0`).get();
-  return { total: r.total, edited: r.edited || 0, pending: pendingCount(kind), markup: markupFor(kind) };
-});
 
 // ---------- numbers to sell as new lines ----------
 // The dealer's suspended numbers on a package; shown to agents, remembered so a sale can be checked to use one.

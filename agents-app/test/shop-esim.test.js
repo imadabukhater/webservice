@@ -227,6 +227,16 @@ test.before(async () => {
 });
 test.after(() => { server.close(); qlApi.close(); lyApi.close(); tcSite.close(); imap.close(); smtpServer.close(); });
 
+// Puts a package in the shop at this customer price. The shop price is the supplier's price + the shop's percentage,
+// so the supplier's price (as the manager sees it, supplier_cost: never what the supplier is paid) is set to give it.
+async function inShop(admin, id, shopPrice) {
+  const { q, getSettings } = require('../src/db');
+  q('UPDATE packages SET supplier_cost = ? WHERE id = ?').run(shopPrice / (1 + getSettings().shopMarkup / 100), id);
+  const on = await ok(call(admin, 'PUT', `/api/packages/${id}`, { inShop: true }));
+  assert.equal(on.shopPrice, shopPrice);
+  return on;
+}
+
 test('eSIM shop: a random number held per order, pay by JawwalPay, confirmed from the e-mail, activated, QR shown and e-mailed', async () => {
   const admin = (await ok(call(null, 'POST', '/api/login', { username: 'admin', password: 'admin-pass' }))).token;
   await ok(call(admin, 'PUT', '/api/settings', {
@@ -235,8 +245,8 @@ test('eSIM shop: a random number held per order, pay by JawwalPay, confirmed fro
   }));
   assert.equal((await ok(call(admin, 'GET', '/api/settings'))).mailFrom, 'jawwalpay.ps', 'JawwalPay e-mails are trusted from their own domain only');
   await ok(call(admin, 'POST', '/api/quickline/sync', { kind: 'invoice' }));
-  const pkg = (await ok(call(admin, 'GET', '/api/catalog'))).packages.find((p) => p.supplier === 'ql' && p.kind === 'invoice');
-  await ok(call(admin, 'PUT', `/api/packages/${pkg.id}`, { shopPrice: 90 }));
+  const pkg = (await ok(call(admin, 'GET', '/api/catalog'))).packages.find((p) => p.supplier === 'ql');
+  await inShop(admin, pkg.id, 90);
 
   // ----- the catalog and availability: no supplier, no number, no eSIM data before payment -----
   const pub = await ok(call(null, 'GET', '/api/shop'));
@@ -314,8 +324,8 @@ test('eSIM shop with Layan: its free eSIM numbers, activated after payment with 
   const admin = (await ok(call(null, 'POST', '/api/login', { username: 'admin', password: 'admin-pass' }))).token;
   await ok(call(admin, 'PUT', '/api/settings', { lyUser: 'ly.dealer', lyPass: 'ly-pass', lySecret: LY_SECRET }));
   await ok(call(admin, 'POST', '/api/layan/sync', { kind: 'invoice' }));
-  const pkg = (await ok(call(admin, 'GET', '/api/catalog'))).packages.find((p) => p.supplier === 'ly' && p.kind === 'invoice');
-  await ok(call(admin, 'PUT', `/api/packages/${pkg.id}`, { shopPrice: 60 }));
+  const pkg = (await ok(call(admin, 'GET', '/api/catalog'))).packages.find((p) => p.supplier === 'ly');
+  await inShop(admin, pkg.id, 60);
   assert.equal((await ok(call(null, 'GET', '/api/shop'))).packages.find((p) => p.id === pkg.id).esim, true);
 
   assert.deepEqual(await ok(call(null, 'GET', `/api/shop/available?packageId=${pkg.id}`)), { available: true });
@@ -346,8 +356,8 @@ test('eSIM shop with telecom (ALOHA): a free number, an eSIM taken and registere
   const admin = (await ok(call(null, 'POST', '/api/login', { username: 'admin', password: 'admin-pass' }))).token;
   await ok(call(admin, 'PUT', '/api/settings', { tcUser: 'dealer@example.com', tcPass: 'tc-pass', tcMailUser: 'box@gmail.com', tcMailPass: 'app-pass' }));
   await ok(call(admin, 'POST', '/api/telecom/sync', { kind: 'invoice' }));
-  const pkg = (await ok(call(admin, 'GET', '/api/catalog'))).packages.find((p) => p.supplier === 'tc' && p.kind === 'invoice');
-  await ok(call(admin, 'PUT', `/api/packages/${pkg.id}`, { shopPrice: 55 }));
+  const pkg = (await ok(call(admin, 'GET', '/api/catalog'))).packages.find((p) => p.supplier === 'tc');
+  await inShop(admin, pkg.id, 55);
   // Its numbers can be sold only once the shop's registration address is set: until then it is not on sale.
   assert.equal((await ok(call(null, 'GET', '/api/shop'))).packages.some((p) => p.id === pkg.id), false);
   assert.deepEqual(await ok(call(null, 'GET', `/api/shop/available?packageId=${pkg.id}`)), { available: false }, 'not before the registration address is set');
@@ -380,7 +390,7 @@ test('eSIM shop with telecom (ALOHA): a free number, an eSIM taken and registere
 
 test('safety: single card reservation at a time per user, and 1-minute rate limit on mailbox checks', async () => {
   const admin = (await ok(call(null, 'POST', '/api/login', { username: 'admin', password: 'admin-pass' }))).token;
-  const pkg = (await ok(call(admin, 'GET', '/api/catalog'))).packages.find((p) => p.supplier === 'ly' && p.kind === 'invoice');
+  const pkg = (await ok(call(admin, 'GET', '/api/catalog'))).packages.find((p) => p.supplier === 'ly');
 
   const headersUserA = { 'X-Client-Id': 'client-device-alpha' };
 

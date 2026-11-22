@@ -2,7 +2,7 @@
 // What the manager's screens share: the user, notifications, a package's label and eSIM lines (each sold through the
 // customer shop, see sale.js). There are no agents, balances or prices per seller.
 const { EventEmitter } = require('node:events');
-const { q } = require('./db');
+const { q, getSettings } = require('./db');
 const { fail, now, round } = require('./util');
 
 // ---------- users ----------
@@ -22,6 +22,32 @@ const packageLabel = (pkg) => `${pkg.company_name} ${pkg.name}`;
 
 // true when the company's sales are activated directly (final); false when the manager or a supplier carries them out.
 const directCompany = (companyId) => q('SELECT activation FROM companies WHERE id = ?').get(companyId)?.activation === 'direct';
+
+// ---------- the shop's price ----------
+// Every package sold in the shop costs the customer its supplier's price + the manager's percentage (settings
+// shop_markup, 20 by default); the company's eSIM fee is added on top at order time. Per package, the manager only
+// chooses whether it is in the shop (shop_on).
+// What the supplier takes: Aylol's real cost when known, else the supplier's current price (refreshed by every sync),
+// else the cost.
+const supplierPrice = (p) => Number(p?.supplier_cost ?? p?.art_price ?? p?.cost) || 0;
+// Rounded to the agora (2 decimals, util.round: Math.round(x * 100) / 100); null when the supplier price is unknown.
+const shopPriceOf = (p, markup = getSettings().shopMarkup) => {
+  const sp = supplierPrice(p);
+  return sp > 0 ? round(sp * (1 + Number(markup) / 100)) : null;
+};
+// packages.shop_price is kept by the server only: the shop price while the package is in the shop, else NULL
+// (the shop sells what has shop_price > 0). id: one package; none: all of them.
+function refreshShopPrices(id = null) {
+  const rows = q(`SELECT id, shop_on, supplier_cost, art_price, cost, shop_price FROM packages ${id ? 'WHERE id = ?' : ''}`).all(...(id ? [Number(id)] : []));
+  const set = q('UPDATE packages SET shop_price = ? WHERE id = ?');
+  const markup = getSettings().shopMarkup;
+  let changed = 0;
+  for (const p of rows) {
+    const want = p.shop_on ? shopPriceOf(p, markup) : null;
+    if (want !== p.shop_price) { set.run(want, p.id); changed++; }
+  }
+  return changed;
+}
 
 // Fired with a task id once an eSIM activation is opened; listeners act after the current transaction (setImmediate).
 const events = new EventEmitter();
@@ -61,4 +87,10 @@ function getLine(id) {
   return l;
 }
 
-module.exports = { getUser, publicUser, notify, packageLabel, directCompany, events, LINE_SELECT, lineState, lineView, getLine };
+// Every package's shop price, as it should be, once at startup.
+refreshShopPrices();
+
+module.exports = {
+  getUser, publicUser, notify, packageLabel, directCompany, events, LINE_SELECT, lineState, lineView, getLine,
+  supplierPrice, shopPriceOf, refreshShopPrices,
+};

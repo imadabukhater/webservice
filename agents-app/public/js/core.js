@@ -5,7 +5,6 @@ export const S = {
   user: null,
   settings: { appName: 'متجر eSIM' },
   badges: { bell: 0, tasks: 0 },
-  catalog: null,
   syncOk: true,
   syncing: false,
 };
@@ -56,11 +55,6 @@ export function setToken(token) {
     if (token) localStorage.setItem('agents-token', token);
     else localStorage.removeItem('agents-token');
   } catch { /* storage blocked */ }
-}
-
-export async function loadCatalog(force = false) {
-  if (!S.catalog || force) S.catalog = await api.get('/api/catalog');
-  return S.catalog;
 }
 
 // ---------- formatting ----------

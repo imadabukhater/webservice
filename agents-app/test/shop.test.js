@@ -90,6 +90,16 @@ test.before(async () => {
 });
 test.after(() => { server.close(); imap.close(); QL.close(); });
 
+// Puts a package in the shop at this customer price. The shop price is the supplier's price + the shop's percentage,
+// so the supplier's price (as the manager sees it, supplier_cost: never what the supplier is paid) is set to give it.
+async function inShop(admin, id, shopPrice) {
+  const { q, getSettings } = require('../src/db');
+  q('UPDATE packages SET supplier_cost = ? WHERE id = ?').run(shopPrice / (1 + getSettings().shopMarkup / 100), id);
+  const on = await ok(call(admin, 'PUT', `/api/packages/${id}`, { inShop: true }));
+  assert.equal(on.shopPrice, shopPrice);
+  return on;
+}
+
 test('email parsing: MIME, encoded headers, Arabic digits and sender authentication', () => {
   const mail = require('../src/mail');
   const raw = ['Authentication-Results: mx.google.com; dkim=pass header.i=@jawwal.ps; dmarc=pass header.from=jawwal.ps',
@@ -146,7 +156,9 @@ test('customer shop: eSIMs only, JawwalPay proof, automatic match from Gmail, fu
   // A package on a SIM card with a customer price is never in the shop: it sells eSIMs only.
   const { q } = require('../src/db');
   const cellcomId = q("SELECT id FROM companies WHERE name = 'سلكوم'").get().id;
-  const p500 = { id: Number(q("INSERT INTO packages (company_id, name, cost, price, shop_price) VALUES (?, '500 جيجا', 60, 80, 95)").run(cellcomId).lastInsertRowid) };
+  const p500 = { id: Number(q("INSERT INTO packages (company_id, name, cost, price, shop_on) VALUES (?, '500 جيجا', 60, 80, 1)").run(cellcomId).lastInsertRowid) };
+  require('../src/domain').refreshShopPrices(p500.id);
+  assert.ok(q('SELECT shop_price FROM packages WHERE id = ?').get(p500.id).shop_price > 0, 'it has a customer price');
 
   await ok(call(admin, 'PUT', '/api/settings', {
     shopEnabled: true, jawwalpayNumber: '0599000000', jawwalpayName: 'متجر الاتصالات', gmailUser: 'shop@gmail.com', gmailPass: 'abcd efgh ijkl mnop', mailFrom: 'jawwal',
@@ -278,23 +290,25 @@ test('customer shop: eSIMs only, JawwalPay proof, automatic match from Gmail, fu
   assert.match(adminPage.body, /js\/main\.js/);
 });
 
-test('the company eSIM fee, no unpaid activation, an eSIM with no supplier number never sold, and bulk package operations', async () => {
+test('the company eSIM fee, no unpaid activation, and an eSIM with no supplier number never sold', async () => {
   const admin = (await ok(call(null, 'POST', '/api/login', { username: 'admin', password: 'admin-pass' }))).token;
   await ok(call(admin, 'PUT', '/api/settings', { shopEnabled: true, shopInstant: true, esimFee: 10 }));
-  const esim = (await ok(call(admin, 'GET', '/api/catalog'))).packages.find((p) => p.supplier === 'ql' && p.kind === 'invoice');
+  const esim = (await ok(call(admin, 'GET', '/api/catalog'))).packages.find((p) => p.supplier === 'ql');
 
   // The company's own eSIM fee.
-  await ok(call(admin, 'PUT', `/api/companies/${esim.companyId}`, { esimFee: 25 }));
+  const { q } = require('../src/db');
+  q('UPDATE companies SET esim_fee = 25 WHERE id = ?').run(esim.companyId);
   let shop = await ok(call(null, 'GET', '/api/shop'));
   assert.equal(shop.companies.find((c) => c.id === esim.companyId).esimFee, 25);
   assert.equal(shop.packages.find((p) => p.id === esim.id).esimFee, 25);
 
   // An eSIM the manager would fill in by hand (no supplier, no numbers): not on sale, and not ordered.
-  const co = await ok(call(admin, 'POST', '/api/companies', { name: 'ليان eSIM', color: '#0ea5e9', esimFee: 25 }));
-  const p1 = await ok(call(admin, 'POST', '/api/packages', {
-    companyId: co.id, name: 'باقة ليان 100GB', dataGb: 100, price: 45, shopPrice: 60, oldPrice: 75, popular: true, esimEnabled: true,
-  }));
-  const p2 = await ok(call(admin, 'POST', '/api/packages', { companyId: co.id, name: 'باقة ليان 200GB', dataGb: 200, price: 65, shopPrice: 80 }));
+  const co = { id: Number(q("INSERT INTO companies (name, color, esim_fee) VALUES ('ليان eSIM', '#0ea5e9', 25)").run().lastInsertRowid) };
+  const addPkg = (name, gb, cost, esimOn) => ({ id: Number(q('INSERT INTO packages (company_id, name, data_gb, cost, price, shop_on, esim_enabled) VALUES (?, ?, ?, ?, ?, 1, ?)')
+    .run(co.id, name, gb, cost, cost, esimOn).lastInsertRowid) });
+  const p1 = addPkg('باقة ليان 100GB', 100, 45, 1);
+  const p2 = addPkg('باقة ليان 200GB', 200, 65, 0);
+  require('../src/domain').refreshShopPrices();
   shop = await ok(call(null, 'GET', '/api/shop'));
   assert.equal(shop.packages.some((p) => p.id === p1.id || p.id === p2.id), false);
   assert.equal(shop.companies.some((c) => c.id === co.id), false, 'a company with nothing on sale is not shown');
@@ -318,27 +332,15 @@ test('the company eSIM fee, no unpaid activation, an eSIM with no supplier numbe
   assert.equal((await call(null, 'POST', `/api/shop/orders/${ord.code}/instant`, {})).status, 403);
   await ok(call(null, 'POST', `/api/shop/orders/${unpaidAttempt.code}/cancel`));
   await ok(call(null, 'POST', `/api/shop/orders/${ord.code}/cancel`));
-  await ok(call(admin, 'PUT', `/api/companies/${esim.companyId}`, { esimFee: '' }));
-
-  // Bulk hide, show, esim-enable, and delete
-  const { q } = require('../src/db');
-  await ok(call(admin, 'POST', '/api/packages/bulk', { action: 'hide', ids: [p1.id, p2.id] }));
-  assert.equal(q('SELECT active FROM packages WHERE id = ?').get(p1.id).active, 0);
-
-  await ok(call(admin, 'POST', '/api/packages/bulk', { action: 'show', ids: [p1.id, p2.id] }));
-  await ok(call(admin, 'POST', '/api/packages/bulk', { action: 'esim-enable', ids: [p2.id] }));
-  assert.equal(q('SELECT esim_enabled FROM packages WHERE id = ?').get(p2.id).esim_enabled, 1);
-
-  const delRes = await ok(call(admin, 'POST', '/api/packages/bulk', { action: 'delete', ids: [p1.id, p2.id] }));
-  assert.equal(delRes.affected, 2);
+  q('UPDATE companies SET esim_fee = NULL WHERE id = ?').run(esim.companyId);
 });
 
 test('10-minute reservation auto-cancel, 5-minute 1st check, and 3-minute retry (8-minute 2nd check)', async () => {
   const { q } = require('../src/db');
   const admin = (await ok(call(null, 'POST', '/api/login', { username: 'admin', password: 'admin-pass' }))).token;
   await ok(call(admin, 'PUT', '/api/settings', { shopEnabled: true, shopInstant: false }));
-  const pkg = (await ok(call(admin, 'GET', '/api/catalog'))).packages.find((p) => p.supplier === 'ql' && p.kind === 'invoice');
-  await ok(call(admin, 'PUT', `/api/packages/${pkg.id}`, { shopPrice: 33 }));
+  const pkg = (await ok(call(admin, 'GET', '/api/catalog'))).packages.find((p) => p.supplier === 'ql');
+  await inShop(admin, pkg.id, 33);
   const order = (customerName) => ok(call(null, 'POST', '/api/shop/orders', { kind: 'esim', packageId: pkg.id, customerName }));
   const mail = (uid, ago, amount, ref, name) => q(`INSERT INTO payment_mails (uid_validity, uid, message_id, trusted, from_addr, subject, received_at, amount, reference, sender_phone, sender_name, body, created_at)
      VALUES (1, ?, ?, 1, 'noreply@jawwalpay.ps', 'Jawwal Pay', ?, ?, ?, '', ?, 'incoming', ?)`).run(uid, `<m${uid}@jp>`, Date.now() - ago, amount, ref, name, Date.now() - ago);

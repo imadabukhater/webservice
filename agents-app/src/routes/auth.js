@@ -111,13 +111,6 @@ route('PUT', '/api/settings', ADMIN, ({ body }) => {
     if (body[field] !== undefined) setSetting(key, str(body[field], 80));
   }
   if (body.tcMailPass) setSetting('tc_mail_pass', String(body.tcMailPass).replace(/\s+/g, '').slice(0, 200));
-  for (const [field, key] of [['qlMarkupInvoice', 'ql_markup_invoice'], ['lyMarkupInvoice', 'ly_markup_invoice'],
-    ['tcMarkupInvoice', 'tc_markup_invoice'], ['aylolMarkupInvoice', 'aylol_markup_invoice']]) {
-    if (body[field] === undefined) continue;
-    const m = num(body[field], 'نسبة الربح');
-    if (m < 0 || m > 200) fail(400, 'نسبة الربح بين 0 و200%');
-    setSetting(key, m);
-  }
   if (body.shopEnabled !== undefined) setSetting('shop_enabled', body.shopEnabled ? '1' : '0');
   if (body.shopInstant !== undefined) setSetting('shop_instant', body.shopInstant ? '1' : '0');
   for (const [field, key, max, label] of [['shopAutoMax', 'shop_auto_max', 100000, 'حد التنفيذ التلقائي'],
@@ -126,6 +119,15 @@ route('PUT', '/api/settings', ADMIN, ({ body }) => {
     const n = Number(body[field]);
     if (!Number.isFinite(n) || n < 0 || n > max) fail(400, `${label}: رقم من 0 إلى ${max}`);
     setSetting(key, String(Math.round(n * 100) / 100));
+  }
+  // The shop's percentage on the supplier's price: every package's shop price follows at once.
+  if (body.shopMarkup !== undefined) {
+    const m = Number(body.shopMarkup);
+    if (body.shopMarkup === '' || body.shopMarkup === null || typeof body.shopMarkup === 'boolean' || !Number.isFinite(m) || m < 0 || m > 500) {
+      fail(400, 'نسبة الربح رقم من 0 إلى 500');
+    }
+    setSetting('shop_markup', String(Math.round(m * 100) / 100));
+    require('../domain').refreshShopPrices();
   }
   if (body.shopTitle !== undefined) setSetting('shop_title', str(body.shopTitle, 120));
   if (body.shopSubtitle !== undefined) setSetting('shop_subtitle', str(body.shopSubtitle, 240));

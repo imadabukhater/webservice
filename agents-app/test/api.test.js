@@ -81,16 +81,13 @@ test('an eSIM sold in the shop: recorded, activated or rejected by the manager, 
   const cat0 = await ok(call(admin, 'GET', '/api/catalog'));
   assert.ok(cat0.companies.some((c) => c.name === 'سلكوم'));
   assert.ok(!cat0.companies.some((c) => c.name === 'الكروت'), 'no cards company');
-  assert.equal(cat0.packages.length, 0, 'no packages until suppliers sync or the manager adds one');
+  assert.equal(cat0.packages.length, 0, 'no packages until suppliers sync');
+  assert.equal(cat0.markup, 20);
   const cellcom = cat0.companies.find((c) => c.name === 'سلكوم');
 
-  // A package added by hand is an eSIM; one marked otherwise is not listed.
-  const { id: pkgId } = await ok(call(admin, 'POST', '/api/packages', { companyId: cellcom.id, name: 'eSIM 100 جيجا', cost: 30, price: 40, shopPrice: 50, dataGb: 100 }));
-  const { id: hiddenId } = await ok(call(admin, 'POST', '/api/packages', { companyId: cellcom.id, name: 'شريحة', cost: 30, esimEnabled: false }));
-  const cat = await ok(call(admin, 'GET', '/api/catalog'));
-  assert.ok(cat.packages.some((p) => p.id === pkgId && p.esimEnabled));
-  assert.ok(!cat.packages.some((p) => p.id === hiddenId));
-  assert.equal(cat.packages[0].agentPrice, undefined);
+  // A package of an earlier version, added by hand as an eSIM (no supplier: not in the catalog, but its sale works).
+  const pkgId = Number(q("INSERT INTO packages (company_id, name, cost, price, esim_enabled) VALUES (?, 'eSIM 100 جيجا', 30, 40, 1)").run(cellcom.id).lastInsertRowid);
+  assert.ok(!(await ok(call(admin, 'GET', '/api/catalog'))).packages.some((p) => p.id === pkgId));
 
   // Paid order → line pending + an eSIM task, no balance anywhere.
   const o1 = paidOrder(pkgId, { number: '0521000001', amount: 57 });
@@ -160,4 +157,59 @@ test('an eSIM sold in the shop: recorded, activated or rejected by the manager, 
 
   const notes = await ok(call(admin, 'GET', '/api/notifications'));
   assert.ok(notes.items.some((n) => n.link === '#/tasks'));
+});
+
+test('the packages page: every eSIM package, one toggle, the shop price = supplier price + the manager’s percentage', async () => {
+  const admin = await login('admin', 'admin-pass');
+  for (const [method, url] of [['POST', '/api/packages'], ['DELETE', '/api/packages/1'], ['POST', '/api/packages/bulk'], ['GET', '/api/catalog/similar'],
+    ['POST', '/api/companies'], ['PUT', '/api/companies/1'], ['DELETE', '/api/companies/1'], ['GET', '/api/quickline/pending'], ['POST', '/api/layan/approve'],
+    ['POST', '/api/telecom/reprice'], ['GET', '/api/aylol/reprice']]) {
+    assert.equal((await call(admin, method, url, method === 'GET' ? undefined : {})).status, 404, `${method} ${url}`);
+  }
+  const co = q("SELECT id FROM companies WHERE name = 'سلكوم'").get().id;
+  const aloha = Number(q("INSERT INTO companies (name, sort) VALUES ('ALOHA', 9)").run().lastInsertRowid);
+  const add = (ref, f = {}) => Number(q(`INSERT INTO packages (company_id, name, cost, art_price, supplier_cost, active, gone_at, art_card_id, kind, esim_enabled, shop_price)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(f.co ?? co, `رزمة ${ref}`, f.cost ?? 50, f.art ?? null, f.real ?? null, f.active ?? 1, f.gone ?? null, ref,
+    f.kind ?? 'invoice', f.esim ?? 0, f.shop ?? null).lastInsertRowid);
+  const ql = add('qln:1:30', { art: 50 });
+  const qlHidden = add('qln:2:30', { active: 0 }); // hidden by the manager before: still listed, available
+  const ly = add('lyn:11111111-2222-3333-4444-555555555555:30', { esim: 1 });
+  const tcAloha = add('tcn:5:30', { co: aloha });
+  const tcOther = add('tcn:6:30'); // telecom's other companies are lines on a SIM card
+  const ayEsim = add('ay:esim:10:501', { real: 38, art: 40 });
+  const gone = add('ay:esim:10:502', { gone: Date.now() });
+  const card = add('ql:1:30', { kind: 'card' });
+  const manual = add('', { esim: 1 });
+
+  let cat = await ok(call(admin, 'GET', '/api/catalog'));
+  const ids = cat.packages.map((p) => p.id);
+  for (const id of [ql, qlHidden, ly, tcAloha, ayEsim, gone]) assert.ok(ids.includes(id), `listed ${id}`);
+  for (const id of [tcOther, card, manual]) assert.ok(!ids.includes(id), `not listed ${id}`);
+  const view = (id) => cat.packages.find((p) => p.id === id);
+  assert.deepEqual(view(ql), { id: ql, name: 'رزمة qln:1:30', companyId: co, companyName: 'سلكوم', supplier: 'ql', supplierPrice: 50, shopPrice: null, inShop: false, available: true });
+  assert.deepEqual([view(qlHidden).available, view(gone).available, view(ayEsim).supplier, view(ayEsim).supplierPrice], [true, false, 'ay', 38], 'Aylol: what it really takes');
+
+  // On: shop price = supplier price × 1.2, the package shown again; off: no shop price, still shown.
+  const on = await ok(call(admin, 'PUT', `/api/packages/${qlHidden}`, { inShop: true }));
+  assert.deepEqual([on.inShop, on.shopPrice], [true, 60]);
+  assert.equal(q('SELECT active FROM packages WHERE id = ?').get(qlHidden).active, 1);
+  assert.equal((await ok(call(admin, 'PUT', `/api/packages/${ayEsim}`, { inShop: true }))).shopPrice, 45.6);
+  assert.equal((await call(admin, 'PUT', `/api/packages/${gone}`, { inShop: true })).status, 409);
+  assert.equal((await call(admin, 'PUT', `/api/packages/${card}`, { inShop: true })).status, 404);
+  assert.equal((await call(admin, 'PUT', `/api/packages/${ql}`, { shopPrice: 99 })).status, 400, 'the toggle is the only change');
+  const off = await ok(call(admin, 'PUT', `/api/packages/${qlHidden}`, { inShop: false }));
+  assert.deepEqual([off.inShop, off.shopPrice], [false, null]);
+  assert.equal(q('SELECT shop_price, active FROM packages WHERE id = ?').get(qlHidden).shop_price, null);
+  assert.equal(q('SELECT active FROM packages WHERE id = ?').get(qlHidden).active, 1, 'off leaves it shown');
+
+  // The manager's percentage: every shop price follows at once.
+  for (const bad of [-1, 501, 'abc', '', true]) assert.equal((await call(admin, 'PUT', '/api/settings', { shopMarkup: bad })).status, 400, String(bad));
+  assert.equal((await ok(call(admin, 'PUT', '/api/settings', { shopMarkup: 30 }))).shopMarkup, 30);
+  cat = await ok(call(admin, 'GET', '/api/catalog'));
+  assert.equal(cat.markup, 30);
+  assert.equal(view(ayEsim).shopPrice, 49.4, '38 × 1.3');
+  assert.equal(q('SELECT shop_price FROM packages WHERE id = ?').get(ayEsim).shop_price, 49.4);
+  await ok(call(admin, 'PUT', '/api/settings', { shopMarkup: 20 }));
+  assert.equal(q('SELECT shop_price FROM packages WHERE id = ?').get(ayEsim).shop_price, 45.6);
+  await ok(call(admin, 'PUT', `/api/packages/${ayEsim}`, { inShop: false }));
 });

@@ -151,19 +151,22 @@ test('a wrong password or a wrong code is refused with a clear message', async (
 test('through the app: sync its new lines (no extensions)', async () => {
   const admin = await login('admin', 'admin-pass');
   const s = await ok(call(admin, 'PUT', '/api/settings', {
-    tcUser: 'dealer@example.com', tcPass: 'tc-pass', tcMailUser: 'box@gmail.com', tcMailPass: 'app-pass', tcMarkupInvoice: 10,
+    tcUser: 'dealer@example.com', tcPass: 'tc-pass', tcMailUser: 'box@gmail.com', tcMailPass: 'app-pass',
   }));
-  assert.deepEqual([s.tcReady, s.tcMarkupInvoice, s.tcMarkupCard], [true, 10, undefined]);
+  assert.deepEqual([s.tcReady, s.tcMarkupInvoice, s.tcMarkupCard], [true, undefined, undefined]);
   assert.deepEqual(await ok(call(admin, 'POST', '/api/telecom/check')), { ok: true, balance: 86.48, subscribers: 3, active: 2 });
 
   // ----- sync: new lines, the offers for their months -----
   assert.equal((await call(admin, 'POST', '/api/telecom/sync', { kind: 'card' })).status, 400, 'no extensions');
   const si = await ok(call(admin, 'POST', '/api/telecom/sync', { kind: 'invoice' }));
   assert.equal(si.total, 3);
-  const cat = (await ok(call(admin, 'GET', '/api/catalog'))).packages.filter((p) => p.supplier === 'tc');
-  const newRami = cat.find((p) => p.artCode === '719');
-  const offer = cat.find((p) => p.artCode === '728');
-  assert.deepEqual([newRami.price, offer.cost, offer.days], [39.2, 99, 90]);
+  // The catalog lists telecom's ALOHA eSIMs only (its other companies are lines on a SIM card).
+  const { q } = require('../src/db');
+  assert.ok(!(await ok(call(admin, 'GET', '/api/catalog'))).packages.some((p) => p.supplier === 'tc' && p.companyName !== 'ALOHA'));
+  const byRef = (ref) => q("SELECT * FROM packages WHERE art_card_id LIKE ?").get(`${ref}%`);
+  const newRami = byRef('tcn:719:');
+  const offer = byRef('tcn:728:');
+  assert.deepEqual([newRami.cost, offer.cost, offer.days, newRami.shop_price], [35.64, 99, 90, null]);
   assert.match(newRami.name, /رامي ليفي 200 جيجا 5G/);
   assert.match(offer.name, /عرض 3 أشهر/);
   // A second sync adds nothing and keeps the prices.

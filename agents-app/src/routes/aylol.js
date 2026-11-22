@@ -1,7 +1,7 @@
 'use strict';
 // Aylol Telecom, the same shape as telecom and Layan: new lines ('invoice': bill lines ay:bill:…, sold in the shop as
 // eSIMs, and eSIMs ay:esim:…). Sales are carried out automatically by autoexec (sendAy) once the customer's payment is
-// verified; nothing here buys anything at the site. Its sync, profit percentage and price changes awaiting the manager.
+// verified; nothing here buys anything at the site. Its sync sets the cost to the site's price (no approval).
 const { q, tx, getSettings, setSetting, aylolCredentials } = require('../db');
 const { fail, round, now } = require('../util');
 const ay = require('../aylol');
@@ -12,13 +12,9 @@ const { companyFor } = require('./quickline');
 const KINDS = ['invoice'];
 const GONE_DAYS = 7;
 const kindOf = (v) => (v === undefined || v === '' || KINDS.includes(v) ? 'invoice' : fail(400, 'المتجر يبيع شرائح eSIM فقط: لا رزم تمديد أو كروت'));
-const markupFor = () => getSettings().aylolMarkupInvoice;
-const withMarkup = (cost, kind) => round(cost * (1 + markupFor(kind) / 100));
 const REF = {
   invoice: "(art_card_id LIKE 'ay:bill:%' OR art_card_id LIKE 'ay:esim:%')",
 };
-const PENDING = 'art_price IS NOT NULL AND ROUND(art_price, 2) != ROUND(cost, 2) AND (art_ack IS NULL OR ROUND(art_ack, 2) != ROUND(art_price, 2))';
-const pendingCount = (kind) => q(`SELECT COUNT(*) AS n FROM packages WHERE ${REF[kind]} AND ${PENDING}`).get().n;
 // The site's eSIM categories whose purchase names the package bought (Hot Mobile and 019). Its other categories
 // (Partner, Pelephone, Cellcom, 012) are bought there without naming a package, so selling one could buy an empty
 // eSIM: they are not listed until that purchase is known.
@@ -242,46 +238,11 @@ async function syncKind(creds, kind) {
     // A bill line is a new number on a SIM card, picked from the numbers the site offers for the package.
     if (kind === 'invoice') q("UPDATE packages SET esim_enabled = 0 WHERE art_card_id LIKE 'ay:bill:%' AND esim_enabled != 0").run();
     setSetting(`aylol_synced_${kind}`, now());
-    return { kind, total: items.length, added, updated, restored, switchedOff: off, removed, pending: pendingCount(kind), markup: markupFor(kind) };
+    // No approval: the cost is the supplier's current price, and the shop prices follow it.
+    q(`UPDATE packages SET cost = art_price, art_ack = NULL WHERE ${REF.invoice} AND art_price IS NOT NULL AND cost != art_price`).run();
+    require('../domain').refreshShopPrices();
+    return { kind, total: items.length, added, updated, restored, switchedOff: off, removed };
   });
 }
-
-route('GET', '/api/aylol/pending', ADMIN, ({ query }) => {
-  const kind = kindOf(query.kind);
-  return q(`SELECT p.id, p.name, p.cost, p.price, p.art_price, p.edited, p.active, c.name AS company_name
-            FROM packages p JOIN companies c ON c.id = p.company_id WHERE ${REF[kind]} AND ${PENDING} ORDER BY c.sort, p.sort, p.id`).all()
-    .map((p) => ({ id: p.id, name: p.name, companyName: p.company_name, cost: round(p.cost), artPrice: round(p.art_price), price: round(p.price),
-      suggested: withMarkup(p.art_price, kind), edited: !!p.edited, active: !!p.active }));
-});
-
-route('POST', '/api/aylol/approve', ADMIN, ({ body }) => tx(() => {
-  const mode = ['all', 'cost', 'ignore'].includes(body.mode) ? body.mode : fail(400, 'اختر طريقة الاعتماد');
-  const ids = [].concat(body.ids || []).map(Number).filter(Boolean);
-  if (!ids.length) fail(400, 'اختر الرزم');
-  let done = 0;
-  for (const id of ids) {
-    const p = q(`SELECT * FROM packages WHERE id = ? AND (${REF.invoice}) AND ${PENDING}`).get(id);
-    if (!p) continue;
-    if (mode === 'ignore') q('UPDATE packages SET art_ack = art_price WHERE id = ?').run(id);
-    else if (mode === 'cost') q('UPDATE packages SET cost = art_price, art_ack = NULL WHERE id = ?').run(id);
-    else q('UPDATE packages SET cost = art_price, price = ?, art_ack = NULL WHERE id = ?').run(withMarkup(p.art_price, p.kind), id);
-    done++;
-  }
-  return { done };
-}));
-
-route('POST', '/api/aylol/reprice', ADMIN, ({ body }) => tx(() => {
-  const kind = kindOf(body.kind);
-  const all = body.scope === 'all';
-  const rows = q(`SELECT id, cost FROM packages WHERE ${REF[kind]} AND cost > 0 ${all ? '' : 'AND edited = 0'}`).all();
-  for (const r of rows) q(`UPDATE packages SET price = ?${all ? ', edited = 0' : ''} WHERE id = ?`).run(withMarkup(r.cost, kind), r.id);
-  return { changed: rows.length, markup: markupFor(kind) };
-}));
-
-route('GET', '/api/aylol/reprice', ADMIN, ({ query }) => {
-  const kind = kindOf(query.kind);
-  const r = q(`SELECT COUNT(*) AS total, SUM(edited) AS edited FROM packages WHERE ${REF[kind]} AND cost > 0`).get();
-  return { total: r.total, edited: r.edited || 0, pending: pendingCount(kind), markup: markupFor(kind) };
-});
 
 module.exports = { syncKind, REF, freeNumbers, billFreeNumbers, lineEsimOn, shopLineModes, learnSimType, rememberEsim, servedEsim, balanceSeen, ensureBalanceFor };

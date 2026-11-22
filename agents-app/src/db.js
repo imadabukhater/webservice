@@ -351,6 +351,13 @@ if (!db.prepare("SELECT 1 FROM settings WHERE key = 'migr_ql_gone'").get()) {
   db.prepare("UPDATE packages SET gone_at = ? WHERE active = 0 AND gone_at IS NULL AND art_card_id LIKE 'ql%'").run(Date.now());
   db.prepare("INSERT INTO settings (key, value) VALUES ('migr_ql_gone', '1')").run();
 }
+// The shop: a package is in it while shop_on = 1, at its supplier's price + the manager's percentage (shop_markup;
+// domain.refreshShopPrices keeps shop_price). Once: the packages on sale (a customer price, shown, still listed) stay.
+ensureColumn('packages', 'shop_on', 'shop_on INTEGER NOT NULL DEFAULT 0');
+if (!db.prepare("SELECT 1 FROM settings WHERE key = 'migr_shop_on'").get()) {
+  db.exec('UPDATE packages SET shop_on = 1 WHERE shop_price > 0 AND active = 1 AND gone_at IS NULL');
+  db.prepare("INSERT INTO settings (key, value) VALUES ('migr_shop_on', '1')").run();
+}
 // Security hardening: disable unverified instant self-activation by default so orders require payment verification unless explicitly enabled by admin.
 if (!db.prepare("SELECT 1 FROM settings WHERE key = 'migr_disable_instant_default'").get()) {
   db.prepare("INSERT INTO settings (key, value) VALUES ('shop_instant', '0') ON CONFLICT(key) DO UPDATE SET value = '0'").run();
@@ -376,10 +383,10 @@ const DEFAULT_SETTINGS = {
   app_name: 'متجر eSIM', esim_fee: '7', support_whatsapp: '972567725080',
   shop_enabled: '0', shop_instant: '0', shop_title: '', shop_subtitle: '',
   jawwalpay_number: '', jawwalpay_name: '', palpay_number: '', palpay_name: '', gmail_user: '', gmail_pass: '', mail_from: 'jawwalpay.ps',
-  ql_user: '', ql_pass: '', ql_markup: '15',
-  ly_user: '', ly_pass: '', ly_secret: '', ly_markup: '15',
-  tc_user: '', tc_pass: '', tc_mail_user: '', tc_mail_pass: '', tc_markup: '15', tc_reg_address: '', tc_reg_city: '', tc_reg_zip: '',
-  aylol_user: '', aylol_pass: '', aylol_markup: '15',
+  ql_user: '', ql_pass: '',
+  ly_user: '', ly_pass: '', ly_secret: '',
+  tc_user: '', tc_pass: '', tc_mail_user: '', tc_mail_pass: '', tc_reg_address: '', tc_reg_city: '', tc_reg_zip: '',
+  aylol_user: '', aylol_pass: '',
   // Direct Jawwal Pay through the MaalCards corporate API: the subscriber (manager_id) and the corporate account.
   jc_enabled: '0', jc_manager_id: '', jc_user: '', jc_pass: '',
   // Paying from Bank of Palestine too (E-SADAD, by the mobile registered with the bank), beside the Jawwal Pay wallet.
@@ -389,6 +396,8 @@ const DEFAULT_SETTINGS = {
   // Safety: a paid customer order above this amount waits for the manager (0: none); orders a customer may make in an
   // hour; Aylol's balance under which the manager is told.
   shop_auto_max: '200', shop_hour_limit: '3', aylol_low_balance: '100',
+  // The shop's price: the supplier's price + this percentage.
+  shop_markup: '20',
 };
 function getSettings() {
   const out = { ...DEFAULT_SETTINGS };
@@ -400,14 +409,11 @@ function getSettings() {
     // QuickLine sign-in: the password never leaves the server (see qlCredentials).
     qlUser: out.ql_user,
     qlConfigured: !!(out.ql_user && out.ql_pass),
-    // The manager's profit on top of QuickLine's price for its eSIM lines.
-    qlMarkupInvoice: Math.max(0, Number(out.ql_markup_invoice ?? out.ql_markup) || 0),
     qlSyncedInvoice: Number(out.ql_synced_invoice) || null,
     // Layan sign-in: the password and the authenticator secret never leave the server (see lyCredentials).
     lyUser: out.ly_user,
     lyConfigured: !!(out.ly_user && out.ly_pass),
     lyHasSecret: !!out.ly_secret,
-    lyMarkupInvoice: Math.max(0, Number(out.ly_markup_invoice ?? out.ly_markup) || 0),
     lySyncedInvoice: Number(out.ly_synced_invoice) || null,
     // telecom.co.il sign-in: it e-mails a code, which the server reads from that Gmail over IMAP (see mailcode.js).
     // The password and the Gmail App password never leave the server (see tcCredentials).
@@ -417,7 +423,6 @@ function getSettings() {
     tcMailConfigured: !!(out.tc_mail_user && out.tc_mail_pass),
     // Signing in needs both: the site's account and the Gmail its codes go to.
     tcReady: !!(out.tc_user && out.tc_pass && out.tc_mail_user && out.tc_mail_pass),
-    tcMarkupInvoice: Math.max(0, Number(out.tc_markup_invoice ?? out.tc_markup) || 0),
     tcSyncedInvoice: Number(out.tc_synced_invoice) || null,
     // telecom asks a new line's address, city and postcode: the shop registers its eSIMs with these.
     tcRegAddress: out.tc_reg_address, tcRegCity: out.tc_reg_city, tcRegZip: out.tc_reg_zip,
@@ -426,7 +431,6 @@ function getSettings() {
     aylolConfigured: !!(out.aylol_user && out.aylol_pass),
     // The Google Authenticator key Aylol's two-step sign-in asks a code from (never sent back, like the password).
     aylolHasSecret: !!out.aylol_secret,
-    aylolMarkupInvoice: Math.max(0, Number(out.aylol_markup_invoice ?? out.aylol_markup) || 0),
     aylolSyncedInvoice: Number(out.aylol_synced_invoice) || null,
     tcRegReady: !!(out.tc_reg_address && out.tc_reg_city && out.tc_reg_zip),
     // The daily copy in Google Cloud Storage (see cloudbackup.js): where, the last good one, and the last failure.
@@ -436,6 +440,8 @@ function getSettings() {
     backupLastBytes: Number(out.backup_last_bytes) || null,
     backupError: out.backup_error || '',
     // Customer shop paid by JawwalPay or instant self-service; transfers are confirmed from the notification emails in Gmail.
+    // The shop's price: the supplier's price + this percentage (domain.shopPriceOf).
+    shopMarkup: Math.max(0, Number.isFinite(Number(out.shop_markup)) && out.shop_markup !== '' ? Number(out.shop_markup) : 20),
     shopEnabled: out.shop_enabled === '1',
     shopInstant: out.shop_instant === '1',
     shopAutoMax: Math.max(0, Number(out.shop_auto_max ?? 200) || 0),

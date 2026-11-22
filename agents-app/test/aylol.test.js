@@ -207,12 +207,15 @@ test('Aylol: credentials only from the settings, real supplier catalog (new line
   assert.equal(invoice.total, 3);
   assert.equal(site.badSignatures, 0);
   const cat = await ok(call(admin, 'GET', '/api/catalog'));
-  const ayPkgs = cat.packages.filter((p) => p.supplier === 'ay');
+  // Each package with its row (the catalog shows the supplier's price, the toggle and whether it is still listed).
+  const ayPkgs = dbq("SELECT * FROM packages WHERE art_card_id LIKE 'ay:%'").all();
   assert.deepEqual(ayPkgs.map((p) => p.cost).sort((a, b) => a - b), [30, 35, 40]);
+  const listed = cat.packages.filter((p) => p.supplier === 'ay');
+  assert.ok(listed.every((p) => p.available && !p.inShop && p.shopPrice === null));
   assert.equal(ayPkgs.some((p) => /empty|استرداد/i.test(p.name)), false, 'no made-up packages');
-  const esimPkg = ayPkgs.find((p) => p.esimEnabled && p.cost === 40);
+  const esimPkg = ayPkgs.find((p) => p.esim_enabled && p.cost === 40);
   assert.ok(esimPkg);
-  assert.equal(esimPkg.pool, true);
+  assert.ok(listed.some((p) => p.id === esimPkg.id), 'its eSIM is on the packages page');
   assert.equal(dbq("SELECT COUNT(*) AS n FROM packages WHERE art_card_id LIKE 'ay:credit:%'").get().n, 0);
 
   // The cookie jar lives beside the data, never in the app folder.
@@ -271,12 +274,14 @@ test('Aylol lines in the shop: as an eSIM only, with its QR; not on sale while e
   const admin = (await ok(call(null, 'POST', '/api/login', { username: 'admin', password: 'admin-pass' }))).token;
   site.hotEsim = true;
   await ok(call(admin, 'POST', '/api/aylol/sync', { kind: 'invoice' }));
-  const cat = await ok(call(admin, 'GET', '/api/catalog'));
-  const billPkg = cat.packages.find((p) => p.supplier === 'ay' && p.cost === 35);
-  const hotPkg = cat.packages.find((p) => p.supplier === 'ay' && p.cost === 25);
+  const billPkg = dbq("SELECT * FROM packages WHERE art_card_id LIKE 'ay:%' AND cost = 35").get();
+  const hotPkg = dbq("SELECT * FROM packages WHERE art_card_id LIKE 'ay:%' AND cost = 25").get();
   assert.ok(billPkg && hotPkg);
   assert.equal(dbq('SELECT supplier_sim_type FROM packages WHERE id = ?').get(hotPkg.id).supplier_sim_type, 'esim', 'kept as the site says');
   dbq('UPDATE packages SET shop_price = 40 WHERE id = ?').run(hotPkg.id);
+  // The sync recomputed the shop prices (none of these is in the shop): this test sells them at these prices.
+  dbq('UPDATE packages SET shop_price = 39 WHERE id = ?').run(billPkg.id);
+  dbq("UPDATE packages SET shop_price = 45 WHERE art_card_id LIKE 'ay:%' AND cost = 30").run();
 
   // eSIM lines off (until a real purchase): none of these lines is on sale (never on a SIM card).
   let shopCat = await ok(call(null, 'GET', '/api/shop'));
@@ -337,7 +342,7 @@ test('Aylol lines in the shop: as an eSIM only, with its QR; not on sale while e
 
   // Pelephone (company 5, Sky5G) as an eSIM: one of the site's eSIMs, sent as its page sends it (JSON, esim 1, the
   // eSIM's own SIM number, key and period); the QR asked as the page asks it, and kept as an image.
-  const pelePkg = (await ok(call(admin, 'GET', '/api/catalog'))).packages.find((p) => p.supplier === 'ay' && p.cost === 30);
+  const pelePkg = dbq("SELECT * FROM packages WHERE art_card_id LIKE 'ay:%' AND cost = 30").get();
   const peleShop = (await ok(call(null, 'GET', '/api/shop'))).packages.find((p) => p.id === pelePkg.id);
   assert.equal(peleShop.esim, true);
   const po = await ok(call(null, 'POST', '/api/shop/orders', { packageId: pelePkg.id, kind: 'new', lineEsim: true, customerName: 'Rana Saleh' }));

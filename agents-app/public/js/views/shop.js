@@ -55,7 +55,7 @@ function openSettings() {
     title: 'إعدادات متجر الزبائن',
     subtitle: `رابط المتجر: ${location.origin}/`,
     body: `
-      <label class="switch-row"><span class="grow"><b>المتجر مفتوح للزبائن</b><small>الباقات التي لها «سعر الزبون» في الشركات والرزم تظهر فيه</small></span><input class="switch" type="checkbox" name="shopEnabled" ${s.shopEnabled ? 'checked' : ''}></label>
+      <label class="switch-row"><span class="grow"><b>المتجر مفتوح للزبائن</b><small>الرزم المختارة «عرض في المتجر» في صفحة «الرزم» تظهر فيه</small></span><input class="switch" type="checkbox" name="shopEnabled" ${s.shopEnabled ? 'checked' : ''}></label>
       <label class="switch-row"><span class="grow"><b>وضع التفعيل التجريبي بدون انتظار الدفع</b><small>إتاحة تفعيل الطلبات وإظهار كود QR مباشرة عبر واجهة البرمجة دون انتظار التحقق من الدفع (أبقِه مغلقاً في الوضع الفعلي)</small></span><input class="switch" type="checkbox" name="shopInstant" ${s.shopInstant ? 'checked' : ''}></label>
       <div class="row2"><div class="field"><label for="st-max">حد التنفيذ التلقائي (₪)</label><input class="input ltr" id="st-max" name="shopAutoMax" type="number" min="0" step="1" inputmode="numeric" value="${s.shopAutoMax ?? 200}">
           <span class="hint">طلب أغلى من هذا يُفحص دفعه تلقائياً، لكنه ينتظر موافقتك قبل التفعيل. 0 = بلا حد.</span></div>

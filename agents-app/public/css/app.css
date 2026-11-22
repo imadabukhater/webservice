@@ -385,9 +385,6 @@ select.input { appearance: none; background-image: url("data:image/svg+xml,%3Csv
 .co-logo.sm .mono { font-size: 1rem; }
 .co-logo.xs { width: 34px; height: 34px; border-radius: 10px; }
 .co-logo.xs .mono { font-size: .82rem; }
-.pkg-specs { display: flex; gap: 16px; justify-content: flex-end; flex-wrap: wrap; direction: ltr; color: var(--ink-2); font: 500 .86rem var(--f-ui); }
-.pkg-specs span { display: inline-flex; align-items: center; gap: 5px; }
-.pkg-specs svg { width: 17px; height: 17px; color: var(--primary); }
 .months { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; }
 .months button { min-height: 64px; border-radius: 14px; border: 1.5px solid var(--line); background: var(--surface); display: grid; place-items: center; align-content: center; gap: 2px; font: 600 1rem var(--f-ui); color: var(--ink); padding: 4px; }
 .months button small { color: var(--muted); font: 400 .7rem var(--f-body); }
@@ -557,11 +554,6 @@ table.data tfoot th { background: var(--surface-2); font: 600 .86rem var(--f-ui)
 @media (min-width: 1024px) { .chat { height: max(420px, calc(100dvh - var(--topbar-h) - 56px)); } }
 
 /* ---------- catalog: one system's controls ---------- */
-.sys-bar { display: grid; gap: 12px; }
-.sys-row { display: flex; align-items: center; gap: 12px; min-width: 0; }
-.sys-row .grow { min-width: 0; }
-.sys-row small { display: block; color: var(--muted); font-size: .8rem; }
-.sys-row + .sys-row { padding-top: 12px; border-top: 1px solid var(--line); }
 .segmented button svg { width: 16px; height: 16px; margin-inline-end: 4px; vertical-align: -3px; }
 
 /* The manager's system health card */
@@ -573,12 +565,6 @@ table.data tfoot th { background: var(--surface-2); font: 600 .86rem var(--f-ui)
 .health-row svg { width: 16px; height: 16px; color: var(--muted); flex: none; }
 
 /* Agent price sheet: one collapsible block per company */
-.pr-group { border-bottom: 1px solid var(--line); padding: 4px 0; }
-.pr-group > summary { cursor: pointer; padding: 12px 4px; list-style: none; display: flex; gap: 8px; align-items: center; }
-.pr-group > summary::-webkit-details-marker { display: none; }
-.pr-group > summary::before { content: '›'; transform: rotate(90deg); color: var(--muted); transition: transform .15s; }
-.pr-group[open] > summary::before { transform: rotate(-90deg); }
-.cp-row { padding: 10px 0; border-bottom: 1px solid var(--line); gap: 8px; flex-wrap: wrap; }
 /* ---------- customer shop (/shop) — Authentic Warm Hot eSIM & Telecom Storefront ---------- */
 html:has(body.shop) { max-width: 100%; overflow-x: hidden; }
 body.shop {
@@ -2691,29 +2677,6 @@ body.shop {
 }
 
 /* Manager's packages: a section per company, a compact row per package, and bulk actions toolbar */
-.cat-tools { display: grid; gap: 10px; }
 .cat-bulk-bar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; padding: 10px 14px; background: var(--surface-2); border: 1px solid var(--line); border-radius: 16px; }
-.pk-check { display: inline-flex; align-items: center; cursor: pointer; padding: 4px; }
-.pk-check input { width: 18px; height: 18px; accent-color: var(--primary); cursor: pointer; }
-.cat-sort { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: .88rem; }
-.cat-sort select { width: auto; min-height: 38px; padding-block: 4px; }
-.co-sec { padding: 0; overflow: hidden; }
-.co-sec > summary { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 14px 16px; cursor: pointer; list-style: none; }
-.co-sec > summary::-webkit-details-marker { display: none; }
-.co-sec > summary::after { content: "▾"; margin-inline-start: auto; color: var(--muted); transition: transform .15s; }
-.co-sec:not([open]) > summary::after { transform: rotate(90deg); }
-.co-sec[open] > summary { border-bottom: 1px solid var(--line); }
-.co-head { display: flex; align-items: center; gap: 10px; font-size: 1.02rem; }
-.co-meta { color: var(--muted); font-size: .84rem; }
-.co-sec > .list { padding: 12px; gap: 8px; }
 .co-kind { padding: 12px 16px 0; font-size: .9rem; color: var(--ink-2); }
-.pk-row { padding: 10px 12px; box-shadow: none; }
-.pk-row .item-top { align-items: flex-start; flex-wrap: wrap; }
-.pk-row .item-title { font-size: .95rem; }
-.pk-row .pill { margin-inline-start: 4px; vertical-align: middle; }
-.pk-row.inactive { opacity: .62; }
-.pk-row .plus { color: var(--good); }
-.pk-row .minus { color: var(--bad, #d33); }
-.pk-row .icon-btn.pk-act { width: 38px; height: 38px; border-radius: 12px; box-shadow: none; }
-.pk-row .icon-btn.pk-act svg { width: 18px; height: 18px; }
 

@@ -127,12 +127,12 @@ export default {
             <div class="field"><label for="aylol-low">نبّهني عندما ينزل رصيد أيلول تحت (₪)</label>
               <input class="input ltr" id="aylol-low" name="aylolLowBalance" type="number" min="0" step="1" inputmode="numeric" value="${s.aylolLowBalance ?? 100}">
               <span class="hint">يصلك تنبيه في البوابة وعلى واتساب (مرة كل 6 ساعات على الأكثر). وأي طلب لا يكفيه الرصيد يُرفض قبل أن يدفع الزبون. 0 = بلا تنبيه.</span></div>
-            <div class="msg info">${icon('info')}<span>بعد الحفظ تُزامَن رزم أيلول فوراً، ثم كل ساعتين تلقائياً. الأرقام المتاحة والسعر يُقرآن من أيلول مباشرة عند كل طلب. الرزم وأسعار الزبائن في «الشركات والرزم» ← تبويب «أيلول».</span></div>
+            <div class="msg info">${icon('info')}<span>بعد الحفظ تُزامَن رزم أيلول فوراً، ثم كل ساعتين تلقائياً. الأرقام المتاحة والسعر يُقرآن من أيلول مباشرة عند كل طلب. اختر ما يظهر في المتجر من «الرزم»؛ السعر تلقائي.</span></div>
             <div id="aylol-msg"></div>
             <div class="btn-row">
               <button class="btn btn-primary" type="submit">${icon('check')}حفظ</button>
               <button class="btn" type="button" data-action="aylol-check" ${s.aylolConfigured ? '' : 'disabled'}>${icon('wallet')}اختبار الاتصال</button>
-              <a class="btn" href="#/catalog">${icon('box')}الشركات والرزم</a>
+              <a class="btn" href="#/catalog">${icon('box')}الرزم</a>
             </div>
           </form>
           <form class="card card-pad form" id="ql-form" novalidate autocomplete="off">
@@ -142,12 +142,12 @@ export default {
             <div class="field"><label for="ql-user">البريد في QuickLine</label><input class="input ltr" id="ql-user" name="qlUser" type="email" value="${esc(s.qlUser || '')}" autocomplete="off"></div>
             <div class="field"><label for="ql-pass">كلمة المرور</label><input class="input ltr" id="ql-pass" name="qlPass" type="password" autocomplete="new-password" placeholder="${s.qlConfigured ? 'محفوظة — اتركها فارغة للإبقاء' : ''}"></div>
           </div>
-          <div class="msg info">${icon('info')}<span>الرزم وأسعار الزبائن في «الشركات والرزم» ← تبويب «QuickLine».</span></div>
+          <div class="msg info">${icon('info')}<span>اختر ما يظهر في المتجر من «الرزم»؛ السعر تلقائي (سعر المورّد + نسبة ربحك، تحددها في «الرزم»).</span></div>
           <div id="ql-msg"></div>
           <div class="btn-row">
             <button class="btn btn-primary" type="submit">${icon('check')}حفظ</button>
             <button class="btn" type="button" data-action="ql-check" ${s.qlConfigured ? '' : 'disabled'}>${icon('wallet')}اختبار الاتصال والرصيد</button>
-            <a class="btn" href="#/catalog">${icon('box')}الشركات والرزم</a>
+            <a class="btn" href="#/catalog">${icon('box')}الرزم</a>
           </div>
         </form>
         <form class="card card-pad form" id="ly-form" novalidate autocomplete="off">
@@ -164,12 +164,12 @@ export default {
           <div class="btn-row">
             <button class="btn btn-primary" type="submit">${icon('check')}حفظ</button>
             <button class="btn" type="button" data-action="ly-check" ${s.lyConfigured ? '' : 'disabled'}>${icon('wallet')}اختبار الاتصال والرصيد</button>
-            <a class="btn" href="#/catalog">${icon('box')}الشركات والرزم</a>
+            <a class="btn" href="#/catalog">${icon('box')}الرزم</a>
           </div>
         </form>
         <form class="card card-pad form" id="tc-form" novalidate autocomplete="off">
           <h2 class="dot-title">telecom.co.il</h2>
-          <p class="muted small">عند الدخول يرسل الموقع رمز تحقق إلى الجيميل. يقرأ السيرفر الرمز بنفسه من ذلك الجيميل بكلمة مرور تطبيق (App password)، دون أن يعلّم الرسائل كمقروءة. يفعّل السيرفر شرائح eSIM (ALOHA) التي يشتريها الزبائن من حسابك في telecom تلقائياً. الرزم وأسعار الزبائن في «الشركات والرزم».</p>
+          <p class="muted small">عند الدخول يرسل الموقع رمز تحقق إلى الجيميل. يقرأ السيرفر الرمز بنفسه من ذلك الجيميل بكلمة مرور تطبيق (App password)، دون أن يعلّم الرسائل كمقروءة. يفعّل السيرفر شرائح eSIM (ALOHA) التي يشتريها الزبائن من حسابك في telecom تلقائياً. اختر ما يظهر في المتجر من «الرزم».</p>
           <div class="row2 stack-xs">
             <div class="field"><label for="tc-user">البريد في telecom</label><input class="input ltr" id="tc-user" name="tcUser" type="email" value="${esc(s.tcUser || '')}" autocomplete="off"></div>
             <div class="field"><label for="tc-pass">كلمة المرور</label><input class="input ltr" id="tc-pass" name="tcPass" type="password" autocomplete="new-password" placeholder="${s.tcConfigured ? 'محفوظة — اتركها فارغة للإبقاء' : ''}"></div>
