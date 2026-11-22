@@ -282,9 +282,11 @@ function shell(body, { sub = '' } = {}) {
   const wa = waHref(S.data?.supportWhatsapp, `مرحباً، أحتاج مساعدة في ${name}`);
   const dark = document.documentElement.dataset.theme === 'dark';
   const hash = location.hash.replace(/^#\/?/, '').split('?')[0];
+  const pathSlug = !hash ? location.pathname.replace(/^\/|\/$/g, '').toLowerCase() : '';
+  const activeRoute = hash || pathSlug;
   const onPackagePath = /^\/package\/\d+/.test(location.pathname);
-  const onHome = !hash && !onPackagePath;
-  const onLegal = hash === 'terms' || hash === 'esim-policy' || hash === 'guarantee';
+  const onHome = !activeRoute && !onPackagePath;
+  const onLegal = activeRoute === 'terms' || activeRoute === 'esim-policy' || activeRoute === 'guarantee';
 
   root.innerHTML = `
     <header class="shop-top">
@@ -303,10 +305,10 @@ function shell(body, { sub = '' } = {}) {
           <button type="button" class="shop-nav-link ${onHome ? 'active' : ''}" data-act="nav-esim">
             ${icon('qr')}<span>شرائح eSIM</span>
           </button>
-          <a href="#/compat" class="shop-nav-link ${hash === 'compat' ? 'active' : ''}">
+          <a href="/compat" data-spa-link class="shop-nav-link ${activeRoute === 'compat' ? 'active' : ''}">
             ${icon('chip')}<span>فحص التوافق</span>
           </a>
-          <a href="#/terms" class="shop-nav-link ${onLegal ? 'active' : ''}">
+          <a href="/terms" data-spa-link class="shop-nav-link ${onLegal ? 'active' : ''}">
             ${icon('shield')}<span>الضمان والشروط</span>
           </a>
           <a href="#/track" class="shop-nav-link ${hash === 'track' || hash === 'orders' ? 'active' : ''}">
@@ -338,7 +340,7 @@ function shell(body, { sub = '' } = {}) {
           <div class="pele-foot-net">
             ${wa ? `<a href="${esc(wa)}" target="_blank" rel="noopener" class="pele-net-ic" title="واتساب">${icon('whatsapp')}</a>` : ''}
             <a href="#/track" class="pele-net-ic" title="تتبّع طلب">${icon('search')}</a>
-            <a href="#/compat" class="pele-net-ic" title="فحص التوافق">${icon('chip')}</a>
+            <a href="/compat" data-spa-link class="pele-net-ic" title="فحص التوافق">${icon('chip')}</a>
             <button type="button" class="pele-net-ic" data-act="theme" title="تغيير المظهر">${icon(dark ? 'sun' : 'moon')}</button>
           </div>
         </div>
@@ -347,15 +349,15 @@ function shell(body, { sub = '' } = {}) {
           <div class="pele-lnks">
             <div>
               <h3 class="ttl">عام والخدمات</h3>
-              <a href="#/" data-act="nav-esim">باقات شرائح eSIM</a>
-              <a href="#/compat" class="${hash === 'compat' ? 'active' : ''}">فحص توافق الهاتف مع eSIM</a>
+              <a href="/" data-act="nav-esim">باقات شرائح eSIM</a>
+              <a href="/compat" data-spa-link class="${activeRoute === 'compat' ? 'active' : ''}">فحص توافق الهاتف مع eSIM</a>
               <a href="#/track" class="${hash === 'track' ? 'active' : ''}">تتبّع حالة طلب</a>
             </div>
             <div>
               <h3 class="ttl">الشروط والدعم</h3>
-              <a href="#/terms" class="${hash === 'terms' ? 'active' : ''}">شروط البيع والتفعيل</a>
-              <a href="#/esim-policy" class="${hash === 'esim-policy' ? 'active' : ''}">سياسة كود eSIM QR</a>
-              <a href="#/guarantee" class="${hash === 'guarantee' ? 'active' : ''}">ضمان المتجر واسترجاع المبلغ</a>
+              <a href="/terms" data-spa-link class="${activeRoute === 'terms' ? 'active' : ''}">شروط البيع والتفعيل</a>
+              <a href="/esim-policy" data-spa-link class="${activeRoute === 'esim-policy' ? 'active' : ''}">سياسة كود eSIM QR</a>
+              <a href="/guarantee" data-spa-link class="${activeRoute === 'guarantee' ? 'active' : ''}">ضمان المتجر واسترجاع المبلغ</a>
               ${wa ? `<a href="${esc(wa)}" target="_blank" rel="noopener">تواصل معنا عبر واتساب</a>` : ''}
             </div>
           </div>
@@ -369,11 +371,11 @@ function shell(body, { sub = '' } = {}) {
         ${icon('qr')}
         <span>شرائح eSIM</span>
       </button>
-      <a href="#/compat" class="shop-bnav-item ${hash === 'compat' ? 'active' : ''}">
+      <a href="/compat" data-spa-link class="shop-bnav-item ${activeRoute === 'compat' ? 'active' : ''}">
         ${icon('chip')}
         <span>التوافق</span>
       </a>
-      <a href="#/terms" class="shop-bnav-item ${onLegal ? 'active' : ''}">
+      <a href="/terms" data-spa-link class="shop-bnav-item ${onLegal ? 'active' : ''}">
         ${icon('shield')}
         <span>الضمان</span>
       </a>
@@ -396,7 +398,7 @@ function switchCatalogTab(_kind, { scroll = false } = {}) {
   if (S.companyId !== 'all' && !packages.some((p) => String(p.companyId) === String(S.companyId))) {
     S.companyId = 'all';
   }
-  if (/^\/package\//.test(location.pathname)) {
+  if (location.pathname !== '/') {
     history.pushState(null, '', '/');
     route();
     return;
@@ -415,6 +417,15 @@ function bindGlobalTriggers(scope) {
       if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
       e.preventDefault();
       openPackagePage(a.dataset.pkgLink);
+    };
+  });
+  scope.querySelectorAll('[data-spa-link]').forEach((a) => {
+    a.onclick = (e) => {
+      if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
+      e.preventDefault();
+      const target = a.getAttribute('href') || '/';
+      if (location.pathname !== target || location.hash) history.pushState(null, '', target);
+      route();
     };
   });
   scope.querySelectorAll('[data-act="theme"]').forEach((b) => {
@@ -858,17 +869,17 @@ function viewLegalPage(tab = 'terms') {
           <h1>${esc(info.title)}</h1>
           <p class="muted">${esc(info.sub)}</p>
         </div>
-        <a href="#/" class="btn ghost btn-sm">← المتجر</a>
+        <a href="/" data-act="nav-esim" class="btn ghost btn-sm">← المتجر</a>
       </div>
 
       <div class="esim-brand-tabs" role="tablist" aria-label="أقسام الشروط">
-        <a href="#/terms" role="tab" class="esim-brand-tab" aria-selected="${tab === 'terms'}">
+        <a href="/terms" data-spa-link role="tab" class="esim-brand-tab" aria-selected="${tab === 'terms'}">
           <b>شروط البيع والتفعيل</b>
         </a>
-        <a href="#/esim-policy" role="tab" class="esim-brand-tab" aria-selected="${tab === 'esim'}">
+        <a href="/esim-policy" data-spa-link role="tab" class="esim-brand-tab" aria-selected="${tab === 'esim'}">
           <b>سياسة كود eSIM QR</b>
         </a>
-        <a href="#/guarantee" role="tab" class="esim-brand-tab" aria-selected="${tab === 'guarantee'}">
+        <a href="/guarantee" data-spa-link role="tab" class="esim-brand-tab" aria-selected="${tab === 'guarantee'}">
           <b>ضمان المتجر والاسترجاع</b>
         </a>
       </div>
@@ -3013,9 +3024,10 @@ async function route() {
   const [pathPart, queryPart] = rawHash.split('?');
   const params = new URLSearchParams(queryPart || '');
   const [head, arg] = pathPart.split('/');
+  const cleanPath = location.pathname.replace(/^\/|\/$/g, '').toLowerCase();
   const pathPkgMatch = !rawHash && location.pathname.match(/^\/package\/(\d+)/);
 
-  if (rawHash && /^\/package\//.test(location.pathname)) {
+  if (rawHash && location.pathname !== '/') {
     history.replaceState(null, '', `/#/${rawHash}`);
   }
 
@@ -3023,10 +3035,23 @@ async function route() {
 
   if (pathPkgMatch) return viewPackage(pathPkgMatch[1], seq);
   if (head === 'package' && arg) return viewPackage(arg, seq);
-  if (head === 'compat') return viewCompatPage();
-  if (head === 'terms') return viewLegalPage('terms');
-  if (head === 'esim-policy') return viewLegalPage('esim');
-  if (head === 'guarantee') return viewLegalPage('guarantee');
+  const infoRoute = head || (!rawHash ? cleanPath : '');
+  if (infoRoute === 'compat') {
+    setPageMeta({ title: `فحص توافق الأجهزة مع شريحة eSIM | ${S.data?.shopTitle || 'Hot eSIM'}`, canonicalPath: '/compat' });
+    return viewCompatPage();
+  }
+  if (infoRoute === 'terms') {
+    setPageMeta({ title: `شروط البيع والتفعيل | ${S.data?.shopTitle || 'Hot eSIM'}`, canonicalPath: '/terms' });
+    return viewLegalPage('terms');
+  }
+  if (infoRoute === 'esim-policy') {
+    setPageMeta({ title: `دليل التثبيت وسياسة كود eSIM QR | ${S.data?.shopTitle || 'Hot eSIM'}`, canonicalPath: '/esim-policy' });
+    return viewLegalPage('esim');
+  }
+  if (infoRoute === 'guarantee') {
+    setPageMeta({ title: `ضمان المتجر واسترجاع المبلغ | ${S.data?.shopTitle || 'Hot eSIM'}`, canonicalPath: '/guarantee' });
+    return viewLegalPage('guarantee');
+  }
   if (head === 'track' || head === 'orders') {
     S.myOrders = null;
     return viewTrackPage(seq);

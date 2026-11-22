@@ -766,6 +766,13 @@ test('Nearest-shekel rounding, SSR /package/:id SEO pages, /api/shop/package/:id
     const portal = await rawReq('/portal');
     assert.equal(portal.status, 200);
     assert.match(portal.headers['x-robots-tag'] || '', /noindex/);
+
+    for (const slug of ['compat', 'esim-policy', 'guarantee', 'terms']) {
+      const p = await rawReq(`/${slug}`);
+      assert.equal(p.status, 200, `/${slug} returns 200`);
+      assert.match(p.body, new RegExp(`<link rel="canonical" href="https://www\\.hotesim\\.shop/${slug}">`));
+      assert.match(sm.body, new RegExp(`<loc>https://www\\.hotesim\\.shop/${slug}</loc>`));
+    }
   } finally {
     await ok(call(admin, 'PUT', '/api/settings', { googleSiteVerification: '' }));
   }

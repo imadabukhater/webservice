@@ -7,7 +7,7 @@ const { publicPackageName, forAgent } = require('./privacy');
 const { shopKind, shopRows } = require('./routes/shop');
 
 const CSS_VER = '37';
-const JS_VER = '34';
+const JS_VER = '35';
 
 const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({
   '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
@@ -419,6 +419,13 @@ ${itemListSchema ? `  <script type="application/ld+json">${jsonLd(itemListSchema
         <h2 style="font-size:1.25rem;margin:0 0 12px;">أسئلة شائعة حول شرائح eSIM في الضفة الغربية وغزة وفلسطين</h2>
         ${homeFaqs.map((f) => `<div style="margin-bottom:12px;"><h3 style="font-size:.98rem;margin:0 0 4px;">${esc(f.q)}</h3><p style="margin:0;line-height:1.7;color:#3A3346;font-size:.92rem;">${esc(f.a)}</p></div>`).join('')}
       </section>
+
+      <nav aria-label="روابط مهمة" style="display:flex;flex-wrap:wrap;gap:12px;justify-content:center;font-size:.92rem;padding:8px 0;">
+        <a href="/compat">فحص توافق الهواتف مع eSIM</a>
+        <a href="/esim-policy">دليل التثبيت وسياسة كود QR</a>
+        <a href="/guarantee">ضمان المتجر واسترجاع المبلغ</a>
+        <a href="/terms">شروط البيع والدفع</a>
+      </nav>
     </main>
   </div>
 
@@ -615,11 +622,179 @@ ${verificationMeta(s)}  <link rel="canonical" href="${esc(pageUrl)}">
   return { status: 200, html };
 }
 
+function renderInfoPageHtml(slug, { siteUrl = 'https://www.hotesim.shop' } = {}) {
+  const s = getSettings();
+  const shopName = s.shopTitle || 'Hot eSIM';
+  const pages = {
+    compat: {
+      title: `الأجهزة المتوافقة مع شريحة eSIM وفحص توافق الهاتف (*#06#) | ${shopName}`,
+      h1: 'فحص توافق هاتفك مع شريحة eSIM في الضفة الغربية وغزة وفلسطين',
+      description: `تأكّد هل يدعم هاتفك شريحة eSIM قبل الشراء: قائمة أجهزة Apple iPhone وSamsung Galaxy وGoogle Pixel وXiaomi وHonor المتوافقة وطريقة الفحص الفوري بالكود *#06# للتحقق من رقم EID.`,
+      keywords: 'الأجهزة المتوافقة مع eSIM, هل هاتفي يدعم eSIM, فحص eSIM *#06#, رقم EID, ايفون eSIM, سامسونج eSIM, eSIM الضفة الغربية, eSIM غزة',
+      body: `
+        <p style="line-height:1.8;color:#3A3346;">اطلب الكود <b dir="ltr">*#06#</b> من لوحة الاتصال في هاتفك: إذا ظهر رقم <b>EID</b> فجهازك يدعم شريحة <b>eSIM</b> ويمكنك تفعيل أي باقة من متجر ${esc(shopName)} فوراً.</p>
+        <h2>أجهزة Apple iPhone المتوافقة مع eSIM</h2>
+        <p>جميع إصدارات iPhone بدءاً من iPhone XS / XS Max / XR وحتى iPhone 11, 12, 13, 14, 15, 16 (باستثناء نسخ الصين بشريحتين فعليتين).</p>
+        <h2>أجهزة Samsung Galaxy المتوافقة مع eSIM</h2>
+        <p>سلسلة Galaxy S20, S21, S22, S23, S24, S25 وسلسلة Z Fold وZ Flip وNote 20 وGalaxy A54/A55 (النسخ العالمية، باستثناء S20 FE وS21 FE).</p>
+        <h2>أجهزة Google Pixel وXiaomi وHonor وHuawei</h2>
+        <p>جميع هواتف Google Pixel 4 فأحدث، وXiaomi 13/14/14T وRedmi Note 13 Pro 5G، وHonor Magic 4/5/6 وHonor 90/200، وHuawei P40/Mate 40 Pro/Pura 70 Pro.</p>
+      `,
+      faqs: [
+        { q: 'كيف أعرف بسرعة إذا كان هاتفي يدعم شريحة eSIM؟', a: 'اطلب الكود *#06# في لوحة الاتصال؛ إذا ظهر رقم EID في المعلومات المعروضة فجهازك يدعم شريحة eSIM.' },
+        { q: 'هل تدعم أجهزة iPhone المستوردة من الصين شريحة eSIM؟', a: 'لا، نسخ البرّ الصيني من iPhone التي تحتوي على منفذين لشريحتين فعليتين لا تدعم eSIM.' },
+      ],
+    },
+    'esim-policy': {
+      title: `طريقة تفعيل شريحة eSIM وسياسة كود QR على iPhone وAndroid | ${shopName}`,
+      h1: 'دليل تثبيت شريحة eSIM وسياسة كود QR (iPhone و Android)',
+      description: `خطوات تفعيل وتثبيت شريحة eSIM الإلكترونية عبر كود QR أو كود التفعيل اليدوي LPA على هواتف iPhone وSamsung وAndroid في الضفة الغربية وقطاع غزة وفلسطين.`,
+      keywords: 'طريقة تفعيل eSIM, تثبيت eSIM ايفون, تثبيت eSIM سامسونج, كود QR eSIM, كود LPA, سياسة eSIM فلسطين',
+      body: `
+        <h2>تثبيت شريحة eSIM على iPhone (iOS)</h2>
+        <ol style="line-height:1.9;padding-right:20px;">
+          <li>تأكد من الاتصال بشبكة Wi-Fi وافتح الإعدادات ← خلوي (Cellular) ← إضافة eSIM.</li>
+          <li>امسح كود QR (أو اضغط التثبيت المباشر على iOS 17.4+ أو أدخل كود LPA يدوياً).</li>
+          <li>فعّل خط eSIM الجديد واختره للبيانات الخلوية مع تفعيل تجوال البيانات عند الحاجة.</li>
+        </ol>
+        <h2>تثبيت شريحة eSIM على Android / Samsung Galaxy</h2>
+        <ol style="line-height:1.9;padding-right:20px;">
+          <li>افتح الضبط ← الاتصالات ← إدارة SIM ← إضافة eSIM أثناء الاتصال بـ Wi-Fi.</li>
+          <li>امسح كود QR أو اختر صورة كود QR المحفوظة من المعرض أو أدخل كود التفعيل اليدوي LPA.</li>
+        </ol>
+        <h2>سياسة كود QR واستخدامه</h2>
+        <p style="line-height:1.8;color:#3A3346;">كود eSIM QR صالح للتثبيت على جهاز واحد ولمرة واحدة؛ لا تحذف الشريحة بعد تثبيتها وتأكّد من توافق جهازك قبل الشراء.</p>
+      `,
+      faqs: [
+        { q: 'هل يمكنني تثبيت شريحة eSIM من نفس الهاتف الذي أشتري منه؟', a: 'نعم، يمكنك حفظ صورة كود QR واختيارها من المعرض، أو نسخ كود LPA اليدوي، أو استخدام زر التثبيت المباشر على iPhone (iOS 17.4+).' },
+      ],
+    },
+    guarantee: {
+      title: `ضمان متجر ${shopName} واسترجاع المبلغ 100% لشرائح eSIM في فلسطين`,
+      h1: `ضمان متجر ${shopName} 100% وسياسة استرجاع المبلغ`,
+      description: `نضمن لك استلام كود eSIM QR أصلي وفعّال 100% في الضفة الغربية وقطاع غزة وفلسطين مع دعم فني عبر واتساب واسترجاع كامل للمبلغ في حال تعذّر التفعيل من طرفنا.`,
+      keywords: 'ضمان eSIM, استرجاع مبلغ eSIM, متجر eSIM موثوق فلسطين, ضمان شريحة الكترونية الضفة وغزة',
+      body: `
+        <p style="line-height:1.8;color:#3A3346;">في متجر ${esc(shopName)} نلتزم بضمان تفعيل 100% لكل شريحة eSIM تصدر من المتجر في ${esc(REGION_AR)}.</p>
+        <ul style="line-height:1.9;padding-right:20px;">
+          <li><b>كود QR أصلي ومضمون:</b> يصدر كود الشريحة مباشرة من الشبكة برقم جديد وبكامل سعة الباقة.</li>
+          <li><b>استرجاع فوري عند تعذّر التنفيذ:</b> في حال نفاد الأرقام أو أي خلل تقني يمنع إصدار الشريحة بعد الدفع، يُعاد كامل المبلغ أو يُستبدل بباقة مماثلة حسب رغبتك.</li>
+          <li><b>دعم فني متواصل 24/7:</b> فريق الدعم بالعربية يتابع طلبك حتى تشتغل الشريحة على هاتفك بالكامل.</li>
+        </ul>
+      `,
+      faqs: [
+        { q: 'ماذا يحدث إذا دفعت وتعذّر تفعيل الشريحة لأي سبب تقني؟', a: 'نضمن استرجاع كامل المبلغ المدفوع أو تفعيل باقة بديلة فوراً عبر الدعم الفني.' },
+      ],
+    },
+    terms: {
+      title: `شروط البيع والتفعيل وطرق الدفع (جوال باي، بنك فلسطين، بال باي) | ${shopName}`,
+      h1: 'شروط البيع والتفعيل وطرق الدفع الآمن',
+      description: `شروط شراء وتفعيل شرائح eSIM الإلكترونية وطرق الدفع المعتمدة في متجر ${shopName} عبر محفظة جوال باي (Jawwal Pay) وبنك فلسطين وبال باي (PalPay) في الضفة الغربية وغزة وفلسطين.`,
+      keywords: 'شروط شراء eSIM, دفع جوال باي Jawwal Pay, دفع بنك فلسطين eSIM, PalPay eSIM فلسطين',
+      body: `
+        <h2>طرق الدفع المعتمدة</h2>
+        <p style="line-height:1.8;color:#3A3346;">يدعم المتجر الدفع الآمن والمباشر برمز تحقق SMS عبر محفظة جوال باي (Jawwal Pay) وحسابات بنك فلسطين وكذلك التحويل عبر PalPay بالشيكل (₪)، مع تحقق تلقائي وإصدار فوري لكود QR.</p>
+        <h2>شروط الاستخدام والتفعيل</h2>
+        <ul style="line-height:1.9;padding-right:20px;">
+          <li>جميع الباقات في المتجر هي شرائح إلكترونية eSIM برقم جديد، وليست شرائح بلاستيكية.</li>
+          <li>تقع مسؤولية التحقق من توافق الهاتف مع تقنية eSIM (عبر الكود *#06#) قبل الشراء على المشتري.</li>
+          <li>الأسعار المعروضة نهائية ومقرّبة لأقرب شيكل وشاملة لرسوم الشريحة الموضحة في صفحة الباقة.</li>
+        </ul>
+      `,
+      faqs: [],
+    },
+  };
+
+  const pg = pages[slug];
+  if (!pg) return renderNotFoundHtml(siteUrl);
+
+  const pageUrl = `${siteUrl}/${slug}`;
+  const breadcrumbSchema = {
+    '@context': 'https://schema.org',
+    '@type': 'BreadcrumbList',
+    itemListElement: [
+      { '@type': 'ListItem', position: 1, name: shopName, item: `${siteUrl}/` },
+      { '@type': 'ListItem', position: 2, name: pg.h1, item: pageUrl },
+    ],
+  };
+  const faqSchema = pg.faqs.length ? {
+    '@context': 'https://schema.org',
+    '@type': 'FAQPage',
+    mainEntity: pg.faqs.map((f) => ({
+      '@type': 'Question',
+      name: f.q,
+      acceptedAnswer: { '@type': 'Answer', text: f.a },
+    })),
+  } : null;
+
+  const html = `<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#17111F">
+  <meta name="color-scheme" content="light dark">
+
+  <title>${esc(pg.title)}</title>
+  <meta name="title" content="${esc(pg.title)}">
+  <meta name="description" content="${esc(pg.description)}">
+  <meta name="keywords" content="${esc(pg.keywords)}">
+  <meta name="author" content="${esc(shopName)}">
+  <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1">
+${verificationMeta(s)}  <link rel="canonical" href="${esc(pageUrl)}">
+  <link rel="alternate" hreflang="ar-PS" href="${esc(pageUrl)}">
+  <link rel="alternate" hreflang="ar" href="${esc(pageUrl)}">
+  <link rel="alternate" hreflang="x-default" href="${esc(pageUrl)}">
+
+  <meta name="geo.region" content="PS">
+  <meta name="geo.placename" content="West Bank, Gaza Strip, Jerusalem, Palestine">
+
+  <meta property="og:type" content="article">
+  <meta property="og:url" content="${esc(pageUrl)}">
+  <meta property="og:site_name" content="${esc(shopName)} فلسطين">
+  <meta property="og:locale" content="ar_AR">
+  <meta property="og:title" content="${esc(pg.title)}">
+  <meta property="og:description" content="${esc(pg.description)}">
+  <meta property="og:image" content="${esc(siteUrl)}/icon-512.png">
+
+  <link rel="icon" href="/icon.svg?v=30" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/icon-192.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&family=Outfit:wght@500;600;700;800&family=IBM+Plex+Mono:wght@500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/app.css?v=${CSS_VER}">
+
+  <script type="application/ld+json">${jsonLd(breadcrumbSchema)}</script>
+${faqSchema ? `  <script type="application/ld+json">${jsonLd(faqSchema)}</script>\n` : ''}</head>
+<body class="shop">
+  <div id="shop">
+    <main class="shop-main" style="max-width:920px;margin:24px auto;padding:18px;font-family:'IBM Plex Sans Arabic',sans-serif;direction:rtl;">
+      <nav aria-label="مسار التنقل" style="margin-bottom:14px;font-size:.9rem;">
+        <a href="/">الرئيسية — ${esc(shopName)}</a> / <strong>${esc(pg.h1)}</strong>
+      </nav>
+      <article style="background:#fff;border:1px solid #F0E2DC;border-radius:18px;padding:22px;">
+        <h1 style="font-size:1.65rem;margin:0 0 12px;color:#D9142F;">${esc(pg.h1)}</h1>
+        ${pg.body}
+        <p style="margin-top:20px;"><a href="/" style="display:inline-block;padding:10px 20px;border-radius:12px;background:#D9142F;color:#fff;font-weight:700;text-decoration:none;">تصفّح جميع باقات eSIM المتاحة</a></p>
+      </article>
+    </main>
+  </div>
+  <div id="toasts" class="toasts" aria-live="polite" aria-atomic="false"></div>
+  <script type="module" src="/js/shop.js?v=${JS_VER}"></script>
+</body>
+</html>`;
+  return { status: 200, html };
+}
+
 function renderSitemapXml({ siteUrl = 'https://www.hotesim.shop' } = {}) {
   const today = new Date().toISOString().slice(0, 10);
   const rows = shopRows();
   const urls = [
     { loc: `${siteUrl}/`, changefreq: 'daily', priority: '1.0' },
+    { loc: `${siteUrl}/compat`, changefreq: 'weekly', priority: '0.8' },
+    { loc: `${siteUrl}/esim-policy`, changefreq: 'monthly', priority: '0.7' },
+    { loc: `${siteUrl}/guarantee`, changefreq: 'monthly', priority: '0.7' },
+    { loc: `${siteUrl}/terms`, changefreq: 'monthly', priority: '0.6' },
     ...rows.map((p) => ({ loc: `${siteUrl}/package/${p.id}`, changefreq: 'daily', priority: '0.9' })),
   ];
   return `<?xml version="1.0" encoding="UTF-8"?>
@@ -634,4 +809,7 @@ ${urls.map((u) => `  <url>
 `;
 }
 
-module.exports = { renderHomeHtml, renderPackageHtml, renderNotFoundHtml, renderSitemapXml, extractSpecs, carrierMeta, siteOrigin };
+module.exports = {
+  renderHomeHtml, renderPackageHtml, renderInfoPageHtml, renderNotFoundHtml, renderSitemapXml,
+  extractSpecs, carrierMeta, siteOrigin,
+};

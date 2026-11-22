@@ -99,6 +99,18 @@ function serveStatic(req, res, pathname, url) {
     });
     return res.end(req.method === 'HEAD' ? undefined : html);
   }
+  // Server-rendered SEO info pages (/compat, /esim-policy, /guarantee, /terms) replacing non-indexable #fragment URLs.
+  const infoMatch = pathname.match(/^\/(compat|esim-policy|guarantee|terms)\/?$/i);
+  if (infoMatch) {
+    const { status, html } = seo.renderInfoPageHtml(infoMatch[1].toLowerCase(), { siteUrl: seo.siteOrigin(req) });
+    res.writeHead(status, {
+      'Content-Type': 'text/html; charset=utf-8',
+      'Cache-Control': 'no-cache',
+      'Content-Security-Policy': CSP,
+      ...SECURITY_HEADERS,
+    });
+    return res.end(req.method === 'HEAD' ? undefined : html);
+  }
   // Server-rendered SEO package pages (/package/:id) with tailored meta, JSON-LD & pre-rendered Arabic/English content.
   const pkgMatch = pathname.match(/^\/package\/(\d+)(?:\/.*)?$/);
   if (pkgMatch) {
