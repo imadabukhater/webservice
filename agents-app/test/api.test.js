@@ -168,15 +168,15 @@ test('the packages page: every eSIM package, one toggle, the shop price = suppli
   }
   const co = q("SELECT id FROM companies WHERE name = 'سلكوم'").get().id;
   const aloha = Number(q("INSERT INTO companies (name, sort) VALUES ('ALOHA', 9)").run().lastInsertRowid);
-  const add = (ref, f = {}) => Number(q(`INSERT INTO packages (company_id, name, cost, art_price, supplier_cost, active, gone_at, art_card_id, kind, esim_enabled, shop_price)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(f.co ?? co, `رزمة ${ref}`, f.cost ?? 50, f.art ?? null, f.real ?? null, f.active ?? 1, f.gone ?? null, ref,
-    f.kind ?? 'invoice', f.esim ?? 0, f.shop ?? null).lastInsertRowid);
+  const add = (ref, f = {}) => Number(q(`INSERT INTO packages (company_id, name, cost, art_price, supplier_cost, active, gone_at, art_card_id, kind, esim_enabled, shop_price, data_gb, days)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(f.co ?? co, `رزمة ${ref}`, f.cost ?? 50, f.art ?? null, f.real ?? null, f.active ?? 1, f.gone ?? null, ref,
+    f.kind ?? 'invoice', f.esim ?? 0, f.shop ?? null, f.gb ?? null, f.days ?? null).lastInsertRowid);
   const ql = add('qln:1:30', { art: 50 });
   const qlHidden = add('qln:2:30', { active: 0 }); // hidden by the manager before: still listed, available
   const ly = add('lyn:11111111-2222-3333-4444-555555555555:30', { esim: 1 });
   const tcAloha = add('tcn:5:30', { co: aloha });
   const tcOther = add('tcn:6:30'); // telecom's other companies are lines on a SIM card
-  const ayEsim = add('ay:esim:10:501', { real: 38, art: 40 });
+  const ayEsim = add('ay:esim:10:501', { real: 38, art: 40, gb: 400, days: 30 });
   const gone = add('ay:esim:10:502', { gone: Date.now() });
   const card = add('ql:1:30', { kind: 'card' });
   const manual = add('', { esim: 1 });
@@ -186,8 +186,8 @@ test('the packages page: every eSIM package, one toggle, the shop price = suppli
   for (const id of [ql, qlHidden, ly, tcAloha, ayEsim, gone]) assert.ok(ids.includes(id), `listed ${id}`);
   for (const id of [tcOther, card, manual]) assert.ok(!ids.includes(id), `not listed ${id}`);
   const view = (id) => cat.packages.find((p) => p.id === id);
-  assert.deepEqual(view(ql), { id: ql, name: 'رزمة qln:1:30', companyId: co, companyName: 'سلكوم', supplier: 'ql', supplierPrice: 50, shopPrice: null, inShop: false, available: true });
-  assert.deepEqual([view(qlHidden).available, view(gone).available, view(ayEsim).supplier, view(ayEsim).supplierPrice], [true, false, 'ay', 38], 'Aylol: what it really takes');
+  assert.deepEqual(view(ql), { id: ql, name: 'رزمة qln:1:30', companyId: co, companyName: 'سلكوم', supplier: 'ql', supplierPrice: 50, shopPrice: null, inShop: false, available: true, dataGb: null, days: null });
+  assert.deepEqual([view(qlHidden).available, view(gone).available, view(ayEsim).supplier, view(ayEsim).supplierPrice, view(ayEsim).dataGb, view(ayEsim).days], [true, false, 'ay', 38, 400, 30], 'Aylol: what it really takes');
 
   // On: shop price = supplier price × 1.2, the package shown again; off: no shop price, still shown.
   const on = await ok(call(admin, 'PUT', `/api/packages/${qlHidden}`, { inShop: true }));

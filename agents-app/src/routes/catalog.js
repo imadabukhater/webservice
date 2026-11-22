@@ -38,6 +38,8 @@ const packageView = (p) => {
     inShop: !!p.shop_on,
     // Still listed by its supplier (a package the manager hid before is available, just not in the shop).
     available: !p.gone_at,
+    dataGb: Number(p.data_gb) > 0 ? Number(p.data_gb) : null,
+    days: Number(p.days) > 0 ? Number(p.days) : null,
   };
 };
 

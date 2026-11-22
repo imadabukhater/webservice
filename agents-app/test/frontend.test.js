@@ -117,3 +117,81 @@ test('admin portal views have valid form markup, visible WA errors, no dead shop
   const shopHtml = fs.readFileSync(path.join(ROOT, '..', 'shop.html'), 'utf8');
   assert.doesNotMatch(shopHtml, /USDT|Visa|MasterCard|تجديد رصيد/);
 });
+
+test('catalog comparison window groups packages per company and highlights the cheapest supplier accurately', async () => {
+  const { pathToFileURL } = require('node:url');
+  const mod = await import(pathToFileURL(path.join(ROOT, 'catalog-compare.js')).href);
+
+  // GB parsing handles Arabic, typos ("جبجا"), TB, Arabic-Indic numerals, and never confuses 5G with 5 GB.
+  assert.equal(mod.extractGb({ name: 'سلكوم 400 جبجا', dataGb: null }), 400);
+  assert.equal(mod.extractGb({ name: 'WE 500 جيجا 5G', dataGb: null }), 500);
+  assert.equal(mod.extractGb({ name: 'خطة 5G مكالمات فقط', dataGb: null }), null);
+  assert.equal(mod.extractGb({ name: 'هوت ٥٠٠ جيجا', dataGb: null }), 500);
+  assert.equal(mod.extractGb({ name: 'سلكوم 1 تيرا', dataGb: null }), 1000);
+  assert.equal(mod.extractGb({ name: 'باقة بدون اسم واضح', dataGb: 250 }), 250);
+
+  // Duration parsing handles explicit days, months, and DB days.
+  assert.equal(mod.extractDays({ name: 'WE 500 جيجا 3 اشهر', days: null }), 90);
+  assert.equal(mod.extractDays({ name: 'نتفلكس 180 يوم', days: null }), 180);
+  assert.equal(mod.extractDays({ name: 'سلكوم 100 جيجا', days: 30 }), 30);
+
+  const sample = [
+    // Cellcom 400GB (30d): Aylol cheapest (41) vs QuickLine (45, inShop=true -> overpriced!) vs unavailable cheaper (30 -> must NOT win!)
+    { id: 1, companyName: 'سلكوم', name: 'سلكوم 400 جبجا', supplier: 'ql', supplierPrice: 45, shopPrice: 54, inShop: true, available: true, dataGb: null, days: 30 },
+    { id: 2, companyName: 'سلكوم', name: 'سلكوم 400 جيجا', supplier: 'ay', supplierPrice: 41, shopPrice: null, inShop: false, available: true, dataGb: 400, days: 30 },
+    { id: 3, companyName: 'سلكوم', name: 'سلكوم 400 جيجا قديم', supplier: 'ly', supplierPrice: 30, shopPrice: null, inShop: false, available: false, dataGb: 400, days: 30 },
+    // WE 500GB (30d): tie for cheapest (Aylol 25 & Layan 25) vs QuickLine 37 & Layan 5G 40
+    { id: 4, companyName: 'WE', name: 'WE 500 جيجا', supplier: 'ay', supplierPrice: 25, shopPrice: 30, inShop: true, available: true, dataGb: 500, days: 30 },
+    { id: 5, companyName: 'WE', name: 'WE 500 جيجا', supplier: 'ly', supplierPrice: 25, shopPrice: null, inShop: false, available: true, dataGb: 500, days: 30 },
+    { id: 6, companyName: 'WE', name: 'WE 500 جيجا', supplier: 'ql', supplierPrice: 37, shopPrice: null, inShop: false, available: true, dataGb: 500, days: 30 },
+    { id: 7, companyName: 'WE', name: 'WE 500 جيجا 5G', supplier: 'ly', supplierPrice: 40, shopPrice: null, inShop: false, available: true, dataGb: 500, days: 30 },
+    // WE 500GB (90d): separate tier from 30d!
+    { id: 8, companyName: 'WE', name: 'WE 500 جيجا 3 أشهر', supplier: 'ay', supplierPrice: 60, shopPrice: null, inShop: false, available: true, dataGb: 500, days: 90 },
+    { id: 9, companyName: 'WE', name: 'WE 500 جيجا 90 يوم', supplier: 'ql', supplierPrice: 90, shopPrice: null, inShop: false, available: true, dataGb: 500, days: 90 },
+    // Non-GB package (Netflix)
+    { id: 10, companyName: 'سلكوم', name: 'سلكوم نتفلكس', supplier: 'ql', supplierPrice: 55, shopPrice: null, inShop: false, available: true, dataGb: null, days: 30 },
+  ];
+
+  const res = mod.compareCatalog(sample);
+  assert.equal(res.companies.length, 2);
+  const cellcom = res.companies.find((c) => c.companyName === 'سلكوم');
+  assert.equal(cellcom.tiers.length, 2);
+  const c400 = cellcom.tiers[0];
+  assert.equal(c400.label, '400 جيجا');
+  assert.equal(c400.minPrice, 41);
+  assert.equal(c400.savings, 4);
+  assert.deepEqual(c400.cheapestSuppliers, ['أيلول']);
+  assert.equal(c400.offers[0].id, 2);
+  assert.equal(c400.offers[0].isCheapest, true);
+  assert.equal(c400.offers[1].id, 1);
+  assert.equal(c400.offers[1].diff, 4);
+  // Unavailable cheaper offer sorts last and is not marked cheapest
+  assert.equal(c400.offers[2].id, 3);
+  assert.equal(c400.offers[2].isCheapest, false);
+  // Overpriced-in-shop warning triggers because id:1 (45) is inShop while id:2 (41) is available
+  assert.equal(c400.hasOverpricedInShop, true);
+  assert.equal(c400.overpricedDiff, 4);
+
+  const we = res.companies.find((c) => c.companyName === 'WE');
+  assert.equal(we.tiers.length, 2);
+  const w30 = we.tiers.find((t) => t.days === 30);
+  const w90 = we.tiers.find((t) => t.days === 90);
+  assert.equal(w30.minPrice, 25);
+  assert.equal(w30.savings, 15);
+  assert.deepEqual(w30.cheapestSuppliers.sort(), ['أيلول', 'ليان'].sort());
+  assert.equal(w30.hasOverpricedInShop, false);
+  assert.equal(w90.minPrice, 60);
+  assert.equal(w90.savings, 30);
+
+  assert.equal(res.summary.totalTiers, 4);
+  assert.equal(res.summary.comparableTiers, 3);
+  assert.equal(res.summary.overpricedTiers, 1);
+  assert.equal(res.summary.maxSavings, 30);
+  assert.equal(res.summary.topSupplier.label, 'أيلول');
+  assert.equal(res.summary.topSupplier.wins, 3);
+
+  // Verify catalog view wires the cheapest comparison tab without adding new API endpoints
+  const catalogSrc = fs.readFileSync(path.join(ROOT, 'views', 'catalog.js'), 'utf8');
+  assert.match(catalogSrc, /data-tab="cheapest"/);
+  assert.match(catalogSrc, /compareCatalog/);
+});

@@ -2680,3 +2680,29 @@ body.shop {
 .cat-bulk-bar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; padding: 10px 14px; background: var(--surface-2); border: 1px solid var(--line); border-radius: 16px; }
 .co-kind { padding: 12px 16px 0; font-size: .9rem; color: var(--ink-2); }
 
+/* Catalog cheapest-supplier comparison window */
+#cat-tabs button { padding: 6px 12px; }
+.cmp-kpi-btn { text-align: start; transition: border-color .15s, background .15s; }
+.cmp-kpi-btn:not([disabled]):hover { border-color: var(--line-strong); }
+.cmp-kpi-btn[disabled] { cursor: default; }
+.cmp-kpi-btn.is-warn { background: var(--warn-soft); border-color: color-mix(in srgb, var(--warn) 45%, var(--line)); }
+.cmp-kpi-btn.is-warn span, .cmp-kpi-btn.is-warn b { color: var(--warn); }
+.cmp-card { overflow: hidden; }
+.cmp-card.has-warn { border-color: color-mix(in srgb, var(--warn) 45%, var(--line)); }
+.cmp-head { display: flex; align-items: center; justify-content: space-between; gap: 10px 14px; flex-wrap: wrap; padding: 14px 16px; background: var(--surface-2); border-bottom: 1px solid var(--line); }
+.cmp-title { font: 700 1.04rem var(--f-ui); }
+.cmp-badges { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.cmp-rows { display: grid; gap: 8px; padding: 12px 14px; }
+.cmp-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 11px 13px; border-radius: 14px; border: 1px solid var(--line); background: var(--surface); min-width: 0; }
+.cmp-row.is-best { background: color-mix(in srgb, var(--good-soft) 55%, var(--surface)); border-color: color-mix(in srgb, var(--good) 40%, var(--line)); }
+.cmp-row.is-off { opacity: .58; }
+.cmp-row-top { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-bottom: 2px; }
+.cmp-sup { font: 600 .96rem var(--f-ui); color: var(--ink); }
+.cmp-name { font-size: .86rem; color: var(--ink-2); margin-bottom: 2px; }
+.cmp-price { color: var(--ink); font-weight: 700; }
+.cmp-switch { padding: 0; border: 0; background: none; flex: none; }
+@media (max-width: 560px) {
+  .cmp-row { flex-wrap: wrap; }
+  .cmp-switch { width: 100%; justify-content: space-between; padding-top: 8px; margin-top: 2px; border-top: 1px dashed var(--line); border-radius: 0; }
+}
+
