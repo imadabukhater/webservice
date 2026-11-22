@@ -4,6 +4,7 @@ const crypto = require('node:crypto');
 const { q, tx, getSettings, qlCredentials } = require('../db');
 const { fail, now, round, str, normalizePhone, validPhone, imageOrEmpty, normalizeQrDataUrl } = require('../util');
 const D = require('../domain');
+const { publicPackageName, forAgent } = require('../privacy');
 const shop = require('../shop');
 const ql = require('../quickline');
 const { MailError, toLatinDigits } = require('../mail');
@@ -266,10 +267,10 @@ function shopCatalogResponse() {
       esimFee: c.esim_fee === null || c.esim_fee === undefined ? s.esimFee : round(c.esim_fee),
     })),
     packages: packages.map((p) => ({
-      id: p.id, companyId: p.company_id, companyName: p.company_name, name: p.name, price: round(p.shop_price),
+      id: p.id, companyId: p.company_id, companyName: p.company_name, name: publicPackageName(p.name), price: round(p.shop_price),
       oldPrice: p.old_price ? round(p.old_price) : null, popular: !!p.popular, featured: !!p.popular,
       kind: 'esim', esim: true,
-      dataGb: p.data_gb, gb: p.data_gb, minutes: p.minutes, sms: p.sms, tag: p.tag, description: p.description, days: p.days || null,
+      dataGb: p.data_gb, gb: p.data_gb, minutes: p.minutes, sms: p.sms, tag: forAgent(p.tag || ''), description: forAgent(p.description || ''), days: p.days || null,
       // An Aylol line is registered in the customer's name, so it is asked (the first name is enough).
       fullName: shopKind(p) === 'line',
       esimFee: p.company_esim_fee === null || p.company_esim_fee === undefined ? s.esimFee : round(p.company_esim_fee),

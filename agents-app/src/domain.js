@@ -18,7 +18,14 @@ function notify({ userId = null, role = null, kind, title, body = '', link = '' 
     .run(userId, role, kind, title, body, link, now());
 }
 
-const packageLabel = (pkg) => `${pkg.company_name} ${pkg.name}`;
+const { publicPackageName } = require('./privacy');
+const packageLabel = (pkg) => {
+  const co = String(pkg.company_name || '').trim();
+  const nm = publicPackageName(pkg.name || '');
+  if (!co) return nm;
+  if (!nm) return co;
+  return nm.toLowerCase().startsWith(co.toLowerCase()) ? nm : `${co} ${nm}`;
+};
 
 // true when the company's sales are activated directly (final); false when the manager or a supplier carries them out.
 const directCompany = (companyId) => q('SELECT activation FROM companies WHERE id = ?').get(companyId)?.activation === 'direct';

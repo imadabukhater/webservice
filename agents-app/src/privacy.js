@@ -13,7 +13,7 @@ function sourceOf(ref) {
 }
 
 // Free text without any supplier's name.
-const NAMES = '(?:QuickLine|Aylol|أيلول|art-topup|Layan|LayanT|ليان|telecom(?:\\.co\\.il)?)';
+const NAMES = '(?:QuickLine|كويك\\s*لاين|Aylol|أيلول|ايلول|art-topup|LayanT?|ليان|تليكوم|telecom(?:\\.co\\.il)?)';
 function forAgent(text) {
   if (text === null || text === undefined) return text;
   return String(text)
@@ -24,4 +24,22 @@ function forAgent(text) {
     .trim();
 }
 
-module.exports = { sourceOf, forAgent };
+// Customer-facing package name: removes supplier names, internal DB id suffixes like "(213)",
+// raw supplier tags ("ESIM JUST"), and common typos ("جبجا" -> "جيجا").
+function publicPackageName(name) {
+  let s = forAgent(String(name || ''));
+  s = s
+    .replace(/\bESIM\s+JUST\b/gi, '')
+    .replace(/جبجا/g, 'جيجا')
+    .replace(/\s*\(\d{2,6}\)\s*$/g, '')
+    .replace(/\(\s+/g, '(')
+    .replace(/\s+\)/g, ')')
+    .replace(/([—–-])\s*(?=[—–-]|$)/g, '')
+    .replace(/^\s*[—–-]\s*/, '')
+    .replace(/\s*\/\s*$/, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+  return s || String(name || '').trim();
+}
+
+module.exports = { sourceOf, forAgent, publicPackageName };

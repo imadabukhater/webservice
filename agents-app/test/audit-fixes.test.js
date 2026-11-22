@@ -294,8 +294,12 @@ test('Fix 5 & 6 (High): QuickLine live price guard blocks price hikes, and sweep
   const oRow = q('SELECT * FROM shop_orders WHERE code = ?').get(oPrice.code);
   assert.equal(shop.claim(oRow.id, null, 'test'), true);
   shop.fulfil(oRow.id);
-  await new Promise((r) => setTimeout(r, 150));
-  const task = q('SELECT * FROM tasks WHERE line_id = (SELECT line_id FROM shop_orders WHERE code = ?)').get(oPrice.code);
+  let task;
+  for (let i = 0; i < 30; i++) {
+    await new Promise((r) => setTimeout(r, 50));
+    task = q('SELECT * FROM tasks WHERE line_id = (SELECT line_id FROM shop_orders WHERE code = ?)').get(oPrice.code);
+    if (task && task.auto_status && task.auto_status !== 'sending') break;
+  }
   assert.equal(task.auto_status, 'failed');
   assert.match(task.auto_note, /أعلى من المعتمد/);
   assert.equal(qlState.created.length, createdBefore, 'must not place QuickLine order when price increased');
@@ -306,8 +310,12 @@ test('Fix 5 & 6 (High): QuickLine live price guard blocks price hikes, and sweep
   const pRow = q('SELECT * FROM shop_orders WHERE code = ?').get(oPoll.code);
   assert.equal(shop.claim(pRow.id, null, 'test'), true);
   shop.fulfil(pRow.id);
-  await new Promise((r) => setTimeout(r, 120));
-  const pTask = q('SELECT * FROM tasks WHERE line_id = (SELECT line_id FROM shop_orders WHERE code = ?)').get(oPoll.code);
+  let pTask;
+  for (let i = 0; i < 30; i++) {
+    await new Promise((r) => setTimeout(r, 50));
+    pTask = q('SELECT * FROM tasks WHERE line_id = (SELECT line_id FROM shop_orders WHERE code = ?)').get(oPoll.code);
+    if (pTask && pTask.auto_status && pTask.auto_status !== 'sending') break;
+  }
   assert.equal(pTask.auto_status, 'sent');
   const callsBefore = qlState.subsCalls;
   await autoexec.sweep();
@@ -621,5 +629,33 @@ test('Payment & QR audit fixes: Azure octet-stream PNG sniffing (Layan & Aylol),
     assert.ok(sentMsgs.some((m) => m.content?.text?.includes('LPA:1$smdp.example$WEBP-1')), 'WhatsApp also sends LPA code');
   } finally {
     wa._test.setTransport(null);
+  }
+});
+
+test('Storefront polish: publicPackageName, packageLabel deduping, and /api/shop scrub supplier names & internal codes', async () => {
+  const { q } = require('../src/db');
+  const { publicPackageName } = require('../src/privacy');
+  const { packageLabel } = require('../src/domain');
+
+  assert.equal(publicPackageName('ليان هوت موبايل 200 جيجا (213)'), 'هوت موبايل 200 جيجا');
+  assert.equal(publicPackageName('Aylol telecom WE 500 GB ESIM JUST'), 'WE 500 GB');
+  assert.equal(publicPackageName('سلكوم 400 جبجا - كويك لاين'), 'سلكوم 400 جيجا');
+  assert.equal(publicPackageName('QuickLine 019 250 جيجا (9001)'), '019 250 جيجا');
+
+  assert.equal(packageLabel({ company_name: 'سلكوم', name: 'سلكوم 400 جبجا (213)' }), 'سلكوم 400 جيجا');
+  assert.equal(packageLabel({ company_name: 'بارتنر', name: 'ليان 500 جيجا 5G' }), 'بارتنر 500 جيجا 5G');
+
+  const coId = qlPkg.companyId;
+  const dirtyId = Number(q(`INSERT INTO packages (company_id, name, description, cost, price, active, art_card_id, kind, shop_price)
+    VALUES (?, 'ليان Aylol telecom 500 جبجا ESIM JUST (777)', 'مزود QuickLine تفعيل سريع', 30, 30, 1, 'qln:3:777', 'invoice', 40)`).run(coId).lastInsertRowid);
+  try {
+    const pub = await ok(call(null, 'GET', '/api/shop'));
+    const pk = pub.packages.find((p) => p.id === dirtyId);
+    assert.ok(pk, 'dirty test package appears in /api/shop');
+    assert.equal(pk.name, '500 جيجا');
+    assert.doesNotMatch(pk.name, /ليان|Aylol|ESIM JUST|777|جبجا/i);
+    assert.doesNotMatch(pk.description, /QuickLine/i);
+  } finally {
+    q('DELETE FROM packages WHERE id = ?').run(dirtyId);
   }
 });

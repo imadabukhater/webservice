@@ -1017,7 +1017,7 @@ body.shop {
   align-items: center;
   justify-content: space-between;
   gap: 28px;
-  padding: clamp(24px, 4vw, 44px) clamp(20px, 3.8vw, 42px) clamp(32px, 4.5vw, 50px);
+  padding: clamp(22px, 3.2vw, 36px) clamp(20px, 3.6vw, 40px);
   width: 100%;
   box-sizing: border-box;
 }
@@ -1056,6 +1056,7 @@ body.shop {
 .pele-banner-tag {
   display: inline-flex;
   align-items: center;
+  gap: 5px;
   padding: 5px 12px;
   border-radius: 999px;
   background: rgba(225, 29, 72, .2);
@@ -1064,11 +1065,71 @@ body.shop {
   font: 700 .76rem/1 var(--f-brand);
   letter-spacing: .03em;
 }
+.pele-banner-tag svg { width: 13px; height: 13px; flex: none; }
 .pele-top-banner h1 {
-  margin: 14px 0 20px;
-  font: 700 clamp(1.42rem, 3.1vw, 2.35rem)/1.3 var(--f-ui);
+  margin: 12px 0 8px;
+  font: 700 clamp(1.4rem, 3vw, 2.25rem)/1.28 var(--f-ui);
   color: #faf8f5;
   letter-spacing: -.01em;
+}
+.pele-hero-sub {
+  margin: 0 0 14px;
+  font: 500 .94rem/1.55 var(--f-body);
+  color: rgba(250, 248, 245, .84);
+  max-width: 580px;
+}
+.pele-hero-sub b { color: #fff; font-weight: 700; }
+.pele-hero-steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+.pele-hero-steps span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 12px 6px 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, .07);
+  border: 1px solid rgba(255, 255, 255, .14);
+  color: #faf8f5;
+  font: 600 .82rem/1.2 var(--f-ui);
+}
+.pele-hero-steps i {
+  font-style: normal;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: rgba(255, 74, 31, .32);
+  border: 1px solid rgba(253, 164, 175, .45);
+  color: #fff;
+  font: 700 .72rem var(--f-mono);
+  display: grid;
+  place-items: center;
+  flex: none;
+}
+.pele-hero-ctas {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+.pele-hero-ctas .btn {
+  min-height: 44px;
+  padding: 0 18px;
+  border-radius: 13px;
+  font-size: .88rem;
+}
+.pele-hero-ghost {
+  background: rgba(255, 255, 255, .08);
+  border-color: rgba(255, 255, 255, .24);
+  color: #fff;
+}
+.pele-hero-ghost:hover {
+  background: rgba(255, 255, 255, .16);
+  border-color: rgba(255, 255, 255, .45);
+  color: #fff;
 }
 .pele-flex-bnr {
   display: grid;
@@ -1329,11 +1390,52 @@ body.shop {
   transition: all .15s ease;
 }
 .pele-co-pill:hover { border-color: var(--primary); color: var(--primary); }
+.pele-co-pill small {
+  opacity: .72;
+  font-family: var(--f-mono);
+  font-size: .74rem;
+  margin-inline-start: 2px;
+}
 .pele-co-pill[aria-pressed="true"] {
   background: var(--primary);
   border-color: var(--primary);
   color: #fff;
   box-shadow: 0 4px 10px color-mix(in srgb, var(--primary) 24%, transparent);
+}
+.pele-co-pill[aria-pressed="true"] small { opacity: .92; }
+.pele-subfilters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--line);
+  width: 100%;
+}
+.pele-filter-group {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.pele-mini-pill {
+  min-height: 30px;
+  padding: 0 11px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--ink-2);
+  font: 600 .76rem var(--f-ui);
+  cursor: pointer;
+  transition: all .15s ease;
+}
+.pele-mini-pill:hover { border-color: var(--primary); color: var(--primary); }
+.pele-mini-pill[aria-pressed="true"] {
+  background: var(--primary-soft);
+  border-color: color-mix(in srgb, var(--primary) 42%, var(--line));
+  color: var(--primary);
+  font-weight: 700;
 }
 
 /* 4. Pelephone-Style Package Cards (.pele-packs / .pele-pack-card) */
@@ -1384,6 +1486,23 @@ body.shop {
 .pele-best-offer {
   display: inline-flex;
   align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.pele-offer-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 9px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--good, #16a34a) 13%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--good, #16a34a) 32%, var(--line));
+  color: var(--good, #15803d);
+  font: 700 .72rem/1.1 var(--f-ui);
+}
+.pele-offer-tag.is-pop {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #fff;
 }
 .pele-5g-pill {
   display: inline-flex;
@@ -1570,6 +1689,33 @@ body.shop {
   color: var(--ink);
   min-width: 0;
   word-break: break-word;
+}
+.pele-trust-mini {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  padding-top: 6px;
+  border-top: 1px dashed var(--line);
+}
+.pele-trust-mini span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font: 600 .74rem/1.2 var(--f-ui);
+  color: var(--ink-2);
+}
+.pele-trust-mini svg {
+  width: 13px;
+  height: 13px;
+  color: var(--primary);
+  flex: none;
+}
+.pele-new-txt2 {
+  font: 500 .73rem/1.4 var(--f-body);
+  color: var(--muted);
+  text-align: center;
 }
 
 /* Action Buttons inside Card (.pele-pack-btns) */
@@ -2261,9 +2407,42 @@ body.shop {
   .pele-banner-mark .hsim-logo-svg { width: 22px; height: 22px; }
   .pele-banner-tag { font-size: .7rem; padding: 4px 10px; }
   .pele-top-banner h1 {
-    font-size: clamp(1.22rem, 4.8vw, 1.55rem);
-    line-height: 1.32;
-    margin: 12px 0 14px;
+    font-size: clamp(1.22rem, 4.8vw, 1.52rem);
+    line-height: 1.3;
+    margin: 10px 0 6px;
+  }
+  .pele-hero-sub {
+    font-size: .83rem;
+    margin-bottom: 10px;
+  }
+  .pele-hero-steps {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 6px;
+    margin-bottom: 12px;
+  }
+  .pele-hero-steps span {
+    justify-content: center;
+    padding: 6px 5px;
+    font-size: .72rem;
+    gap: 4px;
+    border-radius: 12px;
+  }
+  .pele-hero-steps i {
+    width: 17px;
+    height: 17px;
+    font-size: .66rem;
+  }
+  .pele-hero-ctas {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+  .pele-hero-ctas .btn {
+    min-height: 40px;
+    padding: 0 10px;
+    font-size: .8rem;
+    justify-content: center;
   }
   .pele-flex-bnr {
     display: grid;
@@ -2359,6 +2538,16 @@ body.shop {
     min-height: 32px;
     padding: 0 11px;
     font-size: .76rem;
+  }
+  .pele-subfilters {
+    justify-content: center;
+    gap: 6px;
+    padding-top: 8px;
+  }
+  .pele-mini-pill {
+    min-height: 29px;
+    padding: 0 10px;
+    font-size: .73rem;
   }
 
   /* 4. Package Cards on Mobile — Full Width & Uniform Alignment */
@@ -2563,7 +2752,7 @@ body.shop {
   /* Fixed Bottom Navigation Dock for Mobile */
   .shop-bottom-nav {
     display: grid;
-    grid-template-columns: repeat(5, minmax(0, 1fr));
+    grid-template-columns: repeat(4, minmax(0, 1fr));
     gap: 2px;
     position: fixed;
     inset-inline: 0;

@@ -22,6 +22,24 @@ function rememberOrderCode(code) {
   try { localStorage.setItem(MY_ORDERS_KEY, JSON.stringify(list)); } catch {}
 }
 
+const BUYER_KEY = 'agents.shop.buyer';
+function loadBuyer() {
+  try {
+    const o = JSON.parse(localStorage.getItem(BUYER_KEY) || '{}');
+    return { customerName: String(o.customerName || '').slice(0, 80), email: String(o.email || '').slice(0, 120) };
+  } catch { return { customerName: '', email: '' }; }
+}
+function saveBuyer({ customerName = '', email = '' }) {
+  try {
+    const prev = loadBuyer();
+    const next = {
+      customerName: customerName && customerName !== 'زبون المتجر' ? customerName : prev.customerName,
+      email: email || prev.email,
+    };
+    localStorage.setItem(BUYER_KEY, JSON.stringify(next));
+  } catch {}
+}
+
 function validQrDataUrl(src) {
   return typeof src === 'string' && /^data:image\/(png|jpeg|webp|gif|svg\+xml);base64,[A-Za-z0-9+/=]+$/i.test(src.trim());
 }
@@ -67,6 +85,8 @@ function notify(msg, isErr = false) {
 const S = {
   data: null,
   companyId: 'all',
+  duration: 'all', // 'all' | '30' | '90'
+  sort: 'price_asc', // 'price_asc' | 'gb_desc'
   kindFilter: 'esim', // 'esim' | 'card'
   q: '',
   compatBrand: 'apple',
@@ -294,7 +314,6 @@ function shell(body, { sub = '' } = {}) {
               <a href="#/esim-policy" class="${hash === 'esim-policy' ? 'active' : ''}">سياسة كود eSIM QR</a>
               <a href="#/guarantee" class="${hash === 'guarantee' ? 'active' : ''}">ضمان المتجر واسترجاع المبلغ</a>
               ${wa ? `<a href="${esc(wa)}" target="_blank" rel="noopener">تواصل معنا عبر واتساب</a>` : ''}
-              <a href="/portal" style="opacity:0.75;display:inline-flex;align-items:center;gap:6px;margin-top:6px">${icon('key')}دخول الإدارة</a>
             </div>
           </div>
         </div>
@@ -744,20 +763,24 @@ function renderLegalSectionMarkup(tab = 'terms') {
     `;
   }
 
+  const banks = Array.isArray(S.data?.jawwalBanks) ? S.data.jawwalBanks : [];
+  const payLine = S.data?.jawwalDirect
+    ? `يتم الدفع مباشرة وبشكل آمن عبر <b>Jawwal Pay</b>${banks.length ? ` أو <b>${banks.map((b) => esc(b.name)).join(' أو ')}</b>` : ''} برمز تحقق SMS يصلك على جوالك${S.data?.manualPay !== false ? '، أو عبر التحويل اليدوي' : ''} — ويتفعّل الطلب تلقائياً فور تأكيد الدفع.`
+    : 'يتم الدفع عبر <b>Jawwal Pay</b> أو <b>PalPay</b> ثم إدخال اسم المحوِّل أو الرقم المرجعي لتفعيل الطلب تلقائياً.';
+
   return `
     <div class="esim-legal-panel">
       <h4>١. الأسعار والدفع</h4>
       <ul class="esim-legal-list">
-        <li>جميع الأسعار المعروضة بالشيكل (₪) صريحة ونهائية.</li>
-        <li>تُعرض رسوم إصدار شريحة eSIM QR (إن وجدت) بوضوح في ملخص السعر قبل الدفع.</li>
-        <li>يتم الدفع عبر <b>Jawwal Pay</b> ثم إدخال رقم الحركة أو اسم المحوِّل لتفعيل الطلب تلقائياً.</li>
+        <li>جميع الأسعار المعروضة بالشيكل (₪) صريحة ونهائية وتشمل تفاصيل رسوم شريحة eSIM QR بوضوح قبل الدفع.</li>
+        <li>${payLine}</li>
       </ul>
     </div>
 
     <div class="esim-legal-panel">
       <h4>٢. التفعيل وحجز الأرقام</h4>
       <ul class="esim-legal-list">
-        <li><b>طلبات eSIM:</b> يُحجز الرقم للطلب لمدة 10 دقائق بانتظار تأكيد الإرسال، وفي حال عدم التأكيد خلال 10 دقائق تُلغى الطلبية تلقائياً.</li>
+        <li><b>طلبات eSIM:</b> يُحجز رقم الخط الجديد للطلب لمدة 10 دقائق بانتظار إتمام الدفع، وفي حال عدم الإتمام خلال 10 دقائق تُلغى الطلبية تلقائياً ويُتاح الرقم من جديد.</li>
       </ul>
     </div>
   `;
@@ -992,32 +1015,6 @@ async function ensureCatalog() {
   if (S.data?.appName) document.title = `متجر ${S.data.appName}`;
 }
 
-// Inline SVG strip of popular apps (matching Pelephone's apps strip inside each package card)
-function renderAppsStripSvg() {
-  return `
-    <div class="pele-all-apps" aria-label="تطبيقات مشمولة">
-      <span class="pele-app-badge" title="WhatsApp">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M20.5 11.5a8.5 8.5 0 0 1-12.5 7.5L3.5 20l1.2-4.3A8.5 8.5 0 1 1 20.5 11.5z"/><path d="M9.5 9.2c.3-.6.7-.6 1-.6h.6c.2 0 .5.1.6.5l.7 1.7c.1.2 0 .5-.2.7l-.5.5c-.2.2-.2.4 0 .7.4.7 1.2 1.5 2.1 1.9.3.1.5.1.7-.1l.6-.7c.2-.2.5-.3.8-.1l1.6.8c.3.2.4.4.4.7 0 .6-.4 1.3-1 1.6-.6.3-1.4.4-2.5 0-2.1-.7-3.9-2.4-4.7-4.3-.4-1-.4-1.8.1-2.5z"/></svg>
-      </span>
-      <span class="pele-app-badge" title="Instagram">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><rect x="3.5" y="3.5" width="17" height="17" rx="5"/><circle cx="12" cy="12" r="3.8"/><circle cx="17.2" cy="6.8" r="1" fill="currentColor"/></svg>
-      </span>
-      <span class="pele-app-badge" title="TikTok">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M9 12a4 4 0 1 0 4 4V4a5 5 0 0 0 5 5"/></svg>
-      </span>
-      <span class="pele-app-badge" title="YouTube">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"><rect x="2.5" y="5.5" width="19" height="13" rx="4"/><polygon points="10,9.5 15.5,12 10,14.5" fill="currentColor"/></svg>
-      </span>
-      <span class="pele-app-badge" title="Facebook">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M15 4h-2.5A3.5 3.5 0 0 0 9 7.5V10H6.5v3.5H9V20h3.8v-6.5h2.8L16 10h-3.2V7.8c0-.6.3-.8.9-.8H15V4z"/></svg>
-      </span>
-      <span class="pele-app-badge" title="Waze & Maps">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s-6.5-5.8-6.5-11a6.5 6.5 0 1 1 13 0c0 5.2-6.5 11-6.5 11z"/><circle cx="12" cy="10" r="2.4"/></svg>
-      </span>
-    </div>
-  `;
-}
-
 const HOME_FAQ_ITEMS = [
   {
     q: 'ما هي شريحة eSIM؟',
@@ -1109,6 +1106,7 @@ function renderInfoTabContent(tab) {
 function openPackDetailsSheet(pk, co) {
   const sp = extractPackageSpecs(pk, co);
   const qrFee = Number(pk.esimFee ?? co?.esimFee ?? S.data?.esimFee ?? 0);
+  const total = pkgTotalPrice(pk, co);
 
   sheet({
     title: sp.companyName,
@@ -1145,9 +1143,13 @@ function openPackDetailsSheet(pk, co) {
           <span>رسوم شريحة eSIM QR</span>
           <b class="mono">${qrFee > 0 ? fmtMoney(qrFee) : 'مجاناً'}</b>
         </div>
+        <div class="shop-bd-total">
+          <span>الإجمالي</span>
+          <b class="mono">${fmtMoney(total)}</b>
+        </div>
       </div>
       <div class="row" style="gap:10px;margin-top:16px;flex-wrap:wrap">
-        <a class="btn primary grow" href="#/buy/${pk.id}?esim=1" data-buy-go>${icon('qr')}<span>شراء شريحة eSIM</span></a>
+        <a class="btn primary grow" href="#/buy/${pk.id}?esim=1" data-buy-go>${icon('qr')}<span>شراء شريحة eSIM · ${fmtNum(total)} ₪</span></a>
       </div>
     `,
     footer: `<button type="button" class="btn ghost" data-close>إغلاق</button>`,
@@ -1158,6 +1160,42 @@ function openPackDetailsSheet(pk, co) {
       });
     },
   });
+}
+
+function pkgTotalPrice(pk, co) {
+  const qrFee = Number(pk?.esimFee ?? co?.esimFee ?? S.data?.esimFee ?? 0);
+  return Math.round((Number(pk?.price || 0) + qrFee) * 100) / 100;
+}
+
+function filterAndSortPackages(packages, coMap) {
+  const q = S.q.trim().toLowerCase();
+  const shown = packages.filter((p) => {
+    const co = coMap.get(p.companyId);
+    const sp = extractPackageSpecs(p, co);
+    if (S.companyId !== 'all' && String(p.companyId) !== String(S.companyId)) return false;
+    if (S.duration === '30' && sp.days > 45) return false;
+    if (S.duration === '90' && sp.days <= 45) return false;
+    if (q) {
+      const coName = co?.name || p.companyName || '';
+      const hay = `${p.name} ${p.description || ''} ${p.tag || ''} ${coName} ${sp.gb || ''} ${sp.days || ''} esim إلكترونية الكترونية شريحة باقة حزمة نت ${pkgTotalPrice(p, co)}`.toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
+    return true;
+  });
+
+  shown.sort((a, b) => {
+    const ca = coMap.get(a.companyId);
+    const cb = coMap.get(b.companyId);
+    if (S.sort === 'gb_desc') {
+      const ga = extractPackageSpecs(a, ca).gb || 0;
+      const gb = extractPackageSpecs(b, cb).gb || 0;
+      if (gb !== ga) return gb - ga;
+      return pkgTotalPrice(a, ca) - pkgTotalPrice(b, cb);
+    }
+    if (isFeaturedPkg(b) !== isFeaturedPkg(a)) return (isFeaturedPkg(b) ? 1 : 0) - (isFeaturedPkg(a) ? 1 : 0);
+    return pkgTotalPrice(a, ca) - pkgTotalPrice(b, cb);
+  });
+  return shown;
 }
 
 function viewCatalog() {
@@ -1176,29 +1214,33 @@ function viewCatalog() {
   const coMap = new Map(companies.map((c) => [c.id, c]));
   const rawBrand = S.data?.shopTitle || 'Hot eSIM';
   const wa = waHref(S.data?.supportWhatsapp, 'مرحباً، أحتاج مساعدة في المتجر');
+  const banks = Array.isArray(S.data?.jawwalBanks) ? S.data.jawwalBanks : [];
+  const payBadges = S.data?.jawwalDirect
+    ? ['Jawwal Pay', ...banks.map((b) => b.name)].join(' · ')
+    : 'Jawwal Pay · PalPay';
 
-  // Filtered packages
-  const q = S.q.trim().toLowerCase();
-  const shown = packages.filter((p) => {
-    if (S.companyId !== 'all' && String(p.companyId) !== String(S.companyId)) return false;
-    if (q) {
-      const coName = coMap.get(p.companyId)?.name || p.companyName || '';
-      const hay = `${p.name} ${p.description || ''} ${p.tag || ''} ${coName} ${pkgGb(p) || ''} ${p.days || ''} esim إلكترونية الكترونية شريحة باقة حزمة نت ${p.price || ''}`.toLowerCase();
-      if (!hay.includes(q)) return false;
-    }
-    return true;
-  });
+  const hasMonthly = packages.some((p) => extractPackageSpecs(p, coMap.get(p.companyId)).days <= 45);
+  const hasMultiMonth = packages.some((p) => extractPackageSpecs(p, coMap.get(p.companyId)).days > 45);
+  if (S.duration === '30' && !hasMonthly) S.duration = 'all';
+  if (S.duration === '90' && !hasMultiMonth) S.duration = 'all';
 
-  // Sort: featured/popular first, then price descending (like Pelephone 500GB -> 200GB -> 100GB) or price ascending
-  shown.sort((a, b) => {
-    if (isFeaturedPkg(b) !== isFeaturedPkg(a)) return (isFeaturedPkg(b) ? 1 : 0) - (isFeaturedPkg(a) ? 1 : 0);
-    return Number(b.price || 0) - Number(a.price || 0);
-  });
-
+  const shown = filterAndSortPackages(packages, coMap);
   const compatSearchRes = evaluateDeviceQuery(S.compatSearch);
 
+  const packsGridMarkup = (list) => (list.length ? `
+    <div class="pele-packs" aria-label="باقات eSIM">
+      ${list.map((pk) => renderPlanCard(pk, coMap.get(pk.companyId))).join('')}
+    </div>
+  ` : `
+    <div class="card empty">
+      ${icon('sim')}
+      <p>لا توجد شرائح eSIM متوفرة مطابقة حالياً — تُعرض فقط الباقات التي لها أرقام متاحة الآن.</p>
+      <button type="button" class="btn ghost btn-sm" id="reset-filters">إعادة ضبط البحث والفلاتر</button>
+    </div>
+  `);
+
   shell(`
-    <!-- 1. Pelephone-Style Full Banner (.general-slider / .top_banner / .flex_bnr) -->
+    <!-- 1. Hero Banner with 3-Step Instant Flow -->
     <section class="pele-hero-slider">
       <div class="pele-hero-overlay">
         <div class="pele-top-banner">
@@ -1207,29 +1249,25 @@ function viewCatalog() {
               <span class="pele-banner-mark">${brandLogoSvg('hsim-logo-svg')}</span>
               ${renderBrandWordmark(rawBrand)}
             </div>
-            <span class="pele-banner-tag ltr">5G · eSIM QR</span>
+            <span class="pele-banner-tag">${icon('bolt')}<span>${fmtNum(packages.length)} باقة جاهزة الآن</span></span>
           </div>
           <h1>${esc(S.data.shopTitle || 'الطريقة الأسهل للاتصال في البلاد')}</h1>
-          <div class="pele-flex-bnr">
-            <span class="pele-bnr-col">
-              <i class="pele-bnr-ic">${icon('bolt')}</i>
-              <b>أسرع شبكة خليوي 5G</b>
-            </span>
-            <span class="pele-bnr-col">
-              <i class="pele-bnr-ic">${icon('data')}</i>
-              <b>استخدام حر لتطبيقات مختارة</b>
-            </span>
-            <span class="pele-bnr-col">
-              <i class="pele-bnr-ic">${icon('call')}</i>
-              <b>دقائق مكالمات ورسائل</b>
-            </span>
+          <p class="pele-hero-sub">شريحة eSIM برقم جديد وتفعيل تلقائي خلال ثوانٍ — الدفع الآمن عبر <b>${esc(payBadges)}</b></p>
+          <div class="pele-hero-steps" aria-label="خطوات الشراء">
+            <span><i>1</i>اختر الباقة</span>
+            <span><i>2</i>ادفع برمز SMS</span>
+            <span><i>3</i>امسح كود QR</span>
+          </div>
+          <div class="pele-hero-ctas">
+            <a href="#sec-packs" class="btn primary" data-jump="sec-packs">${icon('qr')}<span>تصفّح الباقات</span></a>
+            <a href="#/compat" class="btn ghost pele-hero-ghost">${icon('chip')}<span>فحص توافق جهازي</span></a>
           </div>
         </div>
 
         <div class="pele-hero-illustration" aria-hidden="true">
           <div class="pele-sim-card-art">
             <div class="pele-sim-art-top">
-              <span class="ltr">5G · eSIM</span>
+              <span class="ltr">eSIM · QR</span>
               ${esimChipSvg('esim-chip-svg lg')}
             </div>
             <div class="pele-sim-art-mid">
@@ -1252,34 +1290,41 @@ function viewCatalog() {
             <div class="shop-search-input-box">
               <span class="shop-search-icon">${icon('search')}</span>
               <input id="packs-search-input" class="input" type="search" value="${esc(S.q)}" placeholder="ابحث بالاسم، حجم الجيجا، أو الشركة (مثال: هوت موبايل، 500 جيجا، سلكوم، 90 يوم)..." autocomplete="off">
-              ${S.q ? `<button type="button" class="btn ghost btn-sm" id="packs-search-clear">مسح</button>` : ''}
+              <button type="button" class="btn ghost btn-sm" id="packs-search-clear"${S.q ? '' : ' hidden'}>مسح</button>
             </div>
           </div>
 
           ${companies.length > 1 ? `
-            <div class="pele-co-pills" role="tablist" aria-label="الشبكات">
-              <button type="button" class="pele-co-pill" aria-pressed="${S.companyId === 'all'}" data-co="all">كل الشبكات</button>
-              ${companies.map((c) => `
-                <button type="button" class="pele-co-pill" aria-pressed="${String(S.companyId) === String(c.id)}" data-co="${c.id}">
-                  ${esc(c.name)}
-                </button>
-              `).join('')}
+            <div class="pele-co-pills" role="group" aria-label="الشبكات">
+              <button type="button" class="pele-co-pill" aria-pressed="${S.companyId === 'all'}" data-co="all">كل الشبكات (${fmtNum(packages.length)})</button>
+              ${companies.map((c) => {
+                const cnt = packages.filter((p) => p.companyId === c.id).length;
+                return `
+                  <button type="button" class="pele-co-pill" aria-pressed="${String(S.companyId) === String(c.id)}" data-co="${c.id}">
+                    ${esc(c.name)} <small>(${fmtNum(cnt)})</small>
+                  </button>
+                `;
+              }).join('')}
             </div>
           ` : ''}
+
+          <div class="pele-subfilters">
+            ${hasMonthly && hasMultiMonth ? `
+              <div class="pele-filter-group" role="group" aria-label="المدة">
+                <button type="button" class="pele-mini-pill" data-dur="all" aria-pressed="${S.duration === 'all'}">كل المدد</button>
+                <button type="button" class="pele-mini-pill" data-dur="30" aria-pressed="${S.duration === '30'}">شهري (30 يوم)</button>
+                <button type="button" class="pele-mini-pill" data-dur="90" aria-pressed="${S.duration === '90'}">عروض 90 يوم</button>
+              </div>
+            ` : ''}
+            <div class="pele-filter-group" role="group" aria-label="الترتيب">
+              <button type="button" class="pele-mini-pill" data-sort="price_asc" aria-pressed="${S.sort === 'price_asc'}">الأرخص أولاً</button>
+              <button type="button" class="pele-mini-pill" data-sort="gb_desc" aria-pressed="${S.sort === 'gb_desc'}">الأكثر جيجا</button>
+            </div>
+          </div>
         </div>
       ` : ''}
 
-      ${shown.length ? `
-        <div class="pele-packs" aria-label="باقات eSIM">
-          ${shown.map((pk) => renderPlanCard(pk, coMap.get(pk.companyId))).join('')}
-        </div>
-      ` : `
-        <div class="card empty">
-          ${icon('sim')}
-          <p>لا توجد شرائح eSIM متوفرة مطابقة حالياً — تُعرض فقط الباقات التي لها أرقام متاحة الآن.</p>
-          <button type="button" class="btn ghost btn-sm" id="reset-filters">إعادة ضبط البحث والشبكات</button>
-        </div>
-      `}
+      <div id="packs-grid">${packsGridMarkup(shown)}</div>
     </section>
 
     <!-- 4. "Everything You Need to Know" Interactive Icon Tabs (#sec-info -> .imp_info / .main_sec + .main_sec_info) -->
@@ -1390,36 +1435,64 @@ function viewCatalog() {
     </div>
   `);
 
-  // Bind filter & interactive events
-  const resetBtn = document.getElementById('reset-filters');
-  if (resetBtn) {
-    resetBtn.onclick = () => { S.companyId = 'all'; S.q = ''; viewCatalog(); };
-  }
+  const packsGrid = document.getElementById('packs-grid');
   const packsQ = document.getElementById('packs-search-input');
+  const packsQClear = document.getElementById('packs-search-clear');
+
+  function bindPacksGrid() {
+    if (!packsGrid) return;
+    const resetBtn = packsGrid.querySelector('#reset-filters');
+    if (resetBtn) {
+      resetBtn.onclick = () => {
+        S.companyId = 'all';
+        S.duration = 'all';
+        S.q = '';
+        if (packsQ) packsQ.value = '';
+        updatePacksOnly();
+      };
+    }
+    packsGrid.querySelectorAll('[data-pack-info]').forEach((b) => {
+      b.onclick = () => {
+        const pk = packages.find((p) => String(p.id) === String(b.dataset.packInfo));
+        if (pk) openPackDetailsSheet(pk, coMap.get(pk.companyId));
+      };
+    });
+  }
+
+  function updatePacksOnly() {
+    if (packsQClear) packsQClear.hidden = !S.q;
+    root.querySelectorAll('[data-co]').forEach((b) => b.setAttribute('aria-pressed', String(S.companyId) === String(b.dataset.co)));
+    root.querySelectorAll('[data-dur]').forEach((b) => b.setAttribute('aria-pressed', S.duration === b.dataset.dur));
+    root.querySelectorAll('[data-sort]').forEach((b) => b.setAttribute('aria-pressed', S.sort === b.dataset.sort));
+    if (packsGrid) {
+      packsGrid.innerHTML = packsGridMarkup(filterAndSortPackages(packages, coMap));
+      bindPacksGrid();
+    }
+  }
+
+  bindPacksGrid();
+
   if (packsQ) {
     packsQ.oninput = (e) => {
       S.q = e.currentTarget.value;
-      const pos = e.currentTarget.selectionStart;
-      viewCatalog();
-      const next = document.getElementById('packs-search-input');
-      if (next) { next.focus(); try { next.setSelectionRange(pos, pos); } catch {} }
+      updatePacksOnly();
     };
   }
-  const packsQClear = document.getElementById('packs-search-clear');
   if (packsQClear) {
     packsQClear.onclick = () => {
       S.q = '';
-      viewCatalog();
+      if (packsQ) { packsQ.value = ''; packsQ.focus(); }
+      updatePacksOnly();
     };
   }
   root.querySelectorAll('[data-co]').forEach((b) => {
-    b.onclick = () => { S.companyId = b.dataset.co; viewCatalog(); };
+    b.onclick = () => { S.companyId = b.dataset.co; updatePacksOnly(); };
   });
-  root.querySelectorAll('[data-pack-info]').forEach((b) => {
-    b.onclick = () => {
-      const pk = packages.find((p) => String(p.id) === String(b.dataset.packInfo));
-      if (pk) openPackDetailsSheet(pk, coMap.get(pk.companyId));
-    };
+  root.querySelectorAll('[data-dur]').forEach((b) => {
+    b.onclick = () => { S.duration = b.dataset.dur; updatePacksOnly(); };
+  });
+  root.querySelectorAll('[data-sort]').forEach((b) => {
+    b.onclick = () => { S.sort = b.dataset.sort; updatePacksOnly(); };
   });
   root.querySelectorAll('[data-itab]').forEach((b) => {
     b.onclick = (e) => {
@@ -1540,9 +1613,10 @@ function extractPackageSpecs(pk, co) {
   }
 
   // 7. Formatted Internet & Calls labels for their dedicated places
+  const is5G = /\b5g\b|الجيل\s*الخامس/i.test(`${combined} ${pk?.tag || ''}`);
   let dataLabel = '';
   if (gb > 0) {
-    dataLabel = `${fmtNum(gb)} جيجا إنترنت 5G`;
+    dataLabel = is5G ? `${fmtNum(gb)} جيجا إنترنت 5G` : `${fmtNum(gb)} جيجا إنترنت سريع`;
   } else if (isOpenCredit) {
     dataLabel = `رصيد ${fmtNum(creditVal)} ₪ لجميع الشبكات`;
   } else {
@@ -1572,6 +1646,7 @@ function extractPackageSpecs(pk, co) {
     minutes,
     sms,
     days,
+    is5G,
     unlimitedCalls,
     extraBonus,
     mainCap,
@@ -1595,13 +1670,20 @@ function renderPlanCard(pk, co) {
   const sp = extractPackageSpecs(pk, co);
 
   const qrFee = Number(pk.esimFee ?? co?.esimFee ?? S.data?.esimFee ?? 0);
-  const qrFeeLine = qrFee > 0 ? `+ ${fmtMoney(qrFee)} لإصدار شريحة eSIM QR` : 'شامل كود eSIM QR مجاناً';
+  const total = Math.round((Number(pk.price || 0) + qrFee) * 100) / 100;
+  const qrFeeLine = qrFee > 0
+    ? `السعر الإجمالي شامل شريحة eSIM (${fmtNum(pk.price)} + ${fmtNum(qrFee)} ₪)`
+    : 'السعر الإجمالي شامل كود eSIM QR مجاناً';
+  const offerPill = featured
+    ? '<span class="pele-offer-tag is-pop">الأكثر طلباً</span>'
+    : sp.days >= 60 ? `<span class="pele-offer-tag">عرض ${fmtNum(sp.days)} يوم</span>` : '';
 
   return `
     <div class="pele-pack-card ${featured ? 'is-featured' : ''}" style="--co:${esc(coColor)}">
       <div class="pele-pack-card-head">
         <div class="pele-best-offer">
-          <span class="pele-5g-pill" dir="ltr"><i>e</i>SIM <b>5G</b></span>
+          <span class="pele-5g-pill" dir="ltr"><i>e</i>SIM${sp.is5G ? ' <b>5G</b>' : ''}</span>
+          ${offerPill}
         </div>
         <div class="pele-superlative">
           <div>
@@ -1613,7 +1695,7 @@ function renderPlanCard(pk, co) {
 
       <div class="pele-pack-top" dir="ltr">
         <div class="pele-pack-name"><span>${esc(sp.mainCap)}</span></div>
-        <div class="pele-pack-price">${fmtNum(pk.price)}<span>₪</span></div>
+        <div class="pele-pack-price">${fmtNum(total)}<span>₪</span></div>
       </div>
 
       <div class="pele-pack-carrier">
@@ -1638,8 +1720,10 @@ function renderPlanCard(pk, co) {
             </div>
           ` : ''}
         </div>
-        <div class="pele-new-txt">استخدام حر للتطبيقات المختارة</div>
-        ${renderAppsStripSvg()}
+        <div class="pele-trust-mini">
+          <span>${icon('bolt')}تفعيل فوري QR</span>
+          <span>${icon('phone')}رقم جديد</span>
+        </div>
         <div class="pele-new-txt2">
           <span>${esc(qrFeeLine)}</span>
         </div>
@@ -1647,7 +1731,7 @@ function renderPlanCard(pk, co) {
 
       <div class="pele-pack-btns is-single">
         <a class="pele-btn-b order-b" href="#/buy/${pk.id}?esim=1">
-          شراء شريحة eSIM
+          شراء الآن · ${fmtNum(total)} ₪
         </a>
       </div>
       <button type="button" class="pele-lnk-inc" data-pack-info="${esc(String(pk.id))}">
@@ -1659,6 +1743,7 @@ function renderPlanCard(pk, co) {
 
 function renderCheckoutPackageSummary(pk, co) {
   const sp = extractPackageSpecs(pk, co);
+  const total = pkgTotalPrice(pk, co);
   const badgeText = 'شريحة eSIM فورية';
   return `
     <div class="esim-checkout-head">
@@ -1672,7 +1757,7 @@ function renderCheckoutPackageSummary(pk, co) {
         </div>
         <div class="pele-checkout-cap" dir="ltr">
           <b class="pele-checkout-maincap">${esc(sp.mainCap)}</b>
-          <span class="pele-checkout-price">${fmtNum(pk.price)}<span>₪</span></span>
+          <span class="pele-checkout-price">${fmtNum(total)}<span>₪</span></span>
         </div>
       </div>
       <div class="pele-pack-specs-list pele-checkout-specs">
@@ -1711,7 +1796,12 @@ function viewBuy(id, seq) {
 async function esimForm(pk, co, seq) {
   const sp = extractPackageSpecs(pk, co);
   const qrFee = Number(pk.esimFee ?? co?.esimFee ?? S.data?.esimFee ?? 0);
-  const total = Number(pk.price || 0) + qrFee;
+  const total = Math.round((Number(pk.price || 0) + qrFee) * 100) / 100;
+  const savedBuyer = loadBuyer();
+  const banks = Array.isArray(S.data?.jawwalBanks) ? S.data.jawwalBanks : [];
+  const payHint = S.data?.jawwalDirect
+    ? `الدفع المباشر برمز SMS عبر Jawwal Pay${banks.length ? ` أو ${banks.map((b) => b.name).join(' أو ')}` : ''}`
+    : 'الدفع عبر Jawwal Pay أو PalPay';
 
   shell(`<div class="card empty"><p class="muted">جارٍ التحقق من توفّر الشريحة...</p></div>`, { sub: sp.companyName });
   if (S.esimAvailable === null || S.esimAvailable.pkgId !== pk.id) {
@@ -1747,7 +1837,7 @@ async function esimForm(pk, co, seq) {
           ${icon('qr')}
           <div class="grow">
             <b>الشريحة متوفرة وجاهزة للإصدار</b>
-            <small class="muted" style="display:block">يتم التحقق والتفعيل تلقائياً وخلال ثوانٍ فور تأكيد الدفع.</small>
+            <small class="muted" style="display:block">${esc(payHint)} — والتفعيل تلقائي خلال ثوانٍ.</small>
           </div>
         </div>
       ` : `
@@ -1760,14 +1850,14 @@ async function esimForm(pk, co, seq) {
       ${pk.fullName ? `
         <div class="field">
           <label for="f-cname">الاسم</label>
-          <input id="f-cname" name="customerName" class="input" autocomplete="name" required minlength="2" placeholder="مثال: محمد">
+          <input id="f-cname" name="customerName" class="input" autocomplete="name" required minlength="2" value="${esc(savedBuyer.customerName)}" placeholder="مثال: محمد">
           <span class="hint muted" style="font-size:.8rem">مطلوب لتسجيل الخط الجديد باسمك</span>
         </div>
       ` : ''}
 
       <div class="field">
         <label for="f-email">البريد الإلكتروني <span class="muted">(اختياري — لإرسال نسخة من الـ QR)</span></label>
-        <input id="f-email" name="email" type="email" class="input ltr" autocomplete="email" placeholder="you@example.com">
+        <input id="f-email" name="email" type="email" class="input ltr" autocomplete="email" value="${esc(savedBuyer.email)}" placeholder="you@example.com">
       </div>
 
       <div class="shop-breakdown-box">
@@ -1816,6 +1906,7 @@ async function esimForm(pk, co, seq) {
       return;
     }
     try {
+      const emailVal = String(fd.get('email') || '').trim();
       const order = await jfetch('/api/shop/orders', {
         method: 'POST',
         body: {
@@ -1824,9 +1915,10 @@ async function esimForm(pk, co, seq) {
           includeEsimFee: qrFee > 0,
           packageId: pk.id,
           customerName: customerName || 'زبون المتجر',
-          email: fd.get('email') || '',
+          email: emailVal,
         },
       });
+      saveBuyer({ customerName, email: emailVal });
       S.esimAvailable = null;
       rememberOrderCode(order.code);
       S.myCodes = savedOrderCodes();
@@ -2374,6 +2466,9 @@ function renderOrder() {
               ${icon('download')}<span>حفظ صورة الـ QR في الهاتف</span>
             </a>
           ` : ''}
+          <button type="button" class="btn ghost" id="share-order-btn">
+            ${icon('share')}<span>فتح على جهاز آخر</span>
+          </button>
           <button type="button" class="btn ghost" id="print-qr-btn">
             ${icon('print')}<span>طباعة</span>
           </button>
@@ -2463,6 +2558,16 @@ function renderOrder() {
   if (printBtn) printBtn.onclick = () => window.print();
   const printQrBtn = document.getElementById('print-qr-btn');
   if (printQrBtn) printQrBtn.onclick = () => window.print();
+  const shareOrderBtn = document.getElementById('share-order-btn');
+  if (shareOrderBtn) {
+    shareOrderBtn.onclick = async () => {
+      const url = `${location.origin}${location.pathname}#/order/${encodeURIComponent(o.code)}`;
+      if (navigator.share) {
+        try { await navigator.share({ title: `طلب eSIM ${o.code}`, url }); return; } catch {}
+      }
+      copyWithFeedback(shareOrderBtn, url);
+    };
+  }
 
   root.querySelectorAll('[data-copy]').forEach((b) => {
     b.onclick = () => copyWithFeedback(b, b.dataset.copy);

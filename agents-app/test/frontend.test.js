@@ -197,3 +197,20 @@ test('catalog comparison window groups packages per company and highlights the c
   assert.match(catalogSrc, /data-tab="cheapest"/);
   assert.match(catalogSrc, /compareCatalog/);
 });
+
+test('storefront UX polish: 4-col mobile dock, no /portal footer link, partial search re-render, and valid JSON-LD hash routes', () => {
+  const css = fs.readFileSync(path.join(ROOT, '..', 'css', 'app.css'), 'utf8');
+  assert.match(css, /\.shop-bottom-nav\s*\{[^}]*grid-template-columns:\s*repeat\(4,\s*minmax\(0,\s*1fr\)\)/s);
+  assert.doesNotMatch(css, /\.shop-bottom-nav\s*\{[^}]*repeat\(5/s);
+
+  const shop = fs.readFileSync(path.join(ROOT, 'shop.js'), 'utf8');
+  assert.doesNotMatch(shop, /href="\/portal"/);
+  assert.doesNotMatch(shop, /استخدام حر للتطبيقات المختارة/);
+  assert.match(shop, /function updatePacksOnly\(\)/);
+  assert.match(shop, /id="share-order-btn"/);
+  assert.match(shop, /const BUYER_KEY = 'agents\.shop\.buyer';/);
+
+  const shopHtml = fs.readFileSync(path.join(ROOT, '..', 'shop.html'), 'utf8');
+  assert.doesNotMatch(shopHtml, /#buy\/\d+/);
+  assert.match(shopHtml, /#\/buy\/\d+\?esim=1/);
+});
