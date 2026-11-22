@@ -1929,6 +1929,8 @@ async function viewOrder(code, seq) {
           next.canRetryProof !== S.order.canRetryProof ||
           next.needsSupport !== S.order.needsSupport ||
           next.esimQr !== S.order.esimQr ||
+          next.esimCode !== S.order.esimCode ||
+          Boolean(next.qrMailed) !== Boolean(S.order.qrMailed) ||
           Boolean(next.jawwal?.checking) !== Boolean(S.order.jawwal?.checking)
         ) {
           S.order = next;
@@ -2004,7 +2006,7 @@ function renderDirectPay(o) {
           <button class="btn primary lg" type="submit">${icon('phone')}<span>إرسال رمز التحقق</span></button>
         </form>
       ` : `
-        <div class="esim-ready-notice">${icon('info')}<span>استُخدمت كل رموز التحقق لهذا الطلب. ادفع بالتحويل اليدوي أدناه أو تواصل معنا.</span></div>
+        <div class="esim-ready-notice">${icon('info')}<span>استُخدمت كل رموز التحقق لهذا الطلب. ${S.data?.manualPay !== false ? 'ادفع بالتحويل اليدوي أدناه أو تواصل معنا.' : 'يرجى التواصل مع الدعم أو إنشاء طلب جديد.'}</span></div>
       `}
     </div>`;
 }
@@ -2094,6 +2096,8 @@ function renderOrder() {
   const hasSeparatePalpay = Boolean(pp.number && pp.number !== jp.number);
   const isEsim = Boolean(o.esim);
   const hasQr = validQrDataUrl(o.esimQr);
+  const hasCode = Boolean(o.esimCode && String(o.esimCode).trim());
+  const hasEsimDelivery = hasQr || hasCode;
   const payable = PAYABLE_STATUSES.includes(o.status);
   const isInitialConfirm = o.status === 'awaiting_payment';
   const isRetryChance = Boolean(o.status === 'verifying' && o.canRetryProof);
@@ -2130,7 +2134,7 @@ function renderOrder() {
       <div class="shop-steps no-print" aria-label="مراحل الطلب">
         <span class="${st.step >= 1 ? 'done' : ''}"><i>1</i>البيانات</span>
         <span class="${st.step >= 3 ? 'done' : payable || st.step === 2 ? 'current' : ''}"><i>2</i>الدفع</span>
-        <span class="${st.step >= 3 || hasQr ? 'done' : ''}"><i>3</i>${isEsim ? 'استلام QR' : 'التفعيل'}</span>
+        <span class="${st.step >= 3 || hasEsimDelivery ? 'done' : ''}"><i>3</i>${isEsim ? 'استلام QR' : 'التفعيل'}</span>
       </div>
 
       <div class="row between" style="flex-wrap:wrap;gap:10px">
@@ -2319,21 +2323,23 @@ function renderOrder() {
     ` : ''}
 
     <!-- Step 3: Scannable eSIM QR Code Pass -->
-    ${hasQr ? `
+    ${hasEsimDelivery ? `
       <div class="card shop-qr-modern">
         <div class="shop-qr-badge">
           ${icon('checkCircle')}
           <span>شريحة eSIM جاهزة للمسح والتثبيت</span>
         </div>
 
-        <h3 style="margin:0">امسح كود الـ QR أو ثبّت الشريحة مباشرة</h3>
+        <h3 style="margin:0">${hasQr ? 'امسح كود الـ QR أو ثبّت الشريحة مباشرة' : 'ثبّت شريحة eSIM باستخدام كود التفعيل'}</h3>
         <p class="muted" style="margin:0;font-size:.86rem">
           تأكد من اتصال هاتفك بشبكة Wi-Fi أثناء تثبيت الشريحة الإلكترونية:
         </p>
 
-        <div class="shop-qr-frame">
-          <img id="qr-img" src="${esc(o.esimQr)}" alt="كود QR لشريحة eSIM ${esc(o.number || '')}">
-        </div>
+        ${hasQr ? `
+          <div class="shop-qr-frame">
+            <img id="qr-img" src="${esc(o.esimQr)}" alt="كود QR لشريحة eSIM ${esc(o.number || '')}">
+          </div>
+        ` : ''}
 
         <div class="esim-qr-details">
           ${o.number ? `
@@ -2347,7 +2353,7 @@ function renderOrder() {
           ` : ''}
         </div>
 
-        ${o.esimCode ? `
+        ${hasCode ? `
           <div class="shop-lpa-box no-print">
             <small class="muted">كود التفعيل اليدوي (LPA) — للتثبيت على نفس الهاتف بدون كاميرا:</small>
             <div class="shop-lpa-row">
@@ -2363,9 +2369,11 @@ function renderOrder() {
               ${icon('phone')}<span>تثبيت مباشر على iPhone (iOS 17.4+)</span>
             </a>
           ` : ''}
-          <a class="btn ${appleInstallHref ? 'ghost' : 'primary'}" href="${esc(o.esimQr)}" download="esim-${esc(o.number || o.code)}.png">
-            ${icon('download')}<span>حفظ صورة الـ QR في الهاتف</span>
-          </a>
+          ${hasQr ? `
+            <a class="btn ${appleInstallHref ? 'ghost' : 'primary'}" href="${esc(o.esimQr)}" download="esim-${esc(o.number || o.code)}.png">
+              ${icon('download')}<span>حفظ صورة الـ QR في الهاتف</span>
+            </a>
+          ` : ''}
           <button type="button" class="btn ghost" id="print-qr-btn">
             ${icon('print')}<span>طباعة</span>
           </button>
@@ -2375,7 +2383,7 @@ function renderOrder() {
 
         <div class="shop-single-phone-tip no-print">
           <b>📱 هل تفتح هذه الصفحة من نفس الهاتف الذي تريد تثبيت الشريحة عليه؟</b>
-          <p>اضغط <b>حفظ صورة الـ QR في الهاتف</b> ثم افتح إعدادات إضافة eSIM واختر <b>اختيار من الصور / المعرض</b>، أو انسخ <b>كود التفعيل اليدوي (LPA)</b> أعلاه والصقه في خيار «إدخال التفاصيل يدوياً».</p>
+          <p>${hasQr ? 'اضغط <b>حفظ صورة الـ QR في الهاتف</b> ثم افتح إعدادات إضافة eSIM واختر <b>اختيار من الصور / المعرض</b>، أو انسخ <b>كود التفعيل اليدوي (LPA)</b> أعلاه والصقه في خيار «إدخال التفاصيل يدوياً».' : 'اضغط زر التثبيت المباشر على iPhone أو انسخ <b>كود التفعيل اليدوي (LPA)</b> أعلاه والصقه في خيار «إدخال التفاصيل يدوياً».'}</p>
         </div>
 
         <div class="shop-qr-guides">
@@ -2397,10 +2405,10 @@ function renderOrder() {
       </div>
     ` : ''}
 
-    ${o.stage === 'done' && !hasQr ? `
+    ${o.stage === 'done' && !hasEsimDelivery ? `
       <div class="card empty">
         ${icon('checkCircle')}
-        <p>تمّ تفعيل باقتك بنجاح.</p>
+        <p>${isEsim ? 'تمّ تفعيل باقتك — إذا لم يظهر رمز الـ QR تواصل مع الدعم لإرساله لك فوراً.' : 'تمّ تفعيل باقتك بنجاح.'}</p>
         <a href="#/" class="btn ghost">العودة للمتجر</a>
       </div>
     ` : ''}

@@ -2,7 +2,7 @@
 // Customer shop: public catalog and orders (/api/shop/...), and the manager's side (/api/shop/admin/...).
 const crypto = require('node:crypto');
 const { q, tx, getSettings, qlCredentials } = require('../db');
-const { fail, now, round, str, normalizePhone, validPhone, imageOrEmpty } = require('../util');
+const { fail, now, round, str, normalizePhone, validPhone, imageOrEmpty, normalizeQrDataUrl } = require('../util');
 const D = require('../domain');
 const shop = require('../shop');
 const ql = require('../quickline');
@@ -15,8 +15,9 @@ const { route, ADMIN } = require('../router');
 const RESERVE_MS = shop.RESERVE_MS;
 const heldNumbers = () => {
   shop.expireUnconfirmed();
-  return q(`SELECT number, number_id FROM shop_orders WHERE (esim = 1 OR number_id LIKE 'ayl:%') AND ((status = 'awaiting_payment' AND (created_at > ?
-    OR jc_expires_at > ? OR jc_unsure = 1)) OR status IN ('verifying','review') OR (status = 'paid' AND line_id IS NULL))`).all(now() - RESERVE_MS, now());
+  return q(`SELECT o.number, o.number_id, p.art_card_id FROM shop_orders o LEFT JOIN packages p ON p.id = o.package_id
+    WHERE (o.esim = 1 OR o.number_id LIKE 'ayl:%') AND ((o.status = 'awaiting_payment' AND (o.created_at > ?
+    OR o.jc_expires_at > ? OR o.jc_unsure = 1)) OR o.status IN ('verifying','review') OR (o.status = 'paid' AND o.line_id IS NULL))`).all(now() - RESERVE_MS, now());
 };
 // A package sold as an eSIM: a new line whose number (with its eSIM and QR code) comes from the supplier's free
 // eSIM numbers, activated automatically.
@@ -103,10 +104,12 @@ function stage(o, line) {
 
 function orderView(o, { admin = false } = {}) {
   const line = o.line_id ? q('SELECT id, status, expires_at, esim_qr, esim_code FROM lines WHERE id = ?').get(o.line_id) : null;
-  // Only a real code and QR (from the supplier, or attached by the manager) ever reaches the customer.
+  // Only a real code and QR (from the supplier, or attached by the manager) ever reaches the customer — once active.
   const lineQr = shop.realQr(line?.esim_qr);
   const orderQr = shop.realQr(o.esim_qr);
-  const qr = (line?.status === 'active' && lineQr) ? lineQr : (o.status === 'paid' && orderQr ? orderQr : null);
+  const qr = line?.status === 'active'
+    ? (normalizeQrDataUrl(lineQr) || lineQr || normalizeQrDataUrl(orderQr) || orderQr || null)
+    : null;
   const esimCode = shop.realCode(line?.esim_code) || shop.realCode(o.esim_code);
   const proofTries = Number(o.proof_tries) || 0;
   const firstProofAt = o.first_proof_at || o.proof_at || null;
@@ -138,7 +141,7 @@ function orderView(o, { admin = false } = {}) {
       ...(admin ? { invoiceId: o.jc_invoice_id, status: o.jc_status || '' } : {}),
     } : null,
     esimQr: o.esim && qr ? qr : null,
-    esimCode: o.esim && (admin || o.status === 'paid') ? esimCode : null,
+    esimCode: o.esim && (admin || line?.status === 'active') ? esimCode : null,
     ...(admin ? {
       id: o.id, sim: o.sim, contactPhone: o.contact_phone,
       hasReceipt: !!o.receipt, proofAt: o.proof_at, mailId: o.mail_id, verifiedBy: o.verified_by, lineId: o.line_id, error: o.error,
@@ -303,7 +306,11 @@ async function freeEsimNumbers(s, { ref, layan, telecom, aylol }) {
       list = phones.map((phone) => ({ id: phoneId(phone), phone, sim: '', qr: '' }));
     } else {
       if (!s.qlConfigured) fail(503, 'لا توجد أرقام متاحة الآن');
-      list = await ql.freeNumbers(qlCredentials(), { packageId: ref.packageId, exclude: held.map((h) => h.number_id).filter(Boolean), esim: true });
+      // Only pass QuickLine numeric number_ids to QuickLine's API (Aylol/Layan ids trigger 400 validation errors).
+      const qlExclude = held
+        .filter((h) => /^qln?:/.test(String(h.art_card_id || '')) && /^\d+$/.test(String(h.number_id || '')))
+        .map((h) => h.number_id);
+      list = await ql.freeNumbers(qlCredentials(), { packageId: ref.packageId, exclude: qlExclude, esim: true });
       require('./quickline').remember(ref.packageId, true, list);
     }
   } catch (e) {
@@ -472,7 +479,7 @@ async function esimOrder(body, ip, clientId = '') {
     // The eSIM's code and QR come only from the supplier (QuickLine gives them with the number; Layan and telecom when
     // the line is activated after payment) or from the manager who carries the order out. Nothing is made up here.
     const esimCode = '';
-    const qrData = shop.realQr(picked.qr || '');
+    const qrData = shop.realQr(normalizeQrDataUrl(picked.qr) || picked.qr || '');
     q(`INSERT INTO shop_orders (code, package_id, package_label, kind, number, sim, customer_name, contact_phone, amount, esim_fee, esim_code, ip, client_id, created_at, updated_at,
          esim, number_id, esim_qr, email) VALUES (?, ?, ?, 'new', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)`)
       .run(code, pk.p.id, D.packageLabel(pk.p), picked.phone, String(picked.sim || '').replace(/\D/g, ''), customerName, contact, totalAmount, esimFee, esimCode, ip, clientId, t, t,

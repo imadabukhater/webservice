@@ -46,6 +46,7 @@ const qlServer = http.createServer((req, res) => {
     }
     if (url === 'Numbers/GetFreeNumbers') {
       if (qlState.delayFreeMs) await new Promise((r) => setTimeout(r, qlState.delayFreeMs));
+      qlState.lastExclude = f.Numbers || [];
       const skip = new Set((f.Numbers || []).map(Number));
       return json(f.isEsim ? qlState.esim.filter((n) => !skip.has(n.id)) : []);
     }
@@ -516,5 +517,109 @@ test('Low 1-4: bad %-encoding returns 400, oversized body returns 413 cleanly, b
     assert.equal(changed.messages.length, 1, 'changed UIDVALIDITY does not skip reused UID 1');
   } finally {
     uidSrv.close();
+  }
+});
+
+test('Payment & QR audit fixes: Azure octet-stream PNG sniffing (Layan & Aylol), QuickLine QR/exclude, task LPA->QR & empty-QR guard, WhatsApp webp QR', async () => {
+  const { q } = require('../src/db');
+  const { sniffImageMime, normalizeQrDataUrl } = require('../src/util');
+  const ly = require('../src/layan');
+  const ay = require('../src/aylol');
+  const wa = require('../src/whatsapp');
+  const { orderView } = require('../src/routes/shop');
+
+  const PNG_BYTES = Buffer.from('89504e470d0a1a0a0000000d49484452', 'hex');
+  const WEBP_BYTES = Buffer.from([0x52, 0x49, 0x46, 0x46, 0x24, 0x00, 0x00, 0x00, 0x57, 0x45, 0x42, 0x50]);
+
+  // 1) Magic-byte sniffing & QuickLine raw base64 normalization
+  assert.equal(sniffImageMime(PNG_BYTES), 'image/png');
+  assert.equal(sniffImageMime(WEBP_BYTES), 'image/webp');
+  assert.equal(sniffImageMime(Buffer.from('<html>nope</html>')), '');
+  assert.equal(normalizeQrDataUrl(PNG_BYTES.toString('base64')), `data:image/png;base64,${PNG_BYTES.toString('base64')}`);
+  assert.equal(normalizeQrDataUrl('data:image/jpg;base64,/9j/AA=='), 'data:image/jpeg;base64,/9j/AA==');
+  assert.equal(normalizeQrDataUrl('not-an-image'), '');
+
+  // 2) Layan & Aylol download PNG served as application/octet-stream (Azure Blob Storage), while rejecting HTML/SVG
+  const qrSrv = http.createServer((req, res) => {
+    if (req.url === '/blob.png') { res.writeHead(200, { 'Content-Type': 'application/octet-stream' }); return res.end(PNG_BYTES); }
+    if (req.url === '/blob.html') { res.writeHead(200, { 'Content-Type': 'application/octet-stream' }); return res.end('<html>login</html>'); }
+    if (req.url === '/bad.svg') { res.writeHead(200, { 'Content-Type': 'image/svg+xml' }); return res.end('<svg/>'); }
+    res.writeHead(404); res.end();
+  });
+  await new Promise((r) => qrSrv.listen(0, '127.0.0.1', r));
+  const prevAyBase = process.env.AYLOL_BASE;
+  try {
+    const base = `http://127.0.0.1:${qrSrv.address().port}`;
+    process.env.AYLOL_BASE = base;
+    const lyPng = await ly.imageDataUrl(`${base}/blob.png`);
+    assert.equal(lyPng, `data:image/png;base64,${PNG_BYTES.toString('base64')}`, 'Layan accepts PNG with application/octet-stream');
+    await assert.rejects(() => ly.imageDataUrl(`${base}/blob.html`), /غير متاح/, 'Layan rejects non-image octet-stream');
+    await assert.rejects(() => ly.imageDataUrl(`${base}/bad.svg`), /غير متاح/, 'Layan still rejects SVG');
+
+    const ayPng = await ay.qrImage(`${base}/blob.png`);
+    assert.equal(ayPng, `data:image/png;base64,${PNG_BYTES.toString('base64')}`, 'Aylol accepts PNG with application/octet-stream');
+    assert.equal(await ay.qrImage(`${base}/blob.html`), '', 'Aylol rejects non-image octet-stream');
+    assert.equal(await ay.qrImage(`${base}/bad.svg`), '', 'Aylol rejects SVG');
+  } finally {
+    if (prevAyBase === undefined) delete process.env.AYLOL_BASE; else process.env.AYLOL_BASE = prevAyBase;
+    qrSrv.close();
+  }
+
+  // 3) QuickLine freeNumbers excludes only QuickLine numeric IDs, never Aylol 'ayl:...' reservations
+  const nowTs = Date.now();
+  const ayPkgId = Number(q(`INSERT INTO packages (company_id, name, cost, price, active, art_card_id, kind, shop_on, shop_price)
+    VALUES ((SELECT id FROM companies LIMIT 1), 'باقة أيلول اختبار', 30, 30, 1, 'ay:bill:25:999', 'invoice', 1, 40)`).run().lastInsertRowid);
+  q(`INSERT INTO shop_orders (code, package_id, package_label, kind, number, number_id, customer_name, amount, status, esim, created_at, updated_at)
+     VALUES ('AYHOLD01', ?, 'أيلول', 'new', '0527770001', 'ayl:0527770001', 'زبون', 45, 'awaiting_payment', 1, ?, ?)`).run(ayPkgId, nowTs, nowTs);
+  qlState.lastExclude = null;
+  try {
+    await ok(call(null, 'GET', `/api/shop/available?packageId=${qlPkg.id}`));
+    assert.ok(Array.isArray(qlState.lastExclude), 'QuickLine received exclude array');
+    assert.ok(!qlState.lastExclude.some((x) => String(x).startsWith('ayl:')), 'Aylol number_id must never be passed to QuickLine');
+  } finally {
+    q("UPDATE shop_orders SET status = 'cancelled' WHERE code = 'AYHOLD01'").run();
+  }
+
+  // 4) Manual eSIM task completion rejects empty QR+LPA, auto-generates PNG QR from LPA, and orderView hides QR while pending
+  const coId = q('SELECT id FROM companies LIMIT 1').get().id;
+  const lineId = Number(q(`INSERT INTO lines (number, sim, company_id, package_id, package_label, agent_id, kind, esim, months, price, cost, status, customer_name, activated_at, updated_at)
+    VALUES ('0528881111', '', ?, ?, 'رزمة اختبار', (SELECT id FROM users WHERE role = 'admin' LIMIT 1), 'new', 1, 1, 50, 30, 'pending', 'زبون', ?, ?)`).run(coId, qlPkg.id, nowTs, nowTs).lastInsertRowid);
+  const taskId = Number(q(`INSERT INTO tasks (type, line_id, amount, note, created_at) VALUES ('esim', ?, 50, 'تفعيل eSIM', ?)`).run(lineId, nowTs).lastInsertRowid);
+  const ordId = Number(q(`INSERT INTO shop_orders (code, package_id, package_label, kind, number, customer_name, amount, status, esim, esim_qr, line_id, created_at, updated_at)
+    VALUES ('QRTASK01', ?, 'رزمة اختبار', 'new', '0528881111', 'زبون', 50, 'paid', 1, ?, ?, ?, ?)`).run(qlPkg.id, `data:image/png;base64,${PNG_BYTES.toString('base64')}`, lineId, nowTs, nowTs).lastInsertRowid);
+
+  // While line is pending, orderView must NOT expose unactivated QR
+  const pendingView = orderView(q('SELECT * FROM shop_orders WHERE id = ?').get(ordId));
+  assert.equal(pendingView.stage, 'processing');
+  assert.equal(pendingView.esimQr, null, 'QR must not be exposed before line is active');
+
+  // Resolving with neither QR image nor LPA code is refused (400)
+  const emptyRes = await call(admin, 'POST', `/api/tasks/${taskId}/resolve`, { status: 'done' });
+  assert.equal(emptyRes.status, 400, 'cannot complete eSIM task with empty QR and empty LPA');
+
+  // Resolving with ONLY an LPA code automatically draws a valid PNG QR
+  await ok(call(admin, 'POST', `/api/tasks/${taskId}/resolve`, { status: 'done', esimCode: 'LPA:1$smdp.example$MATCH-99' }));
+  const doneView = orderView(q('SELECT * FROM shop_orders WHERE id = ?').get(ordId));
+  assert.equal(doneView.stage, 'done');
+  assert.equal(doneView.esimCode, 'LPA:1$smdp.example$MATCH-99');
+  assert.match(doneView.esimQr, /^data:image\/png;base64,iVBOR/, 'LPA code automatically generates a PNG QR');
+
+  // 5) WhatsApp delivers webp & uppercase data URLs as image buffers (not broken fallback text)
+  const sentMsgs = [];
+  wa._test.setTransport(async (jid, content) => { sentMsgs.push({ jid, content }); });
+  try {
+    const webpLineId = Number(q(`INSERT INTO lines (number, sim, company_id, package_id, package_label, agent_id, kind, esim, months, price, cost, status, customer_name, esim_qr, esim_code, activated_at, updated_at)
+      VALUES ('0528882222', '', ?, ?, 'رزمة ويب بي', (SELECT id FROM users WHERE role = 'admin' LIMIT 1), 'new', 1, 1, 50, 30, 'active', 'زبون', ?, 'LPA:1$smdp.example$WEBP-1', ?, ?)`)
+      .run(coId, qlPkg.id, `DATA:IMAGE/WEBP;base64,${WEBP_BYTES.toString('base64')}`, nowTs, nowTs).lastInsertRowid);
+    const webpOrdId = Number(q(`INSERT INTO shop_orders (code, package_id, package_label, kind, number, customer_name, amount, status, esim, line_id, created_at, updated_at)
+      VALUES ('WAWEBP01', ?, 'رزمة ويب بي', 'new', '0528882222', 'زبون', 50, 'paid', 1, ?, ?, ?)`).run(qlPkg.id, webpLineId, nowTs, nowTs).lastInsertRowid);
+    wa._test.follow('972599000111@s.whatsapp.net', { id: webpOrdId, ip: 'wa:972599000111@s.whatsapp.net' }, 'processing');
+    await wa._test.watchShop();
+    const imgMsg = sentMsgs.find((m) => m.jid === '972599000111@s.whatsapp.net' && Buffer.isBuffer(m.content?.image));
+    assert.ok(imgMsg, 'WhatsApp sends webp/uppercase QR data URL as an image Buffer');
+    assert.equal(Buffer.compare(imgMsg.content.image, WEBP_BYTES), 0);
+    assert.ok(sentMsgs.some((m) => m.content?.text?.includes('LPA:1$smdp.example$WEBP-1')), 'WhatsApp also sends LPA code');
+  } finally {
+    wa._test.setTransport(null);
   }
 });

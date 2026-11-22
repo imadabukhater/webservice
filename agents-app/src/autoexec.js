@@ -8,7 +8,7 @@
 // no sign it took effect) leaves the task open for the manager, who checks the supplier before acting.
 const { q, tx, getSettings, qlCredentials, aylolCredentials, lyCredentials, tcCredentials } = require('./db');
 const aylol = require('./aylol');
-const { now } = require('./util');
+const { now, normalizeQrDataUrl } = require('./util');
 const D = require('./domain');
 const ql = require('./quickline');
 const ly = require('./layan');
@@ -142,10 +142,10 @@ async function sendLyEsim(taskId, j) {
   return esimDone(taskId, number, qr, `ليان: تم تفعيل eSIM (${pkg.agentPrice} ₪)`);
 }
 
-function esimDone(taskId, number, qr, note) {
+function esimDone(taskId, number, qr, note, extra = {}) {
   if (qr) {
     try {
-      finish(taskId, note, 'تم التفعيل', LY_ACTOR, { attachment: qr });
+      finish(taskId, note, 'تم التفعيل', LY_ACTOR, { ...extra, attachment: qr });
       return undefined;
     } catch (e) {
       console.error('layan esim finish', e.message);
@@ -175,6 +175,12 @@ async function checkLyEsim(t, before) {
     let qr = '';
     try { qr = await ly.imageDataUrl(st.esimLink); } catch (e) { console.error('layan esim qr', e.message); }
     esimDone(t.id, before.number, qr, `ليان: eSIM جاهز (${st.status})`);
+    return;
+  }
+  const lpa = String(st.esimUrl || '').trim();
+  if (/^LPA:1\$/i.test(lpa)) {
+    const qr = require('./shop').makeEsimQr(lpa);
+    esimDone(t.id, before.number, qr, `ليان: eSIM جاهز (${st.status})`, { esimCode: lpa });
     return;
   }
   setAuto(t.id, 'unknown', st.esimUrl
@@ -304,7 +310,8 @@ async function checkQlNew(t, before) {
   const sub = subs.find((s) => s.number === before.number && !(before.known || []).includes(s.id));
   if (sub) {
     const job = JSON.parse(t.payload || '{}').ql || {};
-    const extra = t.type === 'esim' && job.qr ? { attachment: `data:image/png;base64,${job.qr}` } : {};
+    const qrUrl = job.qr ? (normalizeQrDataUrl(job.qr) || (/^data:/i.test(job.qr) ? job.qr : `data:image/png;base64,${job.qr}`)) : '';
+    const extra = t.type === 'esim' && qrUrl ? { attachment: qrUrl } : {};
     finish(t.id, `QuickLine: تم التفعيل — اشتراك #${sub.id} (${sub.status})`, 'تم التفعيل', QL_ACTOR, extra);
     return;
   }

@@ -5,7 +5,7 @@
 // Anything else goes to the manager. A paid order is recorded as a sale (src/sale.js), whose eSIM is then activated at
 // its supplier automatically (or by the manager, from «المهام»).
 const { q, tx, getSettings, gmailCredentials } = require('./db');
-const { ApiError, now, round } = require('./util');
+const { ApiError, now, round, normalizeQrDataUrl } = require('./util');
 const D = require('./domain');
 const mail = require('./mail');
 const aipay = require('./aipay');
@@ -525,6 +525,7 @@ function fulfil(orderId) {
 const html = (v) => String(v ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
 function qrMail(o, s) {
+  const code = realCode(o.line_code || o.esim_code);
   return `<!doctype html><html dir="rtl" lang="ar"><body style="margin:0;padding:24px;background:#f4f5f8;font-family:Tahoma,Arial,sans-serif;color:#111">
   <div style="max-width:480px;margin:0 auto;background:#fff;border-radius:14px;padding:24px">
     <h2 style="margin:0 0 10px">شريحتك الإلكترونية (eSIM) جاهزة</h2>
@@ -532,6 +533,8 @@ function qrMail(o, s) {
     <p style="margin:0 0 16px;font-size:20px;direction:ltr;text-align:right"><b>${html(o.number)}</b></p>
     <p style="margin:0 0 16px">${html(o.package_label)}</p>
     <p style="text-align:center;margin:0 0 16px"><img src="cid:esim-qr" alt="رمز QR لتثبيت eSIM" width="240" height="240" style="border:1px solid #ddd;border-radius:8px"></p>
+    ${code ? `<p style="margin:0 0 6px"><b>رمز التفعيل اليدوي (LPA)</b></p>
+    <p style="margin:0 0 16px;padding:10px 12px;background:#f4f5f8;border-radius:8px;direction:ltr;text-align:left;word-break:break-all;font-family:monospace;font-size:13px">${html(code)}</p>` : ''}
     <p style="margin:0 0 6px"><b>طريقة التثبيت</b></p>
     <ul style="margin:0 0 16px;padding-inline-start:20px">
       <li>آيفون: الإعدادات ← الخلوي ← إضافة eSIM ← استخدام رمز QR.</li>
@@ -548,15 +551,16 @@ const mailTries = new Map();
 async function deliverQr() {
   const s = getSettings();
   if (!s.gmailConfigured) return 0;
-  const rows = q(`SELECT o.*, l.esim_qr AS line_qr FROM shop_orders o JOIN lines l ON l.id = o.line_id
+  const rows = q(`SELECT o.*, l.esim_qr AS line_qr, l.esim_code AS line_code FROM shop_orders o JOIN lines l ON l.id = o.line_id
                   WHERE o.esim = 1 AND o.email != '' AND o.qr_mailed_at IS NULL AND l.status = 'active' AND l.esim_qr != ''`).all();
   let sent = 0;
   for (const o of rows) {
     const tries = mailTries.get(o.id) || 0;
     if (tries >= MAIL_TRIES) continue;
-    const img = /^data:(image\/[a-z0-9.+-]+);base64,(.+)$/i.exec(o.line_qr);
+    const rawQr = normalizeQrDataUrl(o.line_qr) || o.line_qr;
+    const img = /^data:(image\/[a-z0-9.+-]+);base64,(.+)$/i.exec(rawQr);
     // A made-up picture from an earlier version is never sent: the manager attaches the real QR code.
-    if (!img || isMadeUpQr(o.line_qr)) continue;
+    if (!img || isMadeUpQr(rawQr)) continue;
     const creds = gmailCredentials();
     try {
       await smtp.sendMail({

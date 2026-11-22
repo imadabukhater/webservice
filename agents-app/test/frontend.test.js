@@ -100,6 +100,8 @@ test('storefront sheets navigate via go/return { go }, use no inline onclick, an
   assert.match(shop, /go\(`#\/buy\/\$\{pk\.id\}\?esim=1`\)/);
   assert.match(shop, /const seq = \+\+S\.seq;/);
   assert.match(shop, /function getTheme\(\)\s*\{\s*try\s*\{/);
+  assert.match(shop, /next\.esimCode !== S\.order\.esimCode/);
+  assert.match(shop, /const hasEsimDelivery = hasQr \|\| hasCode;/);
 });
 
 test('admin portal views have valid form markup, visible WA errors, no dead shopInstant, and offline boot recovery', () => {

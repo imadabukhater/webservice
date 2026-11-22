@@ -44,8 +44,8 @@ function resolveTask(t) {
     subtitle: t.lineNumber ? esc(t.lineNumber) : '',
     body: `${t.note ? `<div class="msg info" style="align-items:center">${icon('info')}<span class="grow">${esc(t.note)}</span>
         <button type="button" class="btn btn-sm" data-copy-note>${icon('copy')}نسخ</button></div>` : ''}
-      <div class="field"><label for="rs-code">رمز تفعيل eSIM (LPA) <span class="opt">(اختياري)</span></label><textarea class="input ltr" id="rs-code" name="esimCode" rows="2" placeholder="LPA:1$…"></textarea></div>
-      <label class="upload" for="rs-qr"><span class="tile sm cyan">${icon('qr')}</span><span class="grow"><b>صورة رمز QR</b><br><small class="muted">تظهر للزبون في صفحة طلبه وتُرسل إلى بريده</small></span>
+      <div class="field"><label for="rs-code">رمز تفعيل eSIM (LPA) <span class="opt">(يرسم QR تلقائياً إن لم ترفق صورة)</span></label><textarea class="input ltr" id="rs-code" name="esimCode" rows="2" placeholder="LPA:1$…"></textarea></div>
+      <label class="upload" for="rs-qr"><span class="tile sm cyan">${icon('qr')}</span><span class="grow"><b>صورة رمز QR</b><br><small class="muted">مطلوب صورة QR أو رمز LPA — تظهر للزبون في صفحة طلبه وتُرسل إلى بريده وواتساب</small></span>
         <img id="rs-qr-prev" alt="" hidden><input id="rs-qr" type="file" accept="image/*"></label>
       <div class="field"><label for="rs-resp">ملاحظة <span class="opt">(اختياري)</span></label><input class="input" id="rs-resp" name="response"></div>`,
     submit: 'تم التفعيل',

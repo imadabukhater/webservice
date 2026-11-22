@@ -3,7 +3,7 @@
 // (pending until the supplier activates it) and an eSIM activation task is opened, which autoexec.js carries out at the
 // supplier (or the manager by hand). No balance, no ledger: the customer's payment is the sale.
 const { q, getSettings } = require('./db');
-const { fail, now, round, str, validPhone, normalizePhone } = require('./util');
+const { fail, now, round, str, validPhone, normalizePhone, normalizeQrDataUrl } = require('./util');
 const D = require('./domain');
 
 // The manager's account: every line belongs to it (lines.agent_id is required).
@@ -40,7 +40,7 @@ function recordEsimSale(order) {
     const picked = QL.servedNumber(qlRef.packageId, true, Number(order.number_id) || 0);
     if (!picked || picked.phone !== number) served();
     sim = String(picked.sim || '').replace(/\D/g, '');
-    qr = qr || picked.qr || '';
+    qr = normalizeQrDataUrl(qr || picked.qr || '') || qr || picked.qr || '';
     const rule = QL.simRuleFor(qlRef.packageId);
     const problem = rule && require('./quickline').simProblem(sim, rule);
     if (problem) fail(400, problem);

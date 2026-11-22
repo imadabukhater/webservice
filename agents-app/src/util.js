@@ -92,6 +92,34 @@ function imageOrEmpty(v, { maxKb, allowSvg = false, label }) {
   return s;
 }
 
+// Detect real raster image format from file magic bytes (Azure Blob Storage often serves PNGs as application/octet-stream).
+function sniffImageMime(buf) {
+  if (!Buffer.isBuffer(buf) || buf.length < 3) return '';
+  if (buf.length >= 8 && buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47
+      && buf[4] === 0x0d && buf[5] === 0x0a && buf[6] === 0x1a && buf[7] === 0x0a) return 'image/png';
+  if (buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return 'image/jpeg';
+  if (buf.length >= 12 && buf[0] === 0x52 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x46
+      && buf[8] === 0x57 && buf[9] === 0x45 && buf[10] === 0x42 && buf[11] === 0x50) return 'image/webp';
+  if (buf.length >= 6 && buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x38
+      && (buf[4] === 0x37 || buf[4] === 0x39) && buf[5] === 0x61) return 'image/gif';
+  return '';
+}
+
+// Normalizes a raster QR image data URL or raw base64 PNG/JPEG (e.g. QuickLine barcodeImage) into a valid data:image/... URL.
+function normalizeQrDataUrl(v) {
+  const s = String(v || '').trim();
+  if (!s) return '';
+  if (/^data:image\/(?:png|jpe?g|webp|gif);base64,[A-Za-z0-9+/=\s]+$/i.test(s)) {
+    return s.replace(/^data:image\/jpg;/i, 'data:image/jpeg;').replace(/\s+/g, '');
+  }
+  const compact = s.replace(/\s+/g, '');
+  if (/^[A-Za-z0-9+/]+=*$/.test(compact) && compact.length >= 12) {
+    const mime = sniffImageMime(Buffer.from(compact.slice(0, 32), 'base64'));
+    if (mime) return `data:${mime};base64,${compact}`;
+  }
+  return '';
+}
+
 // Arabic count phrases: 1 رقم واحد، 2 رقمان، 3-10 أرقام، 11+ رقماً.
 function arCount(n, { one, two, few, many }) {
   if (n === 1) return one;
@@ -104,5 +132,5 @@ module.exports = {
   arCount,
   ApiError, fail, now, round, str, isBlank, num, optNum, int, dateOrNull,
   normalizePhone, validPhone, normalizeIccid, validIccid, addMonths, periodEnd,
-  dayStart, monthStart, tzFrom, imageOrEmpty,
+  dayStart, monthStart, tzFrom, imageOrEmpty, sniffImageMime, normalizeQrDataUrl,
 };

@@ -610,7 +610,19 @@ async function payHere(jid, raw, phone) {
     }
     follow(jid, st.o, v.stage); // said here: the order's next change is what the chat hears of next
     if (v.status === 'paid') {
-      await say(jid, `✅ تم الدفع لطلبك *${st.o.code}* (${round(st.o.amount)} ₪) من محفظة جوال باي.\nعم نفعّل الـ eSIM هلأ، وبيوصلك رمز QR هون خلال دقايق.`);
+      if (v.stage === 'done') {
+        q('UPDATE wa_shop SET done_at = ? WHERE order_id = ?').run(now(), st.o.id);
+        await orderUpdate(jid, S.byCode(st.o.code), v);
+      } else if (v.stage === 'paid_issue') {
+        const alertKey = `${st.o.id}:paid_issue`;
+        if (!adminNotified.has(alertKey)) {
+          adminNotified.add(alertKey);
+          await tellAdmins(`🔔 طلب ${st.o.code} — ${st.o.package_label} — ${round(st.o.amount)} ₪\nدُفع، والتفعيل يحتاج تدخلك.\nمن البوابة: متجر الزبائن.`);
+        }
+        await say(jid, `✅ تم الدفع لطلبك *${st.o.code}* (${round(st.o.amount)} ₪).\nالتفعيل يحتاج مراجعة سريعة من الفريق، وبيوصلك رمز QR هون أول ما يجهز.`);
+      } else {
+        await say(jid, `✅ تم الدفع لطلبك *${st.o.code}* (${round(st.o.amount)} ₪).\nعم نفعّل الـ eSIM هلأ، وبيوصلك رمز QR هون خلال دقايق.`);
+      }
     } else if (v.jawwal?.checking) {
       await say(jid, '⏳ عم نتأكد من دفعتك عند جوال باي — لا تدفع مرة تانية، وبيوصلك الرد هون.');
     } else {
@@ -696,6 +708,11 @@ async function customerImage(jid, getImage) {
   const v = await S.submitProof(o, { receipt: `data:${img.mime || 'image/jpeg'};base64,${img.buffer.toString('base64')}` });
   follow(jid, o, v.stage);
   remember(jid, { step: 'proof', orderId: o.id });
+  if (v.stage === 'done' && o.esim) {
+    q('UPDATE wa_shop SET done_at = ? WHERE order_id = ?').run(now(), o.id);
+    await orderUpdate(jid, S.byCode(o.code), v);
+    return undefined;
+  }
   return say(jid, `📎 وصلتنا صورة الإشعار لطلب *${o.code}*.\n${STAGE_TEXT[v.stage] || v.stage}\nعشان نخلّص أسرع، ابعت كمان *اسم اللي حوّل* أو *الرقم المرجعي*.`);
 }
 
@@ -1160,6 +1177,10 @@ async function agentTool(name, args, ctx) {
       const v = await S.submitProof(o, { payName: payer });
       follow(jid, o, v.stage);
       ctx.facts.push(stageFacts(o, v.stage));
+      if (v.stage === 'done' && o.esim) {
+        q('UPDATE wa_shop SET done_at = ? WHERE order_id = ?').run(now(), o.id);
+        ctx.after.push(() => orderUpdate(jid, S.byCode(o.code), v));
+      }
       ctx.codeOnly = true;
       return { ok: true, order_code: o.code, stage: v.stage };
     }
@@ -1284,12 +1305,18 @@ async function orderUpdate(jid, o, v) {
   if (v.stage === 'done' && o.esim) {
     const code = v.esimCode || '';
     let image = null;
-    const m = /^data:image\/(?:png|jpe?g);base64,(.+)$/.exec(v.esimQr || '');
+    const m = /^data:image\/(?:png|jpe?g|webp);base64,(.+)$/i.exec(v.esimQr || '');
     if (m) image = Buffer.from(m[1], 'base64');
     else if (/^LPA:/i.test(code)) image = qrcode.png(code, { scale: 8 });
     const caption = `✅ تفعّلت الـ eSIM لطلبك *${o.code}*${v.number ? ` — الرقم *${v.number}*` : ''}\n\nامسح الرمز من التلفون: الإعدادات ← الشبكة الخلوية ← إضافة eSIM.`;
-    if (image) await send(jid, { image, caption });
-    else await say(jid, `${caption}\nالرمز موجود بصفحة طلبك عالمتجر.`);
+    if (image) {
+      await send(jid, { image, caption });
+      remember2(jid, 'model', caption);
+    } else if (code) {
+      await say(jid, `✅ تفعّلت الـ eSIM لطلبك *${o.code}*${v.number ? ` — الرقم *${v.number}*` : ''}`);
+    } else {
+      await say(jid, `✅ تفعّلت الـ eSIM لطلبك *${o.code}*${v.number ? ` — الرقم *${v.number}*` : ''}\nإذا لم يصلك رمز الـ QR بعد، تواصل معنا لنرسله لك فوراً.`);
+    }
     if (code) await say(jid, `وإذا الكاميرا ما زبطت، هاد رمز التفعيل اليدوي:\n${code}`);
     return undefined;
   }

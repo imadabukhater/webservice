@@ -3,7 +3,7 @@
 // (sale.js). Done: the line is active with its QR code. Rejected: the line is removed and the shop order says why.
 const { q, tx } = require('../db');
 const { sourceOf } = require('../privacy');
-const { fail, now, round, str, periodEnd, imageOrEmpty } = require('../util');
+const { fail, now, round, str, periodEnd, imageOrEmpty, normalizeQrDataUrl } = require('../util');
 const { route, ADMIN } = require('../router');
 
 const TYPE_LABEL = { esim: 'تفعيل eSIM' };
@@ -62,10 +62,19 @@ function resolveTask(t, user, body) {
   const l = t.line_id ? q('SELECT * FROM lines WHERE id = ?').get(t.line_id) : null;
   if (l && l.status === 'pending') {
     if (status === 'done') {
-      const esimQr = imageOrEmpty(body.attachment, { maxKb: 600, label: 'رمز QR' });
+      let esimQr = imageOrEmpty(body.attachment, { maxKb: 600, label: 'رمز QR' });
       const esimCode = str(body.esimCode, 500);
+      if (!esimQr && /^LPA:1\$/i.test(esimCode)) {
+        esimQr = require('../shop').makeEsimQr(esimCode);
+      }
+      const existingQr = normalizeQrDataUrl(l.esim_qr);
+      const finalQr = esimQr || existingQr;
+      const finalCode = esimCode || l.esim_code || '';
+      if (l.esim && !finalQr && !finalCode) {
+        fail(400, 'أرفق صورة رمز QR أو أدخل رمز التفعيل (LPA) قبل تأكيد تفعيل الـ eSIM');
+      }
       q("UPDATE lines SET status = 'active', activated_at = ?, expires_at = ?, esim_code = COALESCE(NULLIF(?, ''), esim_code), esim_qr = COALESCE(NULLIF(?, ''), esim_qr), updated_at = ? WHERE id = ?")
-        .run(ts, periodEnd(ts, l.months, l.days), esimCode, esimQr, ts, l.id);
+        .run(ts, periodEnd(ts, l.months, l.days), esimCode, finalQr, ts, l.id);
     } else {
       q("UPDATE shop_orders SET line_id = NULL, error = 'رُفض التفعيل: ' || ?, updated_at = ? WHERE line_id = ?").run(response, ts, l.id);
       q('DELETE FROM lines WHERE id = ?').run(l.id);

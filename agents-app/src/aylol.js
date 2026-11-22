@@ -14,6 +14,7 @@ const crypto = require('node:crypto');
 const { execFile } = require('node:child_process');
 const qr = require('./qr');
 const { totp } = require('./layan');
+const { sniffImageMime } = require('./util');
 
 const BASE = () => process.env.AYLOL_BASE || 'https://www.aylol-telecom.com';
 const CURL = () => process.env.AYLOL_CURL || 'curl';
@@ -501,7 +502,16 @@ async function purchaseEsim({ categoryId, purchaseType = 'empty_esim', phone = '
   const d = res.data || {};
   const stPhone = chosenStock ? (chosenStock.phone || chosenStock.phone_number || chosenStock.number || '') : '';
   const stSim = chosenStock ? (chosenStock.sim_number || chosenStock.iccid || '') : '';
-  return { ok: true, phoneNumber: phoneFrom(d, res, String(stPhone || body.phone || '').replace(/\D/g, '')), simNumber: String(d.sim_number || d.sim || d.iccid || stSim || ''), ...esimCodeAndQr(d, res), esimId: d.id || d.esim_id || esimStockId || '' };
+  let qrRes = esimCodeAndQr(d, res);
+  if (!qrRes.qr) {
+    const link = [d.esim_qr, d.qr_url, d.qr_file, d.qr_image, d.qr, res.qr_url, res.esim_qr]
+      .find((v) => typeof v === 'string' && v.trim());
+    if (link) {
+      const got = await qrFrom(link);
+      qrRes = { esimCode: qrRes.esimCode || got.esimCode, qr: got.qr };
+    }
+  }
+  return { ok: true, phoneNumber: phoneFrom(d, res, String(stPhone || body.phone || '').replace(/\D/g, '')), simNumber: String(d.sim_number || d.sim || d.iccid || stSim || ''), ...qrRes, esimId: d.id || d.esim_id || esimStockId || '' };
 }
 
 // The dealer's subscriptions (the «الاشتراكات» page's table, as its DataTable asks it, page by page): read only.
@@ -632,11 +642,17 @@ async function qrImage(url) {
   if (!trusted) return '';
   try {
     const r = await fetch(u, { signal: AbortSignal.timeout(TIMEOUT_S * 1000), redirect: 'error' });
-    const type = String(r.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
-    if (!r.ok || !/^image\/(png|jpeg|jpg)$/.test(type)) return '';
+    if (!r.ok) return '';
     const buf = Buffer.from(await r.arrayBuffer());
     if (!buf.length || buf.length > QR_MAX_BYTES) return '';
-    return `data:${type === 'image/jpg' ? 'image/jpeg' : type};base64,${buf.toString('base64')}`;
+    const rawType = String(r.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
+    const headerType = rawType === 'image/jpg' ? 'image/jpeg' : rawType;
+    const sniffed = sniffImageMime(buf);
+    const type = /^image\/(png|jpeg|webp|gif)$/.test(headerType)
+      ? (sniffed || headerType)
+      : ((!headerType || headerType === 'application/octet-stream' || headerType === 'binary/octet-stream') ? sniffed : '');
+    if (!type) return '';
+    return `data:${type};base64,${buf.toString('base64')}`;
   } catch {
     return '';
   }

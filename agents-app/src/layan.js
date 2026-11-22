@@ -9,6 +9,7 @@
 //   extension (ref ly:<package>:<days>[:<sale>])  — extends a dealer's active number
 //   new line  (ref lyn:<package>:<days>[:<sale>]) — activates one of the dealer's suspended numbers on that package
 const crypto = require('node:crypto');
+const { sniffImageMime } = require('./util');
 
 const BASE = process.env.LY_BASE || 'https://api.layan-t.net';
 const TIMEOUT_MS = 30_000;
@@ -239,15 +240,22 @@ async function esimStatus(creds, asyncActionId) {
   return { status: data?.status || '', esimLink: data?.esimLink || '', esimUrl: data?.esimUrl || '' };
 }
 // A QR code image Layan links to, kept as a data URL (so it stays with the line and can be e-mailed).
+// Azure Blob Storage often serves .png QR images with Content-Type: application/octet-stream, so sniff real image bytes.
 async function imageDataUrl(url) {
   if (!url) return '';
-  if (/^data:image\//.test(url)) return url;
+  if (/^data:image\/(?:png|jpe?g|webp|gif);base64,/i.test(url)) return url.replace(/^data:image\/jpg;/i, 'data:image/jpeg;');
   const res = await fetch(new URL(url, BASE), { signal: AbortSignal.timeout(TIMEOUT_MS) });
-  const rawType = (res.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
-  const type = rawType === 'image/jpg' ? 'image/jpeg' : rawType;
-  if (!res.ok || !/^image\/(png|jpeg|webp|gif)$/.test(type)) throw new LayanError(`ليان: رمز QR غير متاح (${res.status})`);
+  if (!res.ok) throw new LayanError(`ليان: رمز QR غير متاح (${res.status})`);
   const buf = Buffer.from(await res.arrayBuffer());
+  if (!buf.length) throw new LayanError(`ليان: رمز QR غير متاح (${res.status})`);
   if (buf.length > 500 * 1024) throw new LayanError('ليان: صورة رمز QR كبيرة جداً');
+  const rawType = (res.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
+  const headerType = rawType === 'image/jpg' ? 'image/jpeg' : rawType;
+  const sniffed = sniffImageMime(buf);
+  const type = /^image\/(png|jpeg|webp|gif)$/.test(headerType)
+    ? (sniffed || headerType)
+    : ((!headerType || headerType === 'application/octet-stream' || headerType === 'binary/octet-stream') ? sniffed : '');
+  if (!type) throw new LayanError(`ليان: رمز QR غير متاح (${res.status})`);
   return `data:${type};base64,${buf.toString('base64')}`;
 }
 
