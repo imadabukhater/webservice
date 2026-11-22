@@ -7,7 +7,7 @@ const { publicPackageName, forAgent } = require('./privacy');
 const { shopKind, shopRows } = require('./routes/shop');
 
 const CSS_VER = '37';
-const JS_VER = '35';
+const JS_VER = '36';
 
 const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({
   '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
@@ -186,13 +186,18 @@ function siteOrigin(req) {
   return `${proto}://${host}`;
 }
 
+function siteNameOf(s = getSettings()) {
+  return String(s.shopTitle || s.appName || 'Hot eSIM').trim();
+}
+
 function renderNotFoundHtml(siteUrl = 'https://www.hotesim.shop') {
+  const shopName = siteNameOf();
   const html = `<!doctype html>
 <html lang="ar" dir="rtl">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <title>الصفحة غير موجودة | Hot eSIM</title>
+  <title>الصفحة غير موجودة | ${esc(shopName)}</title>
   <meta name="robots" content="noindex, nofollow">
   <link rel="stylesheet" href="/css/app.css?v=${CSS_VER}">
 </head>
@@ -215,7 +220,7 @@ function renderNotFoundHtml(siteUrl = 'https://www.hotesim.shop') {
 
 function renderHomeHtml({ siteUrl = 'https://www.hotesim.shop' } = {}) {
   const s = getSettings();
-  const shopName = s.shopTitle || 'Hot eSIM';
+  const shopName = siteNameOf(s);
   const rows = shopRows();
   const items = rows.map((r) => extractSpecs(r, s));
   const carriers = [...new Set(items.map((x) => x.companyName))];
@@ -451,7 +456,7 @@ function renderPackageHtml(rawId, { siteUrl = 'https://www.hotesim.shop' } = {})
                WHERE p.id = ? AND p.active = 1 AND p.shop_price > 0`).get(id);
   if (!p || !shopKind(p)) return renderNotFoundHtml(siteUrl);
 
-  const shopName = s.shopTitle || 'Hot eSIM';
+  const shopName = siteNameOf(s);
   const sp = extractSpecs(p, s);
   const pageUrl = `${siteUrl}/package/${sp.id}`;
   const buyUrl = `${siteUrl}/#/buy/${sp.id}?esim=1`;
@@ -624,7 +629,7 @@ ${verificationMeta(s)}  <link rel="canonical" href="${esc(pageUrl)}">
 
 function renderInfoPageHtml(slug, { siteUrl = 'https://www.hotesim.shop' } = {}) {
   const s = getSettings();
-  const shopName = s.shopTitle || 'Hot eSIM';
+  const shopName = siteNameOf(s);
   const pages = {
     compat: {
       title: `الأجهزة المتوافقة مع شريحة eSIM وفحص توافق الهاتف (*#06#) | ${shopName}`,

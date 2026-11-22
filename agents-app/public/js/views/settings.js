@@ -97,11 +97,15 @@ export default {
       general: `
         <form class="card card-pad form" id="settings-form" novalidate>
           <h2 class="dot-title">عام</h2>
-          <div class="field"><label for="st-name">اسم التطبيق</label><input class="input" id="st-name" name="appName" value="${esc(s.appName)}">
-            <span class="hint">يظهر في شاشة الدخول والقائمة.</span></div>
           <div class="row2 stack-xs">
-            <div class="field"><label for="st-esim">رسوم تفعيل eSIM (₪)</label><input class="input ltr" id="st-esim" name="esimFee" type="number" min="0" step="0.5" value="${s.esimFee}">
-              <span class="hint">السعر العام لرمز QR، يُضاف إلى سعر الزبون (إلا إن حددت سعراً للشركة). 0 لإلغائها.</span></div>
+            <div class="field"><label for="st-name">اسم الموقع والمتجر</label><input class="input" id="st-name" name="appName" value="${esc(s.shopTitle || s.appName)}">
+              <span class="hint">يظهر في رأس المتجر، العنوان في Google، التذييل، ولوحة الإدارة.</span></div>
+            <div class="field"><label for="st-sub">وصف المتجر الفرعي <span class="muted">(اختياري)</span></label><input class="input" id="st-sub" name="shopSubtitle" placeholder="شرائح وباقات فورية" value="${esc(s.shopSubtitle || '')}">
+              <span class="hint">سطر قصير يظهر أسفل اسم الموقع في المتجر.</span></div>
+          </div>
+          <div class="row2 stack-xs">
+            <div class="field"><label for="st-esim">ثمن / رسوم شريحة eSIM (₪)</label><input class="input ltr" id="st-esim" name="esimFee" type="number" min="0" step="1" value="${s.esimFee}">
+              <span class="hint">تُضاف فوق سعر كل باقة على جميع الشبكات في المتجر وواتساب فوراً عند الحفظ. اكتب 0 لإلغائها.</span></div>
             <div class="field"><label for="st-wa">واتساب الدعم الفني</label><input class="input ltr" id="st-wa" name="supportWhatsapp" inputmode="tel" placeholder="972567725080" value="${esc(s.supportWhatsapp)}">
               <span class="hint">بالصيغة الدولية بدون + أو 0 في البداية. يظهر للزبائن في المتجر وفي رسالة رمز eSIM. اتركه فارغاً لإخفائه.</span></div>
           </div>
@@ -291,8 +295,10 @@ export default {
       const msg = root.querySelector('#settings-msg');
       msg.innerHTML = '';
       try {
+        const siteName = field(form, 'appName');
         S.settings = await api.put('/api/settings', {
-          appName: field(form, 'appName'), esimFee: field(form, 'esimFee'), supportWhatsapp: field(form, 'supportWhatsapp'),
+          appName: siteName, shopTitle: siteName, shopSubtitle: field(form, 'shopSubtitle'),
+          esimFee: field(form, 'esimFee'), supportWhatsapp: field(form, 'supportWhatsapp'),
           googleSiteVerification: field(form, 'googleSiteVerification'),
         });
         toast('تم حفظ الإعدادات');

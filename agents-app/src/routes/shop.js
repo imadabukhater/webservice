@@ -265,8 +265,8 @@ function shopCatalogResponse() {
   return {
     // Every order is paid and verified before it is carried out: there is no instant (unpaid) activation.
     enabled: s.shopEnabled, instant: false, appName: s.appName,
-    shopName: s.shopTitle || 'Hot eSIM',
-    shopTitle: s.shopTitle || '', shopSubtitle: s.shopSubtitle || '',
+    shopName: s.shopTitle || s.appName || 'Hot eSIM',
+    shopTitle: s.shopTitle || s.appName || '', shopSubtitle: s.shopSubtitle || '',
     supportWhatsapp: s.supportWhatsapp, esimFee: s.esimFee,
     payPhone: s.jawwalpayNumber || s.palpayNumber || '',
     // Paying straight from the customer's Jawwal Pay wallet with a code texted to them (corporate API).

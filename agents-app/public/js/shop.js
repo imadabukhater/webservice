@@ -272,12 +272,12 @@ function renderBrandWordmark(rawName = '') {
   if (!clean || /^hot\s*e-?sim$/i.test(clean) || /^h-?sim$/i.test(clean)) {
     return `<span class="brand-lockup" dir="ltr"><span class="brand-word-hot">Hot</span><span class="brand-word-esim">eSIM</span></span>`;
   }
-  return `<span class="brand-lockup"><span class="brand-word-custom">${esc(clean)}</span><span class="brand-word-esim" dir="ltr">eSIM</span></span>`;
+  return `<span class="brand-lockup"><span class="brand-word-custom">${esc(clean)}</span></span>`;
 }
 
 function shell(body, { sub = '' } = {}) {
-  const rawBrand = S.data?.shopTitle || 'Hot eSIM';
-  const name = S.data?.shopTitle || 'Hot eSIM';
+  const rawBrand = S.data?.shopTitle || S.data?.appName || 'Hot eSIM';
+  const name = rawBrand;
   const subtitle = sub || S.data?.shopSubtitle || 'شرائح وباقات فورية';
   const wa = waHref(S.data?.supportWhatsapp, `مرحباً، أحتاج مساعدة في ${name}`);
   const dark = document.documentElement.dataset.theme === 'dark';
@@ -1581,7 +1581,7 @@ function viewCatalog() {
   const companies = S.data.companies || [];
   const packages = S.data.packages || [];
   const coMap = new Map(companies.map((c) => [c.id, c]));
-  const rawBrand = S.data?.shopTitle || 'Hot eSIM';
+  const rawBrand = S.data?.shopTitle || S.data?.appName || 'Hot eSIM';
   const wa = waHref(S.data?.supportWhatsapp, 'مرحباً، أحتاج مساعدة في المتجر');
   const banks = Array.isArray(S.data?.jawwalBanks) ? S.data.jawwalBanks : [];
   const payBadges = S.data?.jawwalDirect
@@ -1620,7 +1620,7 @@ function viewCatalog() {
             </div>
             <span class="pele-banner-tag">${icon('bolt')}<span>${fmtNum(packages.length)} باقة جاهزة الآن</span></span>
           </div>
-          <h1>${esc(S.data.shopTitle || 'الطريقة الأسهل للاتصال في البلاد')}</h1>
+          <h1>${esc(rawBrand)}</h1>
           <p class="pele-hero-sub">شريحة eSIM برقم جديد وتفعيل تلقائي في <b>الضفة الغربية وقطاع غزة والقدس</b> — الدفع الآمن عبر <b>${esc(payBadges)}</b></p>
           <div class="pele-hero-steps" aria-label="خطوات الشراء">
             <span><i>1</i>اختر الباقة</span>
@@ -1642,7 +1642,7 @@ function viewCatalog() {
             <div class="pele-sim-art-mid">
               ${brandLogoSvg('hsim-logo-svg')}
               <div>
-                <strong class="ltr">Hot eSIM</strong>
+                <strong>${esc(rawBrand)}</strong>
                 <small>كود QR فوري · رقم جديد</small>
               </div>
             </div>
@@ -1700,7 +1700,7 @@ function viewCatalog() {
     <section id="sec-info" class="pele-content-section">
       <div class="pele-imp-info">
         <div class="pele-main-sec">
-          <h2>كل ما تحتاج معرفته عن شريحة HOT eSIM</h2>
+          <h2>كل ما تحتاج معرفته عن شريحة ${esc(rawBrand)}</h2>
           <div class="pele-icns" role="tablist">
             <a role="tab" tabindex="0" class="pele-icn-item ${S.infoTab === 'credit' ? 'active' : ''}" data-itab="credit">
               <span class="pele-icn-svg">${icon('bolt')}</span>

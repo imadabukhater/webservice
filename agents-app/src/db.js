@@ -363,6 +363,11 @@ if (!db.prepare("SELECT 1 FROM settings WHERE key = 'migr_disable_instant_defaul
   db.prepare("INSERT INTO settings (key, value) VALUES ('shop_instant', '0') ON CONFLICT(key) DO UPDATE SET value = '0'").run();
   db.prepare("INSERT INTO settings (key, value) VALUES ('migr_disable_instant_default', '1')").run();
 }
+// Clear legacy per-company eSIM fee overrides (no Companies screen remains in the panel) so the global esim_fee setting applies everywhere.
+if (!db.prepare("SELECT 1 FROM settings WHERE key = 'migr_unify_esim_fee'").get()) {
+  db.exec('UPDATE companies SET esim_fee = NULL');
+  db.prepare("INSERT INTO settings (key, value) VALUES ('migr_unify_esim_fee', '1')").run();
+}
 
 const q = (sql) => db.prepare(sql);
 

@@ -773,6 +773,23 @@ test('Nearest-shekel rounding, SSR /package/:id SEO pages, /api/shop/package/:id
       assert.match(p.body, new RegExp(`<link rel="canonical" href="https://www\\.hotesim\\.shop/${slug}">`));
       assert.match(sm.body, new RegExp(`<loc>https://www\\.hotesim\\.shop/${slug}</loc>`));
     }
+
+    // 6) Changing site name (appName) & esimFee in Settings immediately updates storefront & overrides stale company fees
+    const beforeSt = await ok(call(admin, 'GET', '/api/settings'));
+    q('UPDATE companies SET esim_fee = 99 WHERE id = ?').run(qlPkg.companyId);
+    try {
+      await ok(call(admin, 'PUT', '/api/settings', { appName: 'متجر فلسطين نت', esimFee: 5 }));
+      const liveShop = await ok(call(null, 'GET', '/api/shop'));
+      assert.equal(liveShop.shopName, 'متجر فلسطين نت');
+      assert.equal(liveShop.shopTitle, 'متجر فلسطين نت');
+      const livePk = liveShop.packages.find((p) => p.id === qlPkg.id);
+      assert.equal(livePk.esimFee, 5, 'global esimFee clears stale company esim_fee override');
+      assert.equal(livePk.total, livePk.price + 5);
+      const liveHome = await rawReq('/');
+      assert.match(liveHome.body, /<title>متجر فلسطين نت \|/);
+    } finally {
+      await ok(call(admin, 'PUT', '/api/settings', { appName: beforeSt.appName, shopTitle: beforeSt.shopTitle, esimFee: beforeSt.esimFee }));
+    }
   } finally {
     await ok(call(admin, 'PUT', '/api/settings', { googleSiteVerification: '' }));
   }

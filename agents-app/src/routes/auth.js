@@ -76,14 +76,18 @@ route('PUT', '/api/settings', ADMIN, ({ body }) => {
   // Atomic: any validation failure (e.g. turning off both payment methods) rolls back every change in this request.
   const out = tx(() => {
     if (body.appName !== undefined) {
-      const name = str(body.appName, 60);
-      if (!name) fail(400, 'اكتب اسم التطبيق');
+      const name = str(body.appName, 80);
+      if (!name) fail(400, 'اكتب اسم الموقع');
       setSetting('app_name', name);
+      // Keep the storefront site name synced when edited from General Settings.
+      if (body.shopTitle === undefined) setSetting('shop_title', name);
     }
     if (body.esimFee !== undefined) {
       const fee = num(body.esimFee, 'رسوم eSIM');
       if (fee < 0) fail(400, 'رسوم eSIM لا تكون سالبة');
       setSetting('esim_fee', fee);
+      // Clear any stale per-company overrides so the new global eSIM fee applies immediately to every carrier.
+      q('UPDATE companies SET esim_fee = NULL').run();
     }
     // Write-only: an empty password keeps the saved one.
     if (body.qlUser !== undefined) setSetting('ql_user', str(body.qlUser, 120));
@@ -131,7 +135,11 @@ route('PUT', '/api/settings', ADMIN, ({ body }) => {
       setSetting('shop_markup', String(Math.round(m * 100) / 100));
       require('../domain').refreshShopPrices();
     }
-    if (body.shopTitle !== undefined) setSetting('shop_title', str(body.shopTitle, 120));
+    if (body.shopTitle !== undefined) {
+      const title = str(body.shopTitle, 120);
+      setSetting('shop_title', title);
+      if (body.appName === undefined && title) setSetting('app_name', str(title, 80));
+    }
     if (body.shopSubtitle !== undefined) setSetting('shop_subtitle', str(body.shopSubtitle, 240));
     if (body.googleSiteVerification !== undefined) {
       let raw = String(body.googleSiteVerification || '').trim();
