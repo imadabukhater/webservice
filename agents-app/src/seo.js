@@ -3,11 +3,12 @@
 // Zero inline executable scripts (strict CSP script-src 'self' compatible); JSON-LD + semantic Arabic/English markup.
 const { q, getSettings } = require('./db');
 const { round } = require('./util');
+const D = require('./domain');
 const { publicPackageName, forAgent } = require('./privacy');
 const { shopKind, shopRows } = require('./routes/shop');
 
 const CSS_VER = '37';
-const JS_VER = '36';
+const JS_VER = '37';
 
 const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({
   '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
@@ -221,7 +222,7 @@ function renderNotFoundHtml(siteUrl = 'https://www.hotesim.shop') {
 function renderHomeHtml({ siteUrl = 'https://www.hotesim.shop' } = {}) {
   const s = getSettings();
   const shopName = siteNameOf(s);
-  const rows = shopRows();
+  const rows = D.selectBestTierPackages(shopRows(), s);
   const items = rows.map((r) => extractSpecs(r, s));
   const carriers = [...new Set(items.map((x) => x.companyName))];
   const minTotal = items.length ? Math.min(...items.map((x) => x.total)) : null;

@@ -4,6 +4,7 @@ import {
   esc, icon, fmtNum, fmtDateTime, fmtDate, fmtTime, specs, companyLogo,
   fileToDataUrl, copyText, toast, fmtPhone, sheet, closeSheet, go,
 } from './core.js';
+import { extractGb, extractDays } from './catalog-compare.js';
 
 const MY_ORDERS_KEY = 'agents.shop.orders';
 const CODE_RE = /^[A-Z0-9]{6,12}$/;
@@ -128,7 +129,7 @@ const S = {
   data: null,
   companyId: 'all',
   duration: 'all', // 'all' | '30' | '90'
-  sort: 'price_asc', // 'price_asc' | 'gb_desc'
+  sort: 'gb_desc', // 'gb_desc' | 'price_asc' (default: data quantity DESC, then price ASC)
   kindFilter: 'esim', // 'esim' | 'card'
   q: '',
   compatBrand: 'apple',
@@ -1555,14 +1556,23 @@ function filterAndSortPackages(packages, coMap) {
   shown.sort((a, b) => {
     const ca = coMap.get(a.companyId);
     const cb = coMap.get(b.companyId);
-    if (S.sort === 'gb_desc') {
-      const ga = extractPackageSpecs(a, ca).gb || 0;
-      const gb = extractPackageSpecs(b, cb).gb || 0;
+    const sa = extractPackageSpecs(a, ca);
+    const sb = extractPackageSpecs(b, cb);
+    const ga = sa.gb || 0;
+    const gb = sb.gb || 0;
+    const pa = pkgTotalPrice(a, ca);
+    const pb = pkgTotalPrice(b, cb);
+    if (S.sort === 'price_asc') {
+      if (pa !== pb) return pa - pb;
       if (gb !== ga) return gb - ga;
-      return pkgTotalPrice(a, ca) - pkgTotalPrice(b, cb);
+      if (sa.days !== sb.days) return sa.days - sb.days;
+      return (isFeaturedPkg(b) ? 1 : 0) - (isFeaturedPkg(a) ? 1 : 0);
     }
-    if (isFeaturedPkg(b) !== isFeaturedPkg(a)) return (isFeaturedPkg(b) ? 1 : 0) - (isFeaturedPkg(a) ? 1 : 0);
-    return pkgTotalPrice(a, ca) - pkgTotalPrice(b, cb);
+    // Default ('gb_desc'): sort by data quantity (highest GB first), then cheapest total price.
+    if (gb !== ga) return gb - ga;
+    if (pa !== pb) return pa - pb;
+    if (sa.days !== sb.days) return sa.days - sb.days;
+    return (isFeaturedPkg(b) ? 1 : 0) - (isFeaturedPkg(a) ? 1 : 0);
   });
   return shown;
 }
@@ -1686,8 +1696,8 @@ function viewCatalog() {
               </div>
             ` : ''}
             <div class="pele-filter-group" role="group" aria-label="الترتيب">
+              <button type="button" class="pele-mini-pill" data-sort="gb_desc" aria-pressed="${S.sort === 'gb_desc'}">الكمية ثم السعر</button>
               <button type="button" class="pele-mini-pill" data-sort="price_asc" aria-pressed="${S.sort === 'price_asc'}">الأرخص أولاً</button>
-              <button type="button" class="pele-mini-pill" data-sort="gb_desc" aria-pressed="${S.sort === 'gb_desc'}">الأكثر جيجا</button>
             </div>
           </div>
         </div>
@@ -1908,12 +1918,8 @@ function extractPackageSpecs(pk, co) {
   const rawDesc = String(pk?.description || '').trim();
   const combined = `${rawName} ${rawDesc}`;
 
-  // 1. Internet / Data (GB)
-  let gb = Number(pk?.dataGb ?? pk?.gb ?? 0) || 0;
-  if (!gb) {
-    const gbMatch = combined.match(/(\d+(?:\.\d+)?)\s*(?:GB|G\b|جيجابايت|جيجا|جبجا|غيغا)/i);
-    if (gbMatch) gb = Number(gbMatch[1]) || 0;
-  }
+  // 1. Internet / Data (GB) & 4. Duration in Days (via shared catalog-compare parser, safe against matching 5G)
+  const gb = extractGb({ name: combined, dataGb: pk?.dataGb ?? pk?.gb }) || 0;
 
   // 2. Minutes (عدد الدقائق)
   let minutes = pk?.minutes !== null && pk?.minutes !== undefined ? Number(pk.minutes) : null;
@@ -1935,20 +1941,7 @@ function extractPackageSpecs(pk, co) {
   }
 
   // 4. Duration in Days (مدة الصلاحية)
-  let days = Number(pk?.days) || 0;
-  if (!days) {
-    if (/شهرين|شهران/.test(combined)) {
-      days = 60;
-    } else if (/3\s*[أا]شهر|ثلاث[ةه]\s*[أا]شهر/.test(combined)) {
-      days = 90;
-    } else {
-      const dayMatches = [...combined.matchAll(/(\d+)\s*يوم(?![ي])/g)]
-        .map((m) => Number(m[1]))
-        .filter((n) => n >= 7 && n <= 365);
-      if (dayMatches.length) days = dayMatches[0];
-    }
-  }
-  if (!days) days = 30;
+  const days = extractDays({ name: combined, days: pk?.days });
 
   // 5. Extra international / Palestinian calls or credit bonus
   const isOpenCredit = !gb && /لجميع\s*الشبكات/.test(combined);

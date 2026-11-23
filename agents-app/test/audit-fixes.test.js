@@ -963,3 +963,61 @@ test('Security audit hardening: no order-code leak, AI payment & Gemini abuse gu
     aySrv.close();
   }
 });
+
+test('Storefront smart tier selection (availability first, cheapest price second) and sorting by data GB DESC then price ASC', async () => {
+  const { q } = require('../src/db');
+  const shopRoute = require('../src/routes/shop');
+  const { selectBestTierPackages, packageTierKey } = require('../src/domain');
+
+  // 1) Pure tier selection & sorting unit check:
+  const s = { esimFee: 5 };
+  const sample = [
+    { id: 1, company_id: 10, company_name: 'WE', name: 'WE 200 جيجا', shop_price: 30, cost: 25, data_gb: 200, days: 30, popular: 0, sort: 1 },
+    { id: 2, company_id: 10, company_name: 'WE', name: 'WE 200 جيجا ليان', shop_price: 25, cost: 20, data_gb: 200, days: 30, popular: 0, sort: 2 },
+    { id: 3, company_id: 10, company_name: 'WE', name: 'WE 500 جيجا', shop_price: 45, cost: 38, data_gb: 500, days: 30, popular: 0, sort: 3 },
+    { id: 4, company_id: 10, company_name: 'WE', name: 'WE 500 جيجا 5G', shop_price: 40, cost: 33, data_gb: 500, days: 30, popular: 0, sort: 4 },
+    { id: 5, company_id: 11, company_name: 'سلكوم', name: 'سلكوم 500 جيجا', shop_price: 50, cost: 40, data_gb: 500, days: 30, popular: 1, sort: 1 },
+    { id: 6, company_id: 11, company_name: 'سلكوم', name: 'سلكوم 100 جيجا', shop_price: 20, cost: 16, data_gb: 100, days: 30, popular: 0, sort: 2 },
+  ];
+  assert.equal(packageTierKey(sample[0]), packageTierKey(sample[1]));
+  const picked = selectBestTierPackages(sample, s);
+  // Sorted: 500GB (WE 40₪ then Cellcom 50₪) -> 200GB (WE 25₪) -> 100GB (Cellcom 20₪)
+  assert.deepEqual(picked.map((p) => p.id), [4, 5, 2, 6]);
+
+  // 2) Live /api/shop integration: availability first, then cheapest price, while shop_on=0 stays hidden
+  const coId = qlPkg.companyId;
+  const pExpensive = Number(q(`INSERT INTO packages (company_id, name, cost, art_price, active, art_card_id, kind, data_gb, days, shop_on, shop_price)
+    VALUES (?, 'سلكوم 777 جيجا مميز', 80, 80, 1, 'qln:1:30', 'invoice', 777, 30, 1, 96)`).run(coId).lastInsertRowid);
+  const pCheapAvail = Number(q(`INSERT INTO packages (company_id, name, cost, art_price, active, art_card_id, kind, data_gb, days, shop_on, shop_price)
+    VALUES (?, 'سلكوم 777 جيجا توفير', 40, 40, 1, 'qln:2:30', 'invoice', 777, 30, 1, 48)`).run(coId).lastInsertRowid);
+  const pCheapestAdminOff = Number(q(`INSERT INTO packages (company_id, name, cost, art_price, active, art_card_id, kind, data_gb, days, shop_on, shop_price)
+    VALUES (?, 'سلكوم 777 جيجا موقوف', 20, 20, 1, 'qln:3:30', 'invoice', 777, 30, 0, NULL)`).run(coId).lastInsertRowid);
+  const pLowGbCheap = Number(q(`INSERT INTO packages (company_id, name, cost, art_price, active, art_card_id, kind, data_gb, days, shop_on, shop_price)
+    VALUES (?, 'سلكوم 50 جيجا اقتصادي', 15, 15, 1, 'qln:3:30', 'invoice', 50, 30, 1, 18)`).run(coId).lastInsertRowid);
+  try {
+    shopRoute.setStock(pExpensive, ['0539000001']);
+    shopRoute.setStock(pCheapAvail, ['0539000002']);
+    shopRoute.setStock(pCheapestAdminOff, ['0539000003']);
+    shopRoute.setStock(pLowGbCheap, ['0539000004']);
+
+    // Both 777GB shop_on=1 in stock: cheapest available wins (48 < 96); shop_on=0 stays hidden!
+    let cat = shopRoute.shopCatalogResponse();
+    assert.ok(cat.packages.some((p) => p.id === pCheapAvail), 'cheapest in-stock supplier wins tier');
+    assert.equal(cat.packages.some((p) => p.id === pExpensive), false, 'more expensive duplicate hidden');
+    assert.equal(cat.packages.some((p) => p.id === pCheapestAdminOff), false, 'admin shop_on=0 remains hidden');
+
+    // Sorting: 777GB appears BEFORE 50GB even though 50GB is cheaper (18 < 48)
+    const idx777 = cat.packages.findIndex((p) => p.id === pCheapAvail);
+    const idx50 = cat.packages.findIndex((p) => p.id === pLowGbCheap);
+    assert.ok(idx777 >= 0 && idx50 > idx777, 'sorted by data GB descending before price ascending');
+
+    // Availability-first fallback: when cheaper supplier runs out of numbers, more expensive in-stock supplier takes over automatically
+    shopRoute.setStock(pCheapAvail, []);
+    cat = shopRoute.shopCatalogResponse();
+    assert.equal(cat.packages.some((p) => p.id === pCheapAvail), false, 'out-of-stock cheaper offer removed');
+    assert.ok(cat.packages.some((p) => p.id === pExpensive), 'in-stock fallback supplier takes over automatically');
+  } finally {
+    q('DELETE FROM packages WHERE id IN (?, ?, ?, ?)').run(pExpensive, pCheapAvail, pCheapestAdminOff, pLowGbCheap);
+    await shopRoute.refreshStock();
+  }
+});

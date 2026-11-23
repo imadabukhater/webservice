@@ -258,11 +258,13 @@ function publicPackageView(p, s = getSettings()) {
   };
 }
 
-// The catalog as last known (ensureStock first, for fresh numbers): eSIMs with a number free now.
+// The catalog as last known (ensureStock first, for fresh numbers): compares availability first (free numbers at
+// supplier), then picks the cheapest offer per package tier, and sorts by data amount DESC then price ASC.
 function shopCatalogResponse() {
   const s = getSettings();
   const held = new Set(heldNumbers().map((h) => h.number));
-  const packages = s.shopEnabled ? shopRows().filter((p) => inStock(p.id, held)) : [];
+  const availableRows = s.shopEnabled ? shopRows().filter((p) => inStock(p.id, held)) : [];
+  const packages = s.shopEnabled ? D.selectBestTierPackages(availableRows, s) : [];
   const ids = new Set(packages.map((p) => p.company_id));
   return {
     // Every order is paid and verified before it is carried out: there is no instant (unpaid) activation.
@@ -305,7 +307,10 @@ route('GET', '/api/shop/package/:id', null, async ({ params }) => {
   await ensureStock();
   const held = new Set(heldNumbers().map((h) => h.number));
   const available = s.shopEnabled && inStock(p.id, held);
-  const allLive = s.shopEnabled ? shopRows().filter((r) => r.id !== p.id && inStock(r.id, held)) : [];
+  const pTier = D.packageTierKey(p);
+  const allLive = s.shopEnabled
+    ? D.selectBestTierPackages(shopRows().filter((r) => inStock(r.id, held)), s).filter((r) => r.id !== p.id && D.packageTierKey(r) !== pTier)
+    : [];
   const related = [
     ...allLive.filter((r) => r.company_id === p.company_id),
     ...allLive.filter((r) => r.company_id !== p.company_id),
@@ -977,4 +982,4 @@ route('GET', '/api/shop/admin/summary', ADMIN, () => ({
 // The WhatsApp chat pays an order directly too: the order as the page would find it (direct payment on, holds expired).
 const directOrderByCode = (code) => directOrder(code);
 module.exports = { shopCatalogResponse, shopCatalog, ensureStock, submitProof, orderView, byCode, createOrder, cancelOrder, refreshStock,
-  jcSendCode, jcConfirmCode, directOrderByCode, shopKind, shopRows, publicPackageView, _resetThrottle: () => { hits.clear(); jcMobileLastSent.clear(); } };
+  jcSendCode, jcConfirmCode, directOrderByCode, shopKind, shopRows, publicPackageView, setStock, _resetThrottle: () => { hits.clear(); jcMobileLastSent.clear(); } };
