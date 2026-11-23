@@ -282,8 +282,8 @@ function renderHomeHtml({ siteUrl = 'https://www.hotesim.shop' } = {}) {
     name: shopName,
     alternateName: `متجر ${shopName} لشرائح eSIM والإنترنت في الضفة الغربية وغزة وفلسطين`,
     url: `${siteUrl}/`,
-    logo: `${siteUrl}/icon-512.png`,
-    image: `${siteUrl}/icon-512.png`,
+    logo: `${siteUrl}/icon-512.png?v=38`,
+    image: `${siteUrl}/icon-512.png?v=38`,
     description,
     currenciesAccepted: 'ILS',
     paymentAccepted: 'Jawwal Pay, Bank of Palestine, PalPay',
@@ -314,7 +314,7 @@ function renderHomeHtml({ siteUrl = 'https://www.hotesim.shop' } = {}) {
         description: `${sp.dataLabel} و${sp.callsLabel} لمدة ${fmtNum(sp.days)} يوماً على شبكة ${sp.companyName} (${sp.companyEn}) في ${REGION_AR}.`,
         sku: `HOTESIM-${sp.id}`,
         category: 'eSIM Plans & Mobile Internet',
-        image: `${siteUrl}/icon-512.png`,
+        image: `${siteUrl}/icon-512.png?v=38`,
         brand: { '@type': 'Brand', name: sp.companyEn },
         offers: {
           '@type': 'Offer',
@@ -365,7 +365,7 @@ ${verificationMeta(s)}  <link rel="canonical" href="${esc(siteUrl)}/">
   <meta property="og:locale" content="ar_AR">
   <meta property="og:title" content="${esc(title)}">
   <meta property="og:description" content="${esc(description)}">
-  <meta property="og:image" content="${esc(siteUrl)}/icon-512.png">
+  <meta property="og:image" content="${esc(siteUrl)}/icon-512.png?v=38">
   <meta property="og:image:width" content="512">
   <meta property="og:image:height" content="512">
   <meta property="og:image:alt" content="باقات وشرائح ${esc(shopName)} في الضفة الغربية وقطاع غزة وفلسطين">
@@ -374,10 +374,10 @@ ${verificationMeta(s)}  <link rel="canonical" href="${esc(siteUrl)}/">
   <meta name="twitter:url" content="${esc(siteUrl)}/">
   <meta name="twitter:title" content="${esc(title)}">
   <meta name="twitter:description" content="${esc(description)}">
-  <meta name="twitter:image" content="${esc(siteUrl)}/icon-512.png">
+  <meta name="twitter:image" content="${esc(siteUrl)}/icon-512.png?v=38">
 
-  <link rel="icon" href="/icon.svg?v=30" type="image/svg+xml">
-  <link rel="apple-touch-icon" href="/icon-192.png">
+  <link rel="icon" href="/icon.svg?v=38" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/icon-192.png?v=38">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&family=Outfit:wght@500;600;700;800&family=IBM+Plex+Mono:wght@500;600;700&display=swap" rel="stylesheet">
@@ -488,7 +488,7 @@ function renderPackageHtml(rawId, { siteUrl = 'https://www.hotesim.shop' } = {})
     description,
     sku: `HOTESIM-${sp.id}`,
     category: 'eSIM Plans & Mobile Internet',
-    image: `${siteUrl}/icon-512.png`,
+    image: `${siteUrl}/icon-512.png?v=38`,
     brand: { '@type': 'Brand', name: sp.companyEn },
     offers: {
       '@type': 'Offer',
@@ -547,7 +547,7 @@ ${verificationMeta(s)}  <link rel="canonical" href="${esc(pageUrl)}">
   <meta property="og:locale" content="ar_AR">
   <meta property="og:title" content="${esc(title)}">
   <meta property="og:description" content="${esc(description)}">
-  <meta property="og:image" content="${esc(siteUrl)}/icon-512.png">
+  <meta property="og:image" content="${esc(siteUrl)}/icon-512.png?v=38">
   <meta property="og:image:width" content="512">
   <meta property="og:image:height" content="512">
   <meta property="product:price:amount" content="${esc(String(sp.total))}">
@@ -557,10 +557,10 @@ ${verificationMeta(s)}  <link rel="canonical" href="${esc(pageUrl)}">
   <meta name="twitter:url" content="${esc(pageUrl)}">
   <meta name="twitter:title" content="${esc(title)}">
   <meta name="twitter:description" content="${esc(description)}">
-  <meta name="twitter:image" content="${esc(siteUrl)}/icon-512.png">
+  <meta name="twitter:image" content="${esc(siteUrl)}/icon-512.png?v=38">
 
-  <link rel="icon" href="/icon.svg?v=30" type="image/svg+xml">
-  <link rel="apple-touch-icon" href="/icon-192.png">
+  <link rel="icon" href="/icon.svg?v=38" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/icon-192.png?v=38">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&family=Outfit:wght@500;600;700;800&family=IBM+Plex+Mono:wght@500;600;700&display=swap" rel="stylesheet">
@@ -761,10 +761,10 @@ ${verificationMeta(s)}  <link rel="canonical" href="${esc(pageUrl)}">
   <meta property="og:locale" content="ar_AR">
   <meta property="og:title" content="${esc(pg.title)}">
   <meta property="og:description" content="${esc(pg.description)}">
-  <meta property="og:image" content="${esc(siteUrl)}/icon-512.png">
+  <meta property="og:image" content="${esc(siteUrl)}/icon-512.png?v=38">
 
-  <link rel="icon" href="/icon.svg?v=30" type="image/svg+xml">
-  <link rel="apple-touch-icon" href="/icon-192.png">
+  <link rel="icon" href="/icon.svg?v=38" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/icon-192.png?v=38">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&family=Outfit:wght@500;600;700;800&family=IBM+Plex+Mono:wght@500;600;700&display=swap" rel="stylesheet">
