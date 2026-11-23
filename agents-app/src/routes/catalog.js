@@ -65,6 +65,7 @@ route('PUT', '/api/packages/:id', ADMIN, ({ params, body }) => {
     q('UPDATE packages SET shop_on = 0 WHERE id = ?').run(p.id);
   }
   D.refreshShopPrices(p.id);
+  require('./shop').invalidateStock(p.id);
   return packageView(q(`${SELECT} AND p.id = ?`).get(p.id));
 });
 

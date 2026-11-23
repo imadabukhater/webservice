@@ -206,6 +206,10 @@ route('PUT', '/api/settings', ADMIN, ({ body }) => {
   const SYNC_ON = { ql: ['qlUser', 'qlPass'], ay: ['aylolUser', 'aylolPass', 'aylolSecret'], ly: ['lyUser', 'lyPass', 'lySecret'],
     tc: ['tcUser', 'tcPass', 'tcMailUser', 'tcMailPass'] };
   for (const [key, fields] of Object.entries(SYNC_ON)) if (fields.some((f) => body[f])) require('../autosync').syncSoon(key);
+  if (['shopEnabled', 'qlUser', 'qlPass', 'aylolUser', 'aylolPass', 'aylolSecret', 'lyUser', 'lyPass', 'lySecret',
+    'tcUser', 'tcPass', 'tcMailUser', 'tcMailPass', 'tcRegAddress', 'tcRegCity', 'tcRegZip'].some((f) => body[f] !== undefined)) {
+    require('./shop').invalidateStock();
+  }
   return out;
 });
 

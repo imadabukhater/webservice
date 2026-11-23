@@ -172,15 +172,22 @@ function byCode(code, ip) {
   return o;
 }
 
-// ---------- in stock: only what a supplier has a number free for now ----------
-// The shop asks each supplier which eSIM numbers it has free for each package it sells: when it starts, every 10
-// minutes, and whenever its catalog is asked for after that. A package is shown (on the site and in WhatsApp) only
-// while its supplier's last answer, not older than half an hour, has a number no other customer's order holds. Not
-// asked yet, an answer too old, a supplier not set up or not answering: not shown. Ordering asks the supplier again.
-const STOCK_MS = Number(process.env.SHOP_STOCK_MS) || 10 * 60_000; // asked again after 10 minutes
-const STOCK_STALE_MS = 3 * STOCK_MS; // an answer older than this counts as none
-const STOCK_WAIT_MS = Number(process.env.SHOP_STOCK_WAIT_MS) || 15_000; // how long a catalog waits for a first answer
+// ---------- in stock: refreshed once per hour (never on every customer visit) ----------
+// The shop checks each supplier's free eSIM numbers once on startup and once every hour thereafter (STOCK_MS).
+// Customer page visits read directly from the hourly cache + live DB holds/sales so visitors never trigger supplier sweeps.
+const STOCK_MS = Number(process.env.SHOP_STOCK_MS) || 60 * 60_000; // once every hour
+const STOCK_STALE_MS = Math.max(2 * STOCK_MS, 2 * 60 * 60_000); // keep cached availability valid across the full hourly cycle
+const STOCK_WAIT_MS = Number(process.env.SHOP_STOCK_WAIT_MS) || 15_000; // initial boot/first-run wait cap
 const stock = new Map(); // packageId -> { phones, at }
+let lastStockRunAt = 0;
+function invalidateStock(packageId = null) {
+  if (packageId === null || packageId === undefined) {
+    stock.clear();
+    lastStockRunAt = 0;
+  } else {
+    stock.delete(Number(packageId));
+  }
+}
 // A number of the last answer is free now when no customer's order holds it and no line was sold on it since.
 function inStock(id, held) {
   const v = stock.get(Number(id));
@@ -204,6 +211,7 @@ function stockJob(s, p) {
 let refreshing = null;
 function refreshStock() {
   if (!refreshing) {
+    lastStockRunAt = now();
     refreshing = (async () => {
       const s = getSettings();
       if (!s.shopEnabled) return;
@@ -223,17 +231,19 @@ function refreshStock() {
   }
   return refreshing;
 }
-// Before the catalog is shown: a package never asked yet is asked now (waited for, a few seconds at most); answers
-// older than 10 minutes are asked again in the background (the catalog does not wait for those).
+// Customer entry guard: only triggers a refresh at most once per hour (STOCK_MS), never on every customer visit.
 async function ensureStock() {
   if (!getSettings().shopEnabled) return;
-  const ages = shopRows().map((p) => stock.get(Number(p.id))?.at);
-  if (ages.some((at) => !at || now() - at > STOCK_STALE_MS)) {
+  if (!shopRows().length) return;
+  const age = lastStockRunAt ? now() - lastStockRunAt : Infinity;
+  if (age < STOCK_MS) return;
+  const stale = !lastStockRunAt || age > STOCK_STALE_MS;
+  if (stale) {
     let timer;
     await Promise.race([refreshStock(), new Promise((r) => { timer = setTimeout(r, STOCK_WAIT_MS); timer.unref?.(); })])
       .catch((e) => console.error('shop stock', e.message));
     clearTimeout(timer);
-  } else if (ages.some((at) => now() - at > STOCK_MS)) {
+  } else {
     refreshStock().catch((e) => console.error('shop stock', e.message));
   }
 }
@@ -365,8 +375,8 @@ async function freeEsimNumbers(s, { ref, layan, telecom, aylol }) {
   return list.filter((n) => n.phone && !taken.has(n.phone));
 }
 
-// Whether a package has an eSIM number free now. The customer does not choose it: one is given at random with the
-// order, and shown once the order is paid.
+// Whether a package has an eSIM number free now. Reads from the 1-hour cache whenever fresh (never hammers
+// suppliers on every customer checkout click); only queries the supplier if uncached or older than 1 hour.
 route('GET', '/api/shop/available', null, async ({ query, ip }) => {
   const s = enabled();
   throttle(ip, 'numbers', 120);
@@ -374,8 +384,12 @@ route('GET', '/api/shop/available', null, async ({ query, ip }) => {
                WHERE p.id = ? AND p.active = 1 AND p.shop_price > 0`).get(Number(query.packageId));
   const kind = p && shopKind(p);
   if (!kind) fail(404, 'الباقة غير متوفرة');
+  const held = new Set(heldNumbers().map((h) => h.number));
+  const cached = stock.get(p.id);
+  if (cached && now() - cached.at < STOCK_MS) {
+    return { available: inStock(p.id, held) };
+  }
   try {
-    const held = new Set(heldNumbers().map((h) => h.number));
     const list = kind === 'line'
       ? (await require('./aylol').billFreeNumbers(p.art_card_id, '', true)).filter((n) => !held.has(n.phone))
       : await freeEsimNumbers(s, esimPackage(p.id));
@@ -982,4 +996,4 @@ route('GET', '/api/shop/admin/summary', ADMIN, () => ({
 // The WhatsApp chat pays an order directly too: the order as the page would find it (direct payment on, holds expired).
 const directOrderByCode = (code) => directOrder(code);
 module.exports = { shopCatalogResponse, shopCatalog, ensureStock, submitProof, orderView, byCode, createOrder, cancelOrder, refreshStock,
-  jcSendCode, jcConfirmCode, directOrderByCode, shopKind, shopRows, publicPackageView, setStock, _resetThrottle: () => { hits.clear(); jcMobileLastSent.clear(); } };
+  jcSendCode, jcConfirmCode, directOrderByCode, shopKind, shopRows, publicPackageView, setStock, invalidateStock, STOCK_MS, _resetThrottle: () => { hits.clear(); jcMobileLastSent.clear(); } };

@@ -1016,6 +1016,29 @@ test('Storefront smart tier selection (availability first, cheapest price second
     cat = shopRoute.shopCatalogResponse();
     assert.equal(cat.packages.some((p) => p.id === pCheapAvail), false, 'out-of-stock cheaper offer removed');
     assert.ok(cat.packages.some((p) => p.id === pExpensive), 'in-stock fallback supplier takes over automatically');
+
+    // 3) Hourly stock cache: repeated customer visits within 1 hour NEVER trigger supplier stock queries
+    assert.equal(shopRoute.STOCK_MS, 60 * 60_000, 'default stock check interval is 1 hour');
+    shopRoute.invalidateStock();
+    const ql = require('../src/quickline');
+    let supplierCalls = 0;
+    const origFreeNums = ql.freeNumbers;
+    ql.freeNumbers = async (...args) => {
+      supplierCalls++;
+      return origFreeNums.apply(ql, args);
+    };
+    try {
+      await ok(call(null, 'GET', '/api/shop'));
+      const callsAfterFirst = supplierCalls;
+      assert.ok(callsAfterFirst >= 1, 'initial check queried supplier once');
+      await ok(call(null, 'GET', '/api/shop'));
+      await ok(call(null, 'GET', '/api/shop'));
+      await ok(call(null, 'GET', `/api/shop/package/${qlPkg.id}`));
+      await ok(call(null, 'GET', `/api/shop/available?packageId=${qlPkg.id}`));
+      assert.equal(supplierCalls, callsAfterFirst, 'repeat customer visits and available checks within 1 hour make ZERO supplier calls');
+    } finally {
+      ql.freeNumbers = origFreeNums;
+    }
   } finally {
     q('DELETE FROM packages WHERE id IN (?, ?, ?, ?)').run(pExpensive, pCheapAvail, pCheapestAdminOff, pLowGbCheap);
     await shopRoute.refreshStock();
