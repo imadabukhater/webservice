@@ -261,9 +261,25 @@ async function passTwoFactor(c) {
 }
 
 // ---------- session ----------
-async function login(creds) {
+// Login circuit-breaker: prevents stock-refresh loops (15+ packages) from firing rapid failed logins and tripping Aylol's IP ban.
+const IP_BLOCK_COOLDOWN_MS = Number(process.env.AYLOL_IP_BLOCK_MS) || 30 * 60_000;
+const AUTH_FAIL_COOLDOWN_MS = Number(process.env.AYLOL_AUTH_FAIL_MS) || 15 * 60_000;
+const TRANSIENT_FAIL_COOLDOWN_MS = Number(process.env.AYLOL_TRANSIENT_FAIL_MS) || 2 * 60_000;
+const loginFail = { key: '', until: 0, message: '', ipBlocked: false };
+
+function detectIpBlock(html) {
+  const s = String(html || '');
+  if (!/تم حظر عنوان IP|IP المحظور|حظر الوصول إلى هذا النظام/i.test(s)) return '';
+  const ip = /IP المحظور\s*[:：]?\s*([0-9a-f.:]{7,45})/i.exec(s)?.[1] || '';
+  return `أيلول حظر عنوان IP الخاص بالسيرفر${ip ? ` (${ip})` : ''} — تواصل مع إدارة أيلول لفك الحظر، ثم اضغط «اختبار»`;
+}
+
+async function login(creds, { force = false } = {}) {
   const c = requireCreds(creds);
   const key = `${c.user}\n${c.pass}\n${c.secret}`;
+  if (!force && loginFail.until > Date.now() && (loginFail.ipBlocked || loginFail.key === key)) {
+    throw new AylolError(loginFail.message, { refused: true });
+  }
   while (signingIn) {
     if (signingKey === key) return signingIn;
     await signingIn.catch(() => {});
@@ -271,31 +287,61 @@ async function login(creds) {
   const p = (async () => {
     // Wait for any already-queued curl call to finish before touching or unlinking the shared cookie jar.
     await queue;
-    // A saved session may still be good: the charge page then carries the seed.
-    if (state.user === c.user && fs.existsSync(cookieJar())) {
-      const h = await pageRaw(`${BASE()}/dashboard/charge-system`, `${BASE()}/admin/home`);
-      const seed = exSeed(h);
-      const csrf = exCsrf(h);
-      if (seed && csrf) {
-        Object.assign(state, { seed, csrf, user: c.user, loggedAt: Date.now(), chargeHtml: h });
-        sawBalance(h);
-        return { ok: true, user: c.user, balance: state.balance };
+    try {
+      // A saved session may still be good: the charge page then carries the seed.
+      if (state.user === c.user && fs.existsSync(cookieJar())) {
+        const h = await pageRaw(`${BASE()}/dashboard/charge-system`, `${BASE()}/admin/home`);
+        const blocked = detectIpBlock(h);
+        if (blocked) {
+          Object.assign(loginFail, { key, until: Date.now() + IP_BLOCK_COOLDOWN_MS, message: blocked, ipBlocked: true });
+          throw new AylolError(blocked, { refused: true });
+        }
+        const seed = exSeed(h);
+        const csrf = exCsrf(h);
+        if (seed && csrf) {
+          Object.assign(state, { seed, csrf, user: c.user, loggedAt: Date.now(), chargeHtml: h });
+          Object.assign(loginFail, { key: '', until: 0, message: '', ipBlocked: false });
+          sawBalance(h);
+          return { ok: true, user: c.user, balance: state.balance };
+        }
       }
+      try { fs.unlinkSync(cookieJar()); } catch {}
+      const loginHtml = await pageRaw(`${BASE()}/login`, '');
+      const blocked1 = detectIpBlock(loginHtml);
+      if (blocked1) {
+        Object.assign(loginFail, { key, until: Date.now() + IP_BLOCK_COOLDOWN_MS, message: blocked1, ipBlocked: true });
+        throw new AylolError(blocked1, { refused: true });
+      }
+      const csrf1 = exCsrf(loginHtml);
+      if (!csrf1) throw new AylolError('أيلول: تعذّر قراءة صفحة الدخول');
+      const postResp = await pageRaw(`${BASE()}/login`, `${BASE()}/login`, ['-H', `Origin: ${BASE()}`, '-H', 'Content-Type: application/x-www-form-urlencoded'],
+        formBody({ email: c.user, password: c.pass, _token: csrf1 }));
+      const blocked2 = detectIpBlock(postResp);
+      if (blocked2) {
+        Object.assign(loginFail, { key, until: Date.now() + IP_BLOCK_COOLDOWN_MS, message: blocked2, ipBlocked: true });
+        throw new AylolError(blocked2, { refused: true });
+      }
+      let ch = (await charged()).h;
+      const blocked3 = detectIpBlock(ch);
+      if (blocked3) {
+        Object.assign(loginFail, { key, until: Date.now() + IP_BLOCK_COOLDOWN_MS, message: blocked3, ipBlocked: true });
+        throw new AylolError(blocked3, { refused: true });
+      }
+      // Two-step sign-in: the charge page only opens once the authenticator's code is accepted.
+      if (!exSeed(ch)) ch = (await passTwoFactor(c)) || ch;
+      const seed = exSeed(ch);
+      if (!seed) throw new AylolError('أيلول رفض الدخول — راجع البريد وكلمة المرور', { refused: true });
+      Object.assign(state, { seed, csrf: exCsrf(ch) || csrf1, user: c.user, loggedAt: Date.now(), chargeHtml: ch });
+      Object.assign(loginFail, { key: '', until: 0, message: '', ipBlocked: false });
+      sawBalance(ch);
+      return { ok: true, user: c.user, balance: state.balance };
+    } catch (e) {
+      if (!loginFail.ipBlocked || loginFail.until <= Date.now()) {
+        const dur = (e instanceof AylolError && e.refused) ? AUTH_FAIL_COOLDOWN_MS : TRANSIENT_FAIL_COOLDOWN_MS;
+        Object.assign(loginFail, { key, until: Date.now() + dur, message: e.message || 'أيلول: تعذّر تسجيل الدخول', ipBlocked: false });
+      }
+      throw e;
     }
-    try { fs.unlinkSync(cookieJar()); } catch {}
-    const loginHtml = await pageRaw(`${BASE()}/login`, '');
-    const csrf1 = exCsrf(loginHtml);
-    if (!csrf1) throw new AylolError('أيلول: تعذّر قراءة صفحة الدخول');
-    await pageRaw(`${BASE()}/login`, `${BASE()}/login`, ['-H', `Origin: ${BASE()}`, '-H', 'Content-Type: application/x-www-form-urlencoded'],
-      formBody({ email: c.user, password: c.pass, _token: csrf1 }));
-    let ch = (await charged()).h;
-    // Two-step sign-in: the charge page only opens once the authenticator's code is accepted.
-    if (!exSeed(ch)) ch = (await passTwoFactor(c)) || ch;
-    const seed = exSeed(ch);
-    if (!seed) throw new AylolError('أيلول رفض الدخول — راجع البريد وكلمة المرور', { refused: true });
-    Object.assign(state, { seed, csrf: exCsrf(ch) || csrf1, user: c.user, loggedAt: Date.now(), chargeHtml: ch });
-    sawBalance(ch);
-    return { ok: true, user: c.user, balance: state.balance };
   })();
   signingIn = p;
   signingKey = key;
@@ -893,4 +939,5 @@ module.exports = {
   knownBalance, exBalance, executeOrder: executeOrderCounted, billNumbers, packageInfo, subscribeBill, splitName, BILL_COMPANIES, billAuto, billShop, lineModes, simTypeOf, qrImage,
   AylolError, login, balance, esimAgentPrice, listedPrice, parseCategoriesFromHtml, fetchPackages, syncAll, fetchEsimPage, fetchEsimPackages, fetchEsimReadyStocks,
   purchaseEsim, lookupAvailableNumbers, currentPrice, mapToEsimCategoryId, esimCodeAndQr, twoFactorForm, twoFactorFields, subscriptions, _state: state,
+  _resetLoginFail: () => Object.assign(loginFail, { key: '', until: 0, message: '', ipBlocked: false }),
 };

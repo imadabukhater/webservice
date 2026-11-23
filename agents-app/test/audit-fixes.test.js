@@ -923,4 +923,43 @@ test('Security audit hardening: no order-code leak, AI payment & Gemini abuse gu
 
   // 8) seo.siteOrigin rejects malformed Host headers
   assert.equal(seo.siteOrigin({ headers: { host: 'evil.com/path?x=1' } }), 'https://www.hotesim.shop');
+
+  // 9) Aylol login circuit-breaker stops rapid retries (prevents IP bans) and detects Aylol IP-block HTML clearly
+  const ay = require('../src/aylol');
+  let ayHits = 0;
+  let ayMode = 'badpass';
+  const aySrv = http.createServer((req, res) => {
+    ayHits++;
+    if (ayMode === 'ipblock') {
+      res.writeHead(403, { 'Content-Type': 'text/html; charset=utf-8' });
+      return res.end('<html><title>تم حظر عنوان IP - أمان النظام</title><body>تم حظر الوصول إلى هذا النظام IP المحظور: 34.56.162.217</body></html>');
+    }
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+    if (req.url === '/login' && req.method === 'GET') return res.end('<meta name="csrf-token" content="T1"><form></form>');
+    return res.end('<html>wrong</html>');
+  });
+  await new Promise((r) => aySrv.listen(0, '127.0.0.1', r));
+  const prevAy = process.env.AYLOL_BASE;
+  try {
+    process.env.AYLOL_BASE = `http://127.0.0.1:${aySrv.address().port}`;
+    ay._resetLoginFail();
+    await assert.rejects(() => ay.login({ user: 'u@x.test', pass: 'bad' }), /رفض الدخول/);
+    const hitsAfterFirst = ayHits;
+    // Subsequent automatic calls with same creds must short-circuit with ZERO network requests
+    await assert.rejects(() => ay.login({ user: 'u@x.test', pass: 'bad' }), /رفض الدخول/);
+    await assert.rejects(() => ay.login({ user: 'u@x.test', pass: 'bad' }), /رفض الدخول/);
+    assert.equal(ayHits, hitsAfterFirst, 'cooldown prevented repeated failed logins');
+
+    // IP block page is clearly detected and pauses all automatic retries
+    ayMode = 'ipblock';
+    ayHits = 0;
+    await assert.rejects(() => ay.login({ user: 'u@x.test', pass: 'newpass' }, { force: true }), /حظر عنوان IP.*34\.56\.162\.217/);
+    assert.equal(ayHits, 1);
+    await assert.rejects(() => ay.login({ user: 'other@x.test', pass: 'other' }), /حظر عنوان IP/);
+    assert.equal(ayHits, 1, 'IP block pauses even different creds until force=true or cooldown expires');
+  } finally {
+    ay._resetLoginFail();
+    if (prevAy === undefined) delete process.env.AYLOL_BASE; else process.env.AYLOL_BASE = prevAy;
+    aySrv.close();
+  }
 });

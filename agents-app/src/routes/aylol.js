@@ -57,7 +57,7 @@ const wrap = async (fn) => {
 };
 
 route('POST', '/api/aylol/check', ADMIN, () => wrap(async (creds) => {
-  const me = await ay.login(creds);
+  const me = await ay.login(creds, { force: true });
   return { ok: true, user: me.user, balance: me.balance };
 }));
 
